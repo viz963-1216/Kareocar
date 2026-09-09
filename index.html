@@ -1894,7 +1894,6 @@ body.driver-mode .route-row.active{border-color:#9AC5F5;background:var(--cr-blue
 <div id="backendWriteHealthBanner" class="hidden" role="alert" aria-live="assertive" style="position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:510;width:min(94vw,860px);padding:11px 14px;border-radius:13px;border:1px solid #9ec2f8;background:#eef6ff;color:#174f99;box-shadow:0 10px 28px rgba(0,0,0,.12);font-size:12px;line-height:1.55;font-weight:800"></div>
 <div id="storageHealthBanner" class="hidden" role="alert" aria-live="assertive" style="position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:500;width:min(94vw,860px);padding:11px 14px;border-radius:13px;border:1px solid #efc27d;background:#fff7e8;color:#7b520d;box-shadow:0 10px 28px rgba(0,0,0,.12);font-size:12px;line-height:1.55;font-weight:800"></div>
 <div id="previewRuntimeError" class="hidden" role="alert" style="position:fixed;left:12px;right:12px;top:12px;z-index:9999;padding:12px 14px;border-radius:12px;background:#fdecef;color:#8f2630;border:1px solid #efb7bc;font-size:12px;line-height:1.55;box-shadow:0 8px 24px rgba(0,0,0,.12)"></div>
-<div id="previewSafeBootNote" role="status" style="position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:9999;background:#172231;color:#fff;padding:9px 13px;border-radius:11px;font:700 12px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.18)">正在開啟安心接送…</div>
 <section class="login-screen" id="loginScreen">
   <div class="login-card">
     <div class="login-brand"><div class="logo">安</div><div><h1>安心接送</h1><p>讓每一趟照護接送更安心</p></div></div>
@@ -2089,7 +2088,7 @@ body.driver-mode .route-row.active{border-color:#9AC5F5;background:var(--cr-blue
   <div class="form-grid">
     <div class="form-field"><label for="forgotPhoneInput">手機號碼</label><input id="forgotPhoneInput" inputmode="tel" placeholder="請輸入手機號碼" /></div>
     <button class="btn outline" id="requestResetOtpBtn" type="button">取得驗證碼</button>
-    <div class="smart-modal-hint hidden" id="resetOtpDemoHint"></div>
+    <div class="smart-modal-hint hidden" id="resetOtpHint"></div>
     <div class="form-field"><label for="resetOtpInput">6 位數驗證碼</label><input id="resetOtpInput" inputmode="numeric" maxlength="6" placeholder="輸入驗證碼" /></div>
     <div class="form-field"><label for="newPasswordInput">設定新密碼</label><input id="newPasswordInput" type="password" placeholder="至少 8 碼" /></div>
     <button class="btn primary" id="confirmResetPasswordBtn" type="button">驗證並更新密碼</button>
@@ -2416,7 +2415,7 @@ body.driver-mode .route-row.active{border-color:#9AC5F5;background:var(--cr-blue
 
 const APP_CONFIG = Object.freeze({
   appName: '安心接送',
-  version: '12.25.81',
+  version: '12.26.0',
   schemaVersion: 44,
   storageKey: 'careRideV122579ReportDemoDB',
   sessionKey: 'careRideV122579ReportDemoSession',
@@ -2444,9 +2443,7 @@ const APP_CONFIG = Object.freeze({
 
 window.CARE_RIDE_RUNTIME = Object.freeze({
   version: APP_CONFIG.version,
-  releaseChannel: 'production',
-  demo: false,
-  previewSafe: window.location.protocol === 'file:'
+  releaseChannel: 'production'
 });
 
 const ROLE_LABELS = Object.freeze({
@@ -2731,17 +2728,6 @@ const LocalStore=createSafeStorage('localStorage');
 const SessionStore=createSafeStorage('sessionStorage');
 
 
-const DEMO_SURNAMES=['陳','林','黃','張','李','王','吳','劉','蔡','楊','許','鄭','謝','洪','郭','邱','曾','廖','賴','徐'];
-const DEMO_GIVEN=['志豪','雅婷','冠宇','怡君','俊傑','佳穎','柏翰','佩珊','宗翰','婉婷','建宏','思妤','家豪','郁婷','承恩','品妤','信宏','欣怡','宇翔','詩涵'];
-const DEMO_ORG_PREFIX=['安康','樂行','福程','長青','康途','暖心','善行','和煦','悠行','樂齡'];
-const DEMO_ORG_SUFFIX=['交通有限公司','福祉車隊','長照接送有限公司','照護交通有限公司','樂齡接送有限公司'];
-const randomInt=(min,max)=>Math.floor(Math.random()*(max-min+1))+min;
-const randomDigits=(count)=>Array.from({length:count},()=>randomInt(0,9)).join('');
-function randomUniqueTaiwanName(used){ let name=''; do{name=`${DEMO_SURNAMES[randomInt(0,DEMO_SURNAMES.length-1)]}${DEMO_GIVEN[randomInt(0,DEMO_GIVEN.length-1)]}`;}while(used.has(name));used.add(name);return name; }
-function randomUniqueMobile(used){ let phone=''; do{phone=`09${randomDigits(8)}`;}while(used.has(phone)||phone==='0999999999');used.add(phone);return phone; }
-function randomTaxId(used){ let id=''; do{id=`${randomInt(1,9)}${randomDigits(7)}`;}while(used.has(id));used.add(id);return id; }
-function randomCompanyPhone(){ return Math.random()<.5?`02-${randomDigits(8)}`:`09${randomDigits(8)}`; }
-function randomUniqueOrgName(used){ let name=''; do{name=`${DEMO_ORG_PREFIX[randomInt(0,DEMO_ORG_PREFIX.length-1)]}${DEMO_ORG_SUFFIX[randomInt(0,DEMO_ORG_SUFFIX.length-1)]}`;}while(used.has(name));used.add(name);return name; }
 function isValidCompanyPhone(value=''){ const digits=digitsOnly(value); return /^02\d{8}$/.test(digits)||/^09\d{8}$/.test(digits); }
 function canonicalCompanyPhone(value=''){ const digits=digitsOnly(value); if(/^02\d{8}$/.test(digits)) return `02-${digits.slice(2)}`; if(/^09\d{8}$/.test(digits)) return digits; return String(value||'').trim(); }
 
@@ -2753,541 +2739,10 @@ function seedDB(){
     updatedAt: createdAt,
     organizations:[{id:APP_CONFIG.requesterOrganizationId,type:'requester_hub',name:'需求者組織',taxId:'',contactPhone:'',active:true,systemManaged:true,createdAt}],
     memberships:[],
-    users:[{id:'usr_super_admin',name:'平台超級管理者',phone:'0999999999',password:'123456',active:true,platformRole:'super_admin',createdAt}],
+    users:[],
     fleets:[],drivers:[],externalIdentities:[],membershipEvents:[],
     vehicleAssignments:[],vehicles:[],careRecipients:[],careRecipientRelations:[],careRecipientEvents:[],careRecipientMergeEvents:[],bookings:[],bookingEvents:[],bookingRevisions:[],dispatchPlans:[],trips:[],tripEvents:[],tripOfflineQueue:[],issues:[],systemReports:[],events:[],notifications:[],serviceProofs:[],kpiDaily:[],quoteSnapshots:[],cancellations:[],telemetryEvents:[],benefitRulesets:[],benefitRulesetEvents:[],benefitAssessments:[],benefitAssessmentEvents:[],benefitLatestInfo:null,benefitLatestEstimateRuns:[],
     integration:{customerSheetCsv:APP_CONFIG.customerSheetCsv,googleSpreadsheetId:APP_CONFIG.googleSpreadsheetId,googleDatabaseLastSyncAt:null,lastSyncAt:null,lastSyncStatus:'尚未完成正式資料同步',lastSyncDetails:[]}
-  };
-}
-
-function ensureExpandedDemoData(db){
-  db.users=Array.isArray(db.users)?db.users:[];
-  db.memberships=Array.isArray(db.memberships)?db.memberships:[];
-  db.drivers=Array.isArray(db.drivers)?db.drivers:[];
-  db.careRecipients=Array.isArray(db.careRecipients)?db.careRecipients:[];
-  db.careRecipientRelations=Array.isArray(db.careRecipientRelations)?db.careRecipientRelations:[];
-  db.careRecipientEvents=Array.isArray(db.careRecipientEvents)?db.careRecipientEvents:[];
-  db.bookings=Array.isArray(db.bookings)?db.bookings:[];
-  db.bookingEvents=Array.isArray(db.bookingEvents)?db.bookingEvents:[];
-  db.bookingRevisions=Array.isArray(db.bookingRevisions)?db.bookingRevisions:[];
-  db.membershipEvents=Array.isArray(db.membershipEvents)?db.membershipEvents:[];
-  db.vehicles=Array.isArray(db.vehicles)?db.vehicles:[];
-  db.dispatchPlans=Array.isArray(db.dispatchPlans)?db.dispatchPlans:[];
-  db.trips=Array.isArray(db.trips)?db.trips:[];
-  db.issues=Array.isArray(db.issues)?db.issues:[];
-  db.systemReports=Array.isArray(db.systemReports)?db.systemReports:[];
-  db.events=Array.isArray(db.events)?db.events:[];
-  db.tripEvents=Array.isArray(db.tripEvents)?db.tripEvents:[];
-  db.tripOfflineQueue=Array.isArray(db.tripOfflineQueue)?db.tripOfflineQueue:[];
-  db.notifications=Array.isArray(db.notifications)?db.notifications:[];
-  db.serviceProofs=Array.isArray(db.serviceProofs)?db.serviceProofs:[];
-  db.kpiDaily=Array.isArray(db.kpiDaily)?db.kpiDaily:[];
-  db.quoteSnapshots=Array.isArray(db.quoteSnapshots)?db.quoteSnapshots:[];
-  db.cancellations=Array.isArray(db.cancellations)?db.cancellations:[];
-  db.telemetryEvents=Array.isArray(db.telemetryEvents)?db.telemetryEvents:[];
-  db.benefitRulesets=Array.isArray(db.benefitRulesets)?db.benefitRulesets:[];
-  db.benefitRulesetEvents=Array.isArray(db.benefitRulesetEvents)?db.benefitRulesetEvents:[];
-  db.benefitAssessments=Array.isArray(db.benefitAssessments)?db.benefitAssessments:[];
-  db.benefitAssessmentEvents=Array.isArray(db.benefitAssessmentEvents)?db.benefitAssessmentEvents:[];
-
-  const demoUserIdAliases=new Map();
-  const resolveDemoUserId=(requestedId)=>demoUserIdAliases.get(requestedId)||requestedId;
-  const addUser=(row)=>{
-    const normalizedPhone=digitsOnly(row.phone||'');
-    const byPhone=normalizedPhone?db.users.find(x=>digitsOnly(x.phone||'')===normalizedPhone):null;
-    const byId=db.users.find(x=>x.id===row.id);
-    const existing=byPhone||byId;
-    if(existing){
-      demoUserIdAliases.set(row.id,existing.id);
-      if(!existing.email&&row.email) existing.email=row.email;
-      if(!existing.password&&row.password) existing.password=row.password;
-      if(existing.active===undefined) existing.active=row.active!==false;
-      existing.updatedAt=existing.updatedAt||row.updatedAt||row.createdAt||nowISO();
-      return existing.id;
-    }
-    db.users.push(row);
-    demoUserIdAliases.set(row.id,row.id);
-    return row.id;
-  };
-  const addMembership=(row)=>{
-    const canonicalRow={...row,userId:resolveDemoUserId(row.userId)};
-    const existing=db.memberships.find(x=>x.id===canonicalRow.id);
-    if(existing){
-      if(!db.users.some(u=>u.id===existing.userId)||existing.id.startsWith('mem_demo_')) existing.userId=canonicalRow.userId;
-      existing.updatedAt=existing.updatedAt||canonicalRow.updatedAt||nowISO();
-      return existing;
-    }
-    db.memberships.push(canonicalRow);
-    if(!db.membershipEvents.some(x=>x.membershipId===canonicalRow.id)) db.membershipEvents.push({id:uid('mevt'),membershipId:canonicalRow.id,userId:canonicalRow.userId,organizationId:canonicalRow.organizationId,eventType:'created',fromStatus:null,toStatus:'active',fromRole:null,toRole:canonicalRow.role,actorUserId:'usr_super_admin',createdAt:canonicalRow.createdAt||nowISO(),note:'V12.25.14 Demo Data'});
-    return canonicalRow;
-  };
-  const createdAt=nowISO();
-
-  const dispatchers=[
-    {id:'usr_demo_dispatch_01',name:'張雅婷',phone:'0922001001',organizationId:'org_demo_1'},
-    {id:'usr_demo_dispatch_02',name:'陳冠宇',phone:'0922001002',organizationId:'org_demo_1'},
-    {id:'usr_demo_dispatch_03',name:'林怡君',phone:'0922001003',organizationId:'org_demo_2'},
-    {id:'usr_demo_dispatch_04',name:'黃佩珊',phone:'0922001004',organizationId:'org_demo_3'}
-  ];
-  dispatchers.forEach((d,i)=>{
-    const canonicalUserId=addUser({id:d.id,name:d.name,phone:d.phone,password:'123456',active:true,createdAt});
-    addMembership({id:`mem_demo_dispatch_${String(i+1).padStart(2,'0')}`,userId:canonicalUserId,organizationId:d.organizationId,role:'dispatcher',status:'active',createdAt,updatedAt:createdAt});
-  });
-
-  const driverRows=[
-    {id:'usr_demo_driver_01',driverId:'drv_demo_101',name:'李志豪',phone:'0933001001',organizationId:'org_demo_1',fleetId:'fleet_demo_1',serviceArea:'臺北市內湖區',status:'on_duty'},
-    {id:'usr_demo_driver_02',driverId:'drv_demo_102',name:'王柏翰',phone:'0933001002',organizationId:'org_demo_1',fleetId:'fleet_demo_1',serviceArea:'臺北市士林區',status:'on_duty'},
-    {id:'usr_demo_driver_03',driverId:'drv_demo_201',name:'吳建宏',phone:'0933001003',organizationId:'org_demo_2',fleetId:'fleet_demo_2',serviceArea:'新北市新莊區',status:'on_duty'},
-    {id:'usr_demo_driver_04',driverId:'drv_demo_202',name:'許家豪',phone:'0933001004',organizationId:'org_demo_2',fleetId:'fleet_demo_2',serviceArea:'新北市中和區',status:'off_duty'},
-    {id:'usr_demo_driver_05',driverId:'drv_demo_301',name:'鄭宗翰',phone:'0933001005',organizationId:'org_demo_3',fleetId:'fleet_demo_3',serviceArea:'臺北市大安區',status:'on_duty'},
-    {id:'usr_demo_driver_06',driverId:'drv_demo_302',name:'謝信宏',phone:'0933001006',organizationId:'org_demo_3',fleetId:'fleet_demo_3',serviceArea:'臺北市文山區',status:'on_duty'},
-    {id:'usr_demo_driver_07',driverId:'drv_demo_103',name:'周承恩',phone:'0933001007',organizationId:'org_demo_1',fleetId:'fleet_demo_1',serviceArea:'臺北市松山區',status:'on_duty'},
-    {id:'usr_demo_driver_08',driverId:'drv_demo_203',name:'何宇翔',phone:'0933001008',organizationId:'org_demo_2',fleetId:'fleet_demo_2',serviceArea:'新北市永和區',status:'on_duty'},
-    {id:'usr_demo_driver_09',driverId:'drv_demo_303',name:'郭俊傑',phone:'0933001009',organizationId:'org_demo_3',fleetId:'fleet_demo_3',serviceArea:'臺北市信義區',status:'on_duty'}
-  ];
-  driverRows.forEach((d,i)=>{
-    const canonicalUserId=addUser({id:d.id,name:d.name,phone:d.phone,password:'123456',active:true,createdAt});
-    addMembership({id:`mem_demo_driver_${String(i+1).padStart(2,'0')}`,userId:canonicalUserId,organizationId:d.organizationId,role:'driver',status:'active',createdAt,updatedAt:createdAt});
-    const existingDriver=db.drivers.find(x=>x.id===d.driverId||x.userId===canonicalUserId);
-    if(existingDriver){
-      if(!db.users.some(u=>u.id===existingDriver.userId)||existingDriver.id.startsWith('drv_demo_')) existingDriver.userId=canonicalUserId;
-    }else db.drivers.push({id:d.driverId,userId:canonicalUserId,organizationId:d.organizationId,fleetId:d.fleetId,status:d.status,serviceArea:d.serviceArea,active:true,createdAt,updatedAt:createdAt});
-  });
-
-  const recipients=[
-    {n:1,name:'王美華',phone:'0911000001',birthDate:'1948-03-12',address:'臺北市中山區民生東路二段 88 號',destination:'臺大醫院',walkingAbility:'assisted',wheelchairType:'none',accessible:false,escort:true,companions:1,aid:'需攙扶',special:'不可久候',transfer:'partial',emergencyName:'王小姐',emergencyPhone:'0988000001'},
-    {n:2,name:'陳阿春',phone:'0911000002',birthDate:'1943-11-05',address:'新北市板橋區中山路一段 120 號',destination:'亞東紀念醫院',walkingAbility:'wheelchair',wheelchairType:'manual',accessible:true,escort:false,companions:0,aid:'手動輪椅',special:'',transfer:'partial',emergencyName:'陳先生',emergencyPhone:'0988000002'},
-    {n:3,name:'林秀蘭',phone:'0911000003',birthDate:'1952-06-21',address:'臺北市大安區復興南路二段 156 號',destination:'臺大醫院',walkingAbility:'walker',wheelchairType:'none',accessible:false,escort:true,companions:1,aid:'助行器',special:'上下車需較多時間',transfer:'partial',emergencyName:'林小姐',emergencyPhone:'0988000003'},
-    {n:4,name:'黃國雄',phone:'0911000004',birthDate:'1946-01-28',address:'臺北市士林區中正路 420 號',destination:'臺北榮民總醫院',walkingAbility:'wheelchair',wheelchairType:'electric',accessible:true,escort:true,companions:1,aid:'電動輪椅',special:'需無障礙車',transfer:'full',emergencyName:'黃先生',emergencyPhone:'0988000004'},
-    {n:5,name:'李玉梅',phone:'0911000005',birthDate:'1950-09-14',address:'新北市新店區北新路二段 60 號',destination:'耕莘醫院',walkingAbility:'assisted',wheelchairType:'none',accessible:false,escort:false,companions:0,aid:'需攙扶',special:'',transfer:'partial',emergencyName:'李小姐',emergencyPhone:'0988000005'},
-    {n:6,name:'張清水',phone:'0911000006',birthDate:'1941-12-02',address:'新北市三重區重新路三段 95 號',destination:'馬偕紀念醫院',walkingAbility:'independent',wheelchairType:'none',accessible:false,escort:false,companions:0,aid:'',special:'希望準時到院',transfer:'independent',emergencyName:'張先生',emergencyPhone:'0988000006'},
-    {n:7,name:'吳秀枝',phone:'0911000007',birthDate:'1949-04-30',address:'新北市中和區景平路 310 號',destination:'雙和醫院',walkingAbility:'walker',wheelchairType:'none',accessible:false,escort:true,companions:1,aid:'助行器',special:'不可久候',transfer:'partial',emergencyName:'吳小姐',emergencyPhone:'0988000007'},
-    {n:8,name:'劉進財',phone:'0911000008',birthDate:'1945-08-18',address:'臺北市內湖區成功路四段 168 號',destination:'三軍總醫院',walkingAbility:'wheelchair',wheelchairType:'manual',accessible:true,escort:true,companions:1,aid:'手動輪椅',special:'車門旁需保留較大上下車空間',transfer:'partial',emergencyName:'劉先生',emergencyPhone:'0988000008'},
-    {n:9,name:'蔡月英',phone:'0911000009',birthDate:'1947-02-11',address:'臺北市松山區南京東路五段 210 號',destination:'臺北醫學大學附設醫院',walkingAbility:'independent',wheelchairType:'none',accessible:false,escort:false,companions:0,aid:'',special:'需準時抵達門診',transfer:'none',emergencyName:'蔡小姐',emergencyPhone:'0988000009'},
-    {n:10,name:'許添福',phone:'0911000010',birthDate:'1944-07-09',address:'新北市永和區中正路 530 號',destination:'雙和醫院',walkingAbility:'walker',wheelchairType:'none',accessible:false,escort:true,companions:1,aid:'助行器',special:'下車需協助',transfer:'partial',emergencyName:'許先生',emergencyPhone:'0988000010'},
-    {n:11,name:'鄭淑芬',phone:'0911000011',birthDate:'1951-10-23',address:'臺北市信義區松仁路 98 號',destination:'臺北市立聯合醫院仁愛院區',walkingAbility:'assisted',wheelchairType:'none',accessible:false,escort:true,companions:1,aid:'需攙扶',special:'不宜久站',transfer:'partial',emergencyName:'鄭小姐',emergencyPhone:'0988000011'},
-    {n:12,name:'郭文雄',phone:'0911000012',birthDate:'1942-05-06',address:'新北市新莊區中正路 510 號',destination:'輔大醫院',walkingAbility:'wheelchair',wheelchairType:'manual',accessible:true,escort:true,companions:1,aid:'手動輪椅',special:'需升降設備',transfer:'full',emergencyName:'郭先生',emergencyPhone:'0988000012'}
-  ];
-
-  recipients.forEach((r)=>{
-    const requestedUserId=`usr_demo_requester_${String(r.n).padStart(2,'0')}`,recipientId=`rec_demo_expanded_${String(r.n).padStart(2,'0')}`,relationId=`crrel_demo_expanded_${String(r.n).padStart(2,'0')}`;
-    const userId=addUser({id:requestedUserId,name:r.name,phone:r.phone,email:`requester.demo${r.n}@example.com`,password:'123456',active:true,createdAt});
-    addMembership({id:`mem_demo_requester_${String(r.n).padStart(2,'0')}`,userId,organizationId:APP_CONFIG.requesterOrganizationId,role:'requester',status:'active',createdAt,updatedAt:createdAt});
-    if(!db.careRecipients.some(x=>x.id===recipientId)){
-      db.careRecipients.push({id:recipientId,schemaVersion:4,scope:'platform',status:'active',identity:{displayName:r.name,birthDate:r.birthDate,gender:'unspecified'},contacts:{primaryPhone:r.phone,emergencyContacts:[{id:`ec_${recipientId}_1`,name:r.emergencyName,relationship:'family',phone:r.emergencyPhone,priority:1}]},addresses:{entries:[{id:`addr_${recipientId}_primary`,type:'home',label:'主要地址',address:r.address}],primaryAddressId:`addr_${recipientId}_primary`,defaultPickupAddressId:`addr_${recipientId}_primary`},mobility:{walkingAbility:r.walkingAbility,wheelchairType:r.wheelchairType,requiresAccessibleVehicle:r.accessible,requiresEscort:r.escort,transferAssistance:r.transfer,defaultAidNeed:r.aid,defaultSpecialNeeds:r.special},servicePreferences:{defaultCompanions:r.companions,commonDestinations:[r.destination],notes:'示範服務對象主檔'},governance:{createdByUserId:userId,source:'demo_expanded_seed',sourceOrganizationId:null,potentialDuplicateRecipientIds:[],createdAt,updatedAt:createdAt,archivedAt:null,mergedIntoRecipientId:null,mergedAt:null}});
-    }
-    const existingRelation=db.careRecipientRelations.find(x=>x.id===relationId|| (x.userId===userId&&x.recipientId===recipientId&&x.status!=='revoked'));
-    if(existingRelation){
-      if(existingRelation.id===relationId) existingRelation.userId=userId;
-      existingRelation.recipientId=recipientId;
-      existingRelation.relationship='self';existingRelation.isPrimaryContact=true;existingRelation.canBook=true;existingRelation.canManageProfile=true;
-      if(existingRelation.status==='revoked') existingRelation.status='active';
-      existingRelation.updatedAt=nowISO();
-    }else db.careRecipientRelations.push({id:relationId,userId,recipientId,relationship:'self',isPrimaryContact:true,canBook:true,canManageProfile:true,status:'active',createdAt,updatedAt:createdAt});
-    if(!db.careRecipientEvents.some(x=>x.recipientId===recipientId&&x.eventType==='created')) db.careRecipientEvents.push({id:uid('crevt'),recipientId,eventType:'created',actorUserId:userId,organizationId:null,relationId:null,detail:'版本 12.25 示範服務對象主檔',changes:null,createdAt});
-  });
-
-  const marketRows=[
-    {id:'booking_demo_market_101',r:1,days:1,time:'08:40',destination:'臺大醫院',companions:null,special:'今天需提前 10 分鐘到門口等候'},
-    {id:'booking_demo_market_102',r:2,days:1,time:'10:20',destination:'亞東紀念醫院',companions:null,special:'手動輪椅，需無障礙車'},
-    {id:'booking_demo_market_103',r:3,days:1,time:'14:10',destination:'臺北市立聯合醫院仁愛院區',companions:1,special:'助行器隨車'},
-    {id:'booking_demo_market_104',r:4,days:2,time:'09:00',destination:'臺北榮民總醫院',companions:null,special:'電動輪椅',tripType:'來回',returnTime:'14:30'},
-    {id:'booking_demo_market_105',r:5,days:2,time:'11:30',destination:'耕莘醫院',companions:0,special:'本次無陪同者'},
-    {id:'booking_demo_market_106',r:6,days:2,time:'15:20',destination:'馬偕紀念醫院',companions:null,special:'希望準時到院'},
-    {id:'booking_demo_market_107',r:7,days:3,time:'08:10',destination:'雙和醫院',companions:null,special:'不可久候'},
-    {id:'booking_demo_market_108',r:8,days:3,time:'13:40',destination:'三軍總醫院',companions:1,special:'輪椅上下車需較大空間'},
-    {id:'booking_demo_market_109',r:2,days:4,time:'09:50',destination:'新北市立土城醫院',companions:1,special:'本次有家屬陪同'},
-    {id:'booking_demo_market_110',r:1,days:4,time:'16:20',destination:'臺北市立聯合醫院中興院區',companions:0,special:'本次可自行上下車'}
-  ];
-  marketRows.forEach((b)=>{
-    if(db.bookings.some(x=>x.id===b.id)) return;
-    const r=recipients.find(x=>x.n===b.r); if(!r) return;
-    const userId=`usr_demo_requester_${String(r.n).padStart(2,'0')}`,recipientId=`rec_demo_expanded_${String(r.n).padStart(2,'0')}`;
-    const pickupDate=dateKey(addMinutes(new Date(),b.days*24*60));
-    const defaults={aidNeed:r.aid||'',companions:r.companions||0,specialNeed:r.special||'',requiresAccessibleVehicle:!!r.accessible,requiresEscort:!!r.escort,transferAssistance:r.transfer||'unknown'};
-    db.bookings.push({id:b.id,state:'open',version:1,stateChangedAt:createdAt,updatedAt:createdAt,organizationId:null,claimStatus:'open',claimedByUserId:null,claimedAt:null,recipientId,status:'pending',tripId:null,submittedAt:createdAt,source:'demo_expanded_market',requestedByUserId:userId,name:r.name,phone:r.phone,pickupDate,pickupTime:b.time,pickupAddress:r.address,destination:b.destination,tripType:b.tripType||'單程',returnDate:b.tripType==='來回'?pickupDate:'',returnTime:b.tripType==='來回'?(b.returnTime||'14:00'):'',aidNeed:'',companions:b.companions===null?'':String(b.companions),specialNeed:b.special||'',note:'示範公開需求',consent:'同意',serviceNeeds:{schemaVersion:1,recipientDefaultsSnapshot:defaults,bookingOverrides:{aidNeed:null,companions:b.companions,specialNeed:b.special||null},capturedAt:createdAt}});
-  });
-  db.bookings.forEach(b=>{b.locations=bookingLocationsFromLegacy(b,b.locations||null);b.legs=bookingLegsFromLegacy(b.id,b,b.locations,b.legs||null);b.marketExpiresAt=b.marketExpiresAt||sharedBookingMarketExpiryISO(b,b.submittedAt||createdAt);b.expiryPolicyVersion=b.expiryPolicyVersion||BOOKING_EXPIRY_POLICY.policyVersion;b.expiredAt=b.expiredAt||null;b.expiryReason=b.expiryReason||null;});
-  db.bookings.forEach(b=>{
-    b.revisionNo=Math.max(0,Number(b.revisionNo)||0);
-    if(!Array.isArray(b.commercialSnapshots)||!b.commercialSnapshots.length){const sid=uid('bterms');b.commercialSnapshots=[{id:sid,schemaVersion:1,bookingId:b.id,bookingVersion:Math.max(1,Number(b.version)||1),reason:'demo_seed',quote:{schemaVersion:1,status:'ruleset_required',currency:'TWD',pricingRulesetVersion:null,estimatedFare:null,baseFare:null,distanceFare:null,timeFare:null,extraFee:null,explanation:'示範資料尚未載入正式定價規則。',source:'demo_seed',capturedAt:createdAt},benefit:{schemaVersion:1,status:'ruleset_required',cmsLevel:null,requestedService:'transportation',estimatedSubsidy:null,rulesetVersion:null,sourceAssessmentId:null,explanation:'示範資料尚未載入正式補助規則。',capturedAt:createdAt},capturedByUserId:null,capturedAt:createdAt}];b.activeCommercialSnapshotId=sid;}
-  });
-  const bookingEventKnown=new Set((db.bookingEvents||[]).map(e=>e.bookingId));
-  db.bookings.forEach(b=>{if(bookingEventKnown.has(b.id))return;db.bookingEvents.push({id:uid('bevt'),bookingId:b.id,eventType:'created',action:null,fromState:null,toState:b.state||'open',actorUserId:b.requestedByUserId||null,organizationId:b.organizationId||null,tripId:b.tripId||null,reasonCode:null,reasonText:'',source:b.source||'demo_seed',bookingVersion:Math.max(1,Number(b.version)||1),metadata:null,createdAt:b.submittedAt||createdAt});});
-
-  const demoDates=['2026-08-30','2026-08-31','2026-09-01'];
-  const demoOrgIds=['org_demo_1','org_demo_2','org_demo_3'];
-  const demoPickupTimes=['07:00','08:10','09:20','10:30','11:40','12:50','14:00','15:10','16:20','17:30'];
-  const demoDestinations=[
-    '臺北市中正區中山南路 7 號 臺大醫院',
-    '新北市板橋區南雅南路二段 21 號 亞東紀念醫院',
-    '臺北市北投區石牌路二段 201 號 臺北榮民總醫院',
-    '臺北市中山區中山北路二段 92 號 馬偕紀念醫院',
-    '新北市中和區中正路 291 號 雙和醫院',
-    '臺北市內湖區成功路二段 325 號 三軍總醫院',
-    '新北市新店區中正路 362 號 耕莘醫院',
-    '臺北市士林區文昌路 95 號 新光醫院',
-    '臺北市文山區興隆路三段 111 號 萬芳醫院',
-    '臺北市信義區吳興街 252 號 臺北醫學大學附設醫院'
-  ];
-  const demoIssueTypes=['乘客尚未準備','交通壅塞','無法聯絡乘客','無法臨停或停車','地址有誤','陪同人員未到','輪椅或設備不符','道路封閉或施工','車輛設備異常','臨時取消'];
-  const demoDispatchUserByOrg={org_demo_1:resolveDemoUserId('usr_demo_dispatch_01'),org_demo_2:resolveDemoUserId('usr_demo_dispatch_03'),org_demo_3:resolveDemoUserId('usr_demo_dispatch_04')};
-  const demoOrgIndex=orgId=>Math.max(1,Number(String(orgId||'').match(/(\d+)$/)?.[1]||1));
-  const demoPad=n=>String(n).padStart(2,'0');
-  const demoISO=(date,time='08:00')=>new Date(`${date}T${time}:00+08:00`).toISOString();
-  const demoTimePlus=(time,minutes)=>{const [h,m]=String(time).split(':').map(Number),total=h*60+m+minutes;return `${demoPad(Math.floor(total/60)%24)}:${demoPad(total%60)}`;};
-  const demoRecipient=(index)=>recipients[index%recipients.length];
-  const demoRecipientIds=(index)=>{const r=demoRecipient(index),requestedUserId=`usr_demo_requester_${demoPad(r.n)}`;return {r,userId:resolveDemoUserId(requestedUserId),recipientId:`rec_demo_expanded_${demoPad(r.n)}`};};
-  const demoTerms=(bookingId,version,at)=>{const sid=`${bookingId}_terms_v${version}`;return {sid,row:{id:sid,schemaVersion:1,bookingId,bookingVersion:version,reason:'demo_three_day_seed',quote:{schemaVersion:1,status:'ruleset_required',currency:'TWD',pricingRulesetVersion:null,estimatedFare:null,baseFare:null,distanceFare:null,timeFare:null,extraFee:null,explanation:'三日示範資料：尚未載入正式定價規則。',source:'demo_three_day_seed',capturedAt:at},benefit:{schemaVersion:1,status:'ruleset_required',cmsLevel:null,requestedService:'transportation',estimatedSubsidy:null,rulesetVersion:null,sourceAssessmentId:null,explanation:'三日示範資料：尚未載入正式補助規則。',capturedAt:at},capturedByUserId:null,capturedAt:at}};};
-
-  demoOrgIds.forEach(orgId=>{
-    const oi=demoOrgIndex(orgId);
-    for(let i=1;i<=5;i++){
-      const id=`veh_demo_${oi}_${demoPad(i)}`;
-      if(db.vehicles.some(v=>v.id===id))continue;
-      db.vehicles.push({id,organizationId:orgId,plate:`DE${oi}-${String(1000+i).slice(-4)}`,model:i%2===0?'Toyota Sienta 福祉車':'Volkswagen Caddy Maxi',capacity:i===5?6:4,wheelchairSlots:i%2===0?2:1,accessible:true,status:'available',retiredAt:null,retiredByUserId:null,createdAt:createdAt,updatedAt:createdAt});
-    }
-  });
-
-  const ensureDemoBooking=(spec)=>{
-    if(db.bookings.some(b=>b.id===spec.id))return db.bookings.find(b=>b.id===spec.id);
-    const meta=demoRecipientIds(spec.recipientIndex),r=meta.r,submittedAt=spec.submittedAt||demoISO(spec.date,'06:00');
-    const tripType=spec.tripType||'單程',returnTime=tripType==='來回'?(spec.returnTime||demoTimePlus(spec.time,240)):'',returnDate=tripType==='來回'?spec.date:'';
-    const pickupAddress=r.address,destination=spec.destination||demoDestinations[spec.recipientIndex%demoDestinations.length];
-    const defaults={aidNeed:r.aid||'',companions:r.companions||0,specialNeed:r.special||'',requiresAccessibleVehicle:!!r.accessible,requiresEscort:!!r.escort,transferAssistance:r.transfer||'unknown'};
-    const locations=bookingLocationsFromLegacy({pickupAddress,destination,pickupAccessNote:`${spec.date} 示範：請於門口前 5 分鐘準備`,destinationAccessNote:'請依院區接送區指示下車'});
-    const legs=bookingLegsFromLegacy(spec.id,{pickupDate:spec.date,pickupTime:spec.time,tripType,returnDate,returnTime},locations,null);
-    if(spec.state==='scheduled'&&spec.tripId){legs.forEach((leg,idx)=>{leg.status='scheduled';leg.tripId=idx===0?spec.tripId:`${spec.tripId}_return`;leg.scheduledOrganizationId=spec.organizationId;leg.scheduledAt=submittedAt;});}
-    const version=spec.state==='scheduled'?3:spec.state==='claimed'?2:1,terms=demoTerms(spec.id,version,submittedAt);
-    const booking={
-      id:spec.id,state:spec.state,version,revisionNo:0,stateChangedAt:submittedAt,updatedAt:submittedAt,
-      organizationId:spec.organizationId||null,claimStatus:spec.state==='open'?'open':'claimed',claimedByUserId:spec.state==='open'?null:(spec.claimedByUserId||demoDispatchUserByOrg[spec.organizationId]||null),claimedAt:spec.state==='open'?null:submittedAt,
-      recipientId:meta.recipientId,status:spec.state==='scheduled'?'scheduled':'pending',tripId:spec.tripId||null,submittedAt,source:'demo_three_day_seed',externalBookingId:`DEMO-${spec.id}`,
-      requestedByUserId:meta.userId,name:r.name,phone:r.phone,pickupDate:spec.date,pickupTime:spec.time,pickupAddress,destination,tripType,returnDate,returnTime,
-      pickupAccessNote:locations.pickup.accessNote,destinationAccessNote:locations.dropoff.accessNote,
-      aidNeed:'',companions:String(spec.companions??r.companions??0),specialNeed:spec.specialNeed||r.special||'',note:`${spec.date} 三日示範資料`,consent:'同意',
-      serviceNeeds:{schemaVersion:1,recipientDefaultsSnapshot:defaults,bookingOverrides:{aidNeed:null,companions:spec.companions??null,specialNeed:spec.specialNeed||null},capturedAt:submittedAt},locations,legs,
-      marketExpiresAt:sharedBookingMarketExpiryISO({pickupDate:spec.date,pickupTime:spec.time},submittedAt),expiryPolicyVersion:BOOKING_EXPIRY_POLICY.policyVersion,expiredAt:null,expiryReason:null,
-      commercialSnapshots:[terms.row],activeCommercialSnapshotId:terms.sid
-    };
-    db.bookings.push(booking);
-    db.bookingEvents.push({id:`bevt_${spec.id}_created`,bookingId:spec.id,eventType:'created',action:null,fromState:null,toState:'open',actorUserId:meta.userId,organizationId:null,tripId:null,reasonCode:null,reasonText:'',source:'demo_three_day_seed',bookingVersion:1,metadata:{demoDate:spec.date},createdAt:submittedAt});
-    if(spec.state!=='open')db.bookingEvents.push({id:`bevt_${spec.id}_claimed`,bookingId:spec.id,eventType:'claimed',action:'claim',fromState:'open',toState:'claimed',actorUserId:booking.claimedByUserId,organizationId:spec.organizationId,tripId:null,reasonCode:null,reasonText:'三日示範資料 承接',source:'demo_three_day_seed',bookingVersion:2,metadata:{demoDate:spec.date},createdAt:submittedAt});
-    if(spec.state==='scheduled')db.bookingEvents.push({id:`bevt_${spec.id}_scheduled`,bookingId:spec.id,eventType:'leg_scheduled',action:'schedule',fromState:'claimed',toState:'scheduled',actorUserId:booking.claimedByUserId,organizationId:spec.organizationId,tripId:spec.tripId,reasonCode:null,reasonText:'三日示範資料 排車',source:'demo_three_day_seed',bookingVersion:3,metadata:{demoDate:spec.date,legId:legs[0]?.id||null,label:'去程'},createdAt:submittedAt});
-    return booking;
-  };
-
-  demoDates.forEach((date,di)=>{
-    demoPickupTimes.forEach((time,i)=>{
-      ensureDemoBooking({id:`booking_demo_market_${date.replaceAll('-','')}_${demoPad(i+1)}`,date,time,recipientIndex:di*3+i,state:'open',organizationId:null,tripType:i%4===3?'來回':'單程',companions:i%3===0?1:0,specialNeed:i%2===0?'示範：需準時抵達':'示範：一般接送'});
-    });
-  });
-
-  demoOrgIds.forEach(orgId=>{
-    const oi=demoOrgIndex(orgId),orgDrivers=db.drivers.filter(d=>d.organizationId===orgId&&d.active!==false),orgVehicles=db.vehicles.filter(v=>v.organizationId===orgId&&v.status==='available');
-    const deterministicDemoDriverId={1:'drv_demo_101',2:'drv_demo_201',3:'drv_demo_301'}[oi];
-    const primaryDriver=orgDrivers.find(d=>d.id===deterministicDemoDriverId)||orgDrivers.find(d=>d.id===`drv_${String(oi).padStart(3,'0')}`)||orgDrivers[0];
-    demoDates.forEach((date,di)=>{
-      demoPickupTimes.forEach((time,i)=>{
-        const id=`booking_demo_claimed_${oi}_${date.replaceAll('-','')}_${demoPad(i+1)}`;
-        const b=ensureDemoBooking({id,date,time:demoTimePlus(time,20),recipientIndex:oi*2+di+i,state:'claimed',organizationId:orgId,claimedByUserId:demoDispatchUserByOrg[orgId],tripType:i%4===0?'來回':'單程',companions:i%3===0?1:0,specialNeed:i%3===1?'示範：助行器隨車':'示範：待調度'});
-        const revId=`brev_demo_${oi}_${date.replaceAll('-','')}_${demoPad(i+1)}`;
-        if(!db.bookingRevisions.some(r=>r.id===revId))db.bookingRevisions.push({id:revId,schemaVersion:1,bookingId:id,revisionNo:1,actorUserId:b.requestedByUserId,reasonText:'三日示範：需求者補充接送注意事項',changedFields:['specialNeed'],snapshot:{editable:{pickupDate:b.pickupDate,pickupTime:b.pickupTime,pickupAddress:b.pickupAddress,destination:b.destination,tripType:b.tripType,returnDate:b.returnDate,returnTime:b.returnTime},locations:deepClone(b.locations),legs:deepClone(b.legs),serviceNeeds:deepClone(b.serviceNeeds),commercialSnapshot:deepClone(b.commercialSnapshots?.[0]||null),state:'claimed',organizationId:orgId,bookingVersion:2,updatedAt:b.updatedAt},createdAt:demoISO(date,'06:15')});
-        const amendEvtId=`bevt_${id}_amended_demo`;
-        if(!db.bookingEvents.some(e=>e.id===amendEvtId))db.bookingEvents.push({id:amendEvtId,bookingId:id,eventType:'amended',action:'amend',fromState:'claimed',toState:'claimed',actorUserId:b.requestedByUserId,organizationId:orgId,tripId:null,reasonCode:null,reasonText:'三日示範：補充接送注意事項',source:'demo_three_day_seed',bookingVersion:2,metadata:{revisionNo:1,changedFields:['specialNeed'],demoDate:date},createdAt:demoISO(date,'06:15')});
-      });
-
-      demoPickupTimes.forEach((time,i)=>{
-        const tripId=`trip_demo_${oi}_${date.replaceAll('-','')}_${demoPad(i+1)}`,bookingId=`booking_demo_scheduled_${oi}_${date.replaceAll('-','')}_${demoPad(i+1)}`;
-        const vehicle=orgVehicles[i%orgVehicles.length],meta=demoRecipientIds(di*4+oi+i),r=meta.r,destination=demoDestinations[(oi*2+i)%demoDestinations.length];
-        const pickupAt=new Date(`${date}T${time}:00+08:00`),departAt=new Date(pickupAt.getTime()-20*60000),dropoffAt=new Date(pickupAt.getTime()+40*60000),submittedAt=demoISO(date,'05:30');
-        const b=ensureDemoBooking({id:bookingId,date,time,recipientIndex:di*4+oi+i,state:'scheduled',organizationId:orgId,claimedByUserId:demoDispatchUserByOrg[orgId],tripId,tripType:'單程',companions:i%3===0?1:0,specialNeed:i%2===0?'示範：預排正式行程':'示範：一般接送'});
-        if(!db.trips.some(t=>t.id===tripId))db.trips.push({
-          id:tripId,organizationId:orgId,dispatchPlanId:null,code:`DM-${date.slice(5).replace('-','')}-${oi}${demoPad(i+1)}`,date,driverId:primaryDriver?.id||null,vehicleId:vehicle?.id||null,status:'scheduled',
-          bookingIds:[bookingId],bookingLegRefs:[{bookingId,legId:b.legs?.[0]?.id||null}],pickupLocation:deepClone(b.locations.pickup),dropoffLocation:deepClone(b.locations.dropoff),
-          passengerSummary:r.name,passengerCount:1+Number(b.companions||0),isPooled:false,needs:[r.aid,b.specialNeed].filter(Boolean).join('・')||'一般乘客',pickupAddress:r.address,dropoffAddress:destination,
-          estimatedEmptyKm:Number((2.4+(i%5)*0.8).toFixed(1)),estimatedLoadedKm:Number((5.8+(i%6)*1.1).toFixed(1)),optimizerScore:78+(i%6),currentStepIndex:0,createdAt:submittedAt,completedAt:null,
-          steps:[
-            {id:`${tripId}_depart`,type:'depart',scheduledAt:departAt.toISOString(),title:`準備下一趟｜${r.name}`,name:`出發前往${r.name}`,destination:r.address,contacts:[{name:r.name,phone:r.phone}],note:'三日示範：確認車況與接送需求',actualAt:null,status:'pending'},
-            {id:`${tripId}_pickup`,type:'pickup',scheduledAt:pickupAt.toISOString(),title:`接送｜${r.name}`,name:r.name,destination:r.address,contacts:[{name:r.name,phone:r.phone}],note:'三日示範：依預定時間接到乘客',actualAt:null,status:'pending'},
-            {id:`${tripId}_dropoff`,type:'dropoff',scheduledAt:dropoffAt.toISOString(),title:'目的地',name:`送達${r.name}`,destination,contacts:[{name:r.name,phone:r.phone}],note:'三日示範：安全送達後完成行程',actualAt:null,status:'pending'}
-          ]
-        });
-        const demoTrip=db.trips.find(t=>t.id===tripId);
-        if(demoTrip){
-          if(primaryDriver?.id)demoTrip.driverId=primaryDriver.id;
-          demoTrip.isPooled=(demoTrip.bookingIds||[]).length>1;
-          const demoDateRelation=String(date).localeCompare(dateKey());
-          if(demoDateRelation>0){
-            demoTrip.status='scheduled';demoTrip.currentStepIndex=0;demoTrip.steps.forEach(step=>{step.actualAt=null;step.status='pending';});demoTrip.completedAt=null;
-          }else if(i<4){demoTrip.status='completed';demoTrip.currentStepIndex=demoTrip.steps.length;demoTrip.steps.forEach((step,si)=>{step.actualAt=new Date(new Date(step.scheduledAt).getTime()+((si+i)%3)*60000).toISOString();step.status='completed';});demoTrip.completedAt=demoTrip.steps[demoTrip.steps.length-1].actualAt;}
-          else if(i===4&&demoDateRelation===0){demoTrip.status='in_progress';demoTrip.currentStepIndex=1;demoTrip.steps[0].actualAt=new Date(new Date(demoTrip.steps[0].scheduledAt).getTime()+60000).toISOString();demoTrip.steps[0].status='completed';demoTrip.steps.slice(1).forEach(step=>{step.actualAt=null;step.status='pending';});demoTrip.completedAt=null;}
-          else{demoTrip.status=demoDateRelation<0?'completed':'scheduled';demoTrip.currentStepIndex=demoDateRelation<0?demoTrip.steps.length:0;demoTrip.steps.forEach((step,si)=>{if(demoDateRelation<0){step.actualAt=new Date(new Date(step.scheduledAt).getTime()+((si+i)%4)*60000).toISOString();step.status='completed';}else{step.actualAt=null;step.status='pending';}});demoTrip.completedAt=demoDateRelation<0?demoTrip.steps[demoTrip.steps.length-1].actualAt:null;}
-        }
-
-        const issueId=`issue_demo_${oi}_${date.replaceAll('-','')}_${demoPad(i+1)}`;
-        const existingDemoIssue=db.issues.find(x=>x.id===issueId);
-        if(existingDemoIssue){if(primaryDriver?.id)existingDemoIssue.driverId=primaryDriver.id;}
-        else db.issues.push({id:issueId,organizationId:orgId,tripId,stepId:`${tripId}_pickup`,driverId:primaryDriver?.id||null,type:demoIssueTypes[i%demoIssueTypes.length],note:`${date} 示範異常 #${i+1}：供異常中心與處理流程測試`,status:i%4===0?'resolved':'open',createdAt:demoISO(date,demoTimePlus(time,5)),resolvedAt:i%4===0?demoISO(date,demoTimePlus(time,20)):null,resolvedBy:i%4===0?demoDispatchUserByOrg[orgId]:null});
-
-        const ntfId=`ntf_demo_${oi}_${date.replaceAll('-','')}_${demoPad(i+1)}`;
-        if(!db.notifications.some(n=>n.id===ntfId))db.notifications.push({id:ntfId,organizationId:orgId,recipientId:meta.recipientId,channel:i%3===0?'sms':'line',template:i%2===0?'booking_confirmed':'trip_reminder',eventType:i%2===0?'TRIP_CREATED':'TRIP_REMINDER',payload:{tripId,bookingId,date,time},status:i%3===0?'sent':'queued',createdAt:demoISO(date,'06:30'),sentAt:i%3===0?demoISO(date,'06:35'):null,error:null});
-
-        const benefitId=`benefit_demo_${oi}_${date.replaceAll('-','')}_${demoPad(i+1)}`;
-        if(!db.benefitAssessments.some(x=>x.id===benefitId))db.benefitAssessments.push({id:benefitId,organizationId:orgId,recipientId:meta.recipientId,cmsLevel:(i%8)+1,requestedService:'transportation',status:'ruleset_required',estimatedSubsidy:null,rulesetVersion:null,explanation:`${date} 示範：等待正式補助規則`,createdAt:demoISO(date,'06:40')});
-      });
-
-      for(let p=1;p<=10;p++){
-        const planId=`dispatch_demo_${oi}_${date.replaceAll('-','')}_${demoPad(p)}`;
-        if(db.dispatchPlans.some(x=>x.id===planId))continue;
-        const linkedBooking=`booking_demo_claimed_${oi}_${date.replaceAll('-','')}_${demoPad(p)}`;
-        db.dispatchPlans.push({id:planId,organizationId:orgId,date,status:p===10?'draft':'applied',createdAt:demoISO(date,'06:50'),confirmedAt:p===10?null:demoISO(date,'06:55'),appliedAt:p===10?null:demoISO(date,'07:00'),items:[],summary:{bookings:10,trips:10,poolGroups:2,savedTrips:1,emptyKm:28+p,loadedKm:72+p},demoLinkedBookingId:linkedBooking});
-      }
-    });
-  });
-
-  demoDates.forEach((date,di)=>{
-    for(let i=1;i<=10;i++){
-      const orgId=demoOrgIds[(i-1)%demoOrgIds.length],meta=demoRecipientIds(di*3+i),reportId=`sysr_demo_${date.replaceAll('-','')}_${demoPad(i)}`;
-      if(!db.systemReports.some(r=>r.id===reportId))db.systemReports.push({id:reportId,organizationId:orgId,userId:demoDispatchUserByOrg[orgId],role:'dispatcher',category:i%2===0?'預約／派車':'介面／操作',title:`${date} 示範系統回報 ${i}`,detail:`三日示範資料 第 ${i} 筆系統問題，供平台問題管理流程測試。`,status:i%4===0?'resolved':'open',createdAt:demoISO(date,`1${i%10}:05`),resolvedAt:i%4===0?demoISO(date,`1${i%10}:35`):null,resolvedBy:i%4===0?'usr_super_admin':null});
-      const evtId=`evt_demo_${date.replaceAll('-','')}_${demoPad(i)}`;
-      if(!db.events.some(e=>e.id===evtId))db.events.push({id:evtId,at:demoISO(date,`1${i%10}:10`),action:i%2===0?'booking_demo_reviewed':'trip_demo_checked',detail:`${date} Demo Audit #${i}`,organizationId:orgId,actorUserId:demoDispatchUserByOrg[orgId],bookingId:`booking_demo_claimed_${demoOrgIndex(orgId)}_${date.replaceAll('-','')}_${demoPad(i)}`});
-      const crevtId=`crevt_demo_${date.replaceAll('-','')}_${demoPad(i)}`;
-      if(!db.careRecipientEvents.some(e=>e.id===crevtId))db.careRecipientEvents.push({id:crevtId,recipientId:meta.recipientId,eventType:'profile_reviewed',actorUserId:'usr_super_admin',organizationId:null,relationId:null,detail:`${date} 示範：服務對象資料例行檢視 #${i}`,changes:null,createdAt:demoISO(date,`1${i%10}:15`)});
-      const memberships=db.memberships.filter(m=>m.organizationId!==APP_CONFIG.requesterOrganizationId),m=memberships[(di*10+i-1)%Math.max(1,memberships.length)],mevtId=`mevt_demo_${date.replaceAll('-','')}_${demoPad(i)}`;
-      if(m&&!db.membershipEvents.some(e=>e.id===mevtId))db.membershipEvents.push({id:mevtId,membershipId:m.id,userId:m.userId,organizationId:m.organizationId,eventType:'status_reviewed',fromStatus:m.status||'active',toStatus:m.status||'active',fromRole:m.role,toRole:m.role,actorUserId:'usr_super_admin',createdAt:demoISO(date,`1${i%10}:20`),note:`${date} 示範組織身分稽核 #${i}`});
-    }
-  });
-
-  db.demoThreeDayData={revision:1,dates:[...demoDates],minimumPerDate:10,generatedAt:createdAt};
-
-  const demoRecipientById=new Map((db.careRecipients||[]).map(r=>[r.id,r]));
-  (db.bookings||[]).forEach(b=>{
-    if(BOOKING_SERVICE_JURISDICTIONS.includes(String(b.serviceJurisdiction||'')))return;
-    const r=demoRecipientById.get(b.recipientId),addresses=r?.addresses||{},entries=Array.isArray(addresses.entries)?addresses.entries:[];
-    const home=entries.find(x=>x.id===addresses.primaryAddressId)||entries.find(x=>x.type==='home')||entries[0];
-    const residenceAddress=String(home?.address||home?.addressText||'').trim();
-    b.serviceJurisdiction=serviceJurisdictionFromResidenceAddress(residenceAddress);
-    b.serviceJurisdictionSource=residenceAddress?'seed_care_recipient_residence':'seed_unknown';
-    b.serviceJurisdictionResidenceCity=locationCity(residenceAddress)||null;
-    b.serviceJurisdictionCapturedAt=b.serviceJurisdictionCapturedAt||b.submittedAt||b.updatedAt||createdAt;
-  });
-
-  db.demoSeedRevision=8;
-  repairCareRecipientReferencesInDb(db,{source:'expanded_demo_seed'});
-}
-
-
-
-function mergeReportSpreadsheetVolume_(db){
-  db.organizations=Array.isArray(db.organizations)?db.organizations:[];
-  db.users=Array.isArray(db.users)?db.users:[];
-  db.memberships=Array.isArray(db.memberships)?db.memberships:[];
-  db.membershipEvents=Array.isArray(db.membershipEvents)?db.membershipEvents:[];
-  db.drivers=Array.isArray(db.drivers)?db.drivers:[];
-
-  const updatedAt='2026-08-31T08:35:00+08:00';
-  const localPhone=(value='')=>{
-    const d=digitsOnly(value);
-    if(/^8869\d{8}$/.test(d))return `0${d.slice(3)}`;
-    if(/^9\d{8}$/.test(d))return `0${d}`;
-    return d;
-  };
-  const addOrg=(row)=>{
-    const old=db.organizations.find(o=>o.id===row.id);
-    if(old){Object.assign(old,row);return old;}
-    db.organizations.push(row);return row;
-  };
-  const addUser=(row)=>{
-    const normalized={...row,phone:localPhone(row.phone),password:'123456',active:true,updatedAt:row.updatedAt||updatedAt};
-    const old=db.users.find(u=>u.id===row.id);
-    if(old){Object.assign(old,normalized);return old;}
-    db.users.push(normalized);return normalized;
-  };
-  const addMembership=(row)=>{
-    const old=db.memberships.find(m=>m.id===row.id);
-    if(old){Object.assign(old,row);return old;}
-    db.memberships.push(row);
-    db.membershipEvents.push({
-      id:`ME-${row.id}`,membershipId:row.id,userId:row.userId,organizationId:row.organizationId,
-      eventType:'created',fromStatus:null,toStatus:'active',fromRole:null,toRole:row.role,
-      actorUserId:'usr_super_admin',createdAt:row.createdAt||updatedAt,note:'報告展示板大量 Demo Data'
-    });
-    return row;
-  };
-  const addRoleUser=(x)=>{
-    addUser({
-      id:x.id,name:x.name,phone:x.phone,email:x.email||'',authProvider:x.provider||'password',
-      authSubjectId:x.subject||`password:${x.id}`,platformRole:'none',createdAt:x.createdAt||updatedAt
-    });
-    const orgId=x.role==='requester'?APP_CONFIG.requesterOrganizationId:x.orgId;
-    addMembership({
-      id:`MEM-REPORT-${x.id}`,userId:x.id,organizationId:orgId,role:x.role,status:'active',
-      createdAt:x.createdAt||updatedAt,updatedAt,source:'report_spreadsheet_volume'
-    });
-    if(x.role==='driver'&&!db.drivers.some(d=>d.userId===x.id)){
-      db.drivers.push({
-        id:`DRV-REPORT-${String(x.no||'').padStart(3,'0')}`,
-        userId:x.id,organizationId:x.orgId,fleetId:null,
-        status:(Number(x.no||0)%6===0?'off_duty':'on_duty'),
-        serviceArea:['臺北市內湖區','臺北市士林區','臺北市大安區','新北市板橋區','新北市新莊區','新北市中和區'][Number(x.no||0)%6],
-        active:true,createdAt:x.createdAt||updatedAt,updatedAt
-      });
-    }
-  };
-
-  [
-    ['ORG-TP-004','康程福祉交通有限公司','53618420','02-27861234'],
-    ['ORG-TP-005','安心同行接送有限公司','83170546','02-22561288'],
-    ['ORG-TP-006','樂齡順行車隊有限公司','90267135','02-29351206'],
-    ['ORG-TP-007','好伴長照交通有限公司','42780513','02-29981225'],
-    ['ORG-TP-008','暖心無障礙接送有限公司','83576021','02-26581239'],
-    ['ORG-TP-009','康健福祉車隊有限公司','50731682','02-28261270'],
-    ['ORG-TP-010','守護同行交通有限公司','90857214','02-22281218']
-  ].forEach(([id,name,taxId,contactPhone],i)=>addOrg({
-    id,type:'transport_provider',name,taxId,contactPhone,active:true,
-    createdAt:`2026-08-25T${String(9+i).padStart(2,'0')}:00:00+08:00`,updatedAt
-  }));
-
-  const orgs=['ORG-TP-001','ORG-TP-002','ORG-TP-003','ORG-TP-004','ORG-TP-005','ORG-TP-006','ORG-TP-007','ORG-TP-008','ORG-TP-009','ORG-TP-010'];
-
-  const ownerNames=['陳志豪','林柏翰','黃維仁','張秀蘭','李子晴','王瑞芳','吳俊傑'];
-  const ownerProviders=['google','apple','facebook','firebase','google','apple','facebook'];
-  ownerNames.forEach((name,i)=>{
-    const n=i+4,nn=String(n).padStart(3,'0'),provider=ownerProviders[i];
-    addRoleUser({
-      id:`USR-OWNER-${nn}`,name,phone:`+886910400${nn}`,email:`owner.${nn}@care-ride.demo`,
-      provider,subject:`demo-${provider}-owner-${nn}`,role:'owner',orgId:`ORG-TP-${nn}`,
-      createdAt:`2026-08-25T${String(9+i).padStart(2,'0')}:00:00+08:00`
-    });
-  });
-
-  const dispNames=['劉宗翰','蔡佩玲','楊惠雯','許欣怡','鄭怡君','謝淑芬','郭怡蓁','洪俊宏','曾麗華','邱郁婷','廖冠宇'];
-  const cycle=['firebase','google','apple','facebook'];
-  dispNames.forEach((name,i)=>{
-    const n=i+5,nn=String(n).padStart(3,'0'),provider=cycle[i%4];
-    addRoleUser({
-      id:`USR-DISP-${nn}`,name,phone:`+886920500${nn}`,email:`disp.${nn}@care-ride.demo`,
-      provider,subject:`demo-${provider}-disp-${nn}`,role:'dispatcher',orgId:orgs[i%orgs.length],
-      createdAt:new Date(Date.parse('2026-08-25T16:00:00+08:00')+i*3600000).toISOString()
-    });
-  });
-
-  const driverNames=[
-    '賴美玲','周志明','徐哲宇','蘇宜庭','葉佳慧','莊佳蓉','呂佳穎','江家豪',
-    '何明哲','蕭國豪','羅家銘','高佩珊','陳雅雯','林詩涵','黃承翰','張偉倫',
-    '李雅婷','王建宏','吳冠廷','劉婉婷','蔡宇翔','楊嘉宏','許志豪','鄭柏翰'
-  ];
-  const roleCycle=['facebook','firebase','google','apple'];
-  driverNames.forEach((name,i)=>{
-    const n=i+7,nn=String(n).padStart(2,'0'),nn3=String(n).padStart(3,'0'),provider=roleCycle[i%4];
-    addRoleUser({
-      id:`USR-DRV-${nn}`,name,phone:`+886930600${nn3}`,email:`drv.${nn3}@care-ride.demo`,
-      provider,subject:`demo-${provider}-drv-${nn3}`,role:'driver',orgId:orgs[i%orgs.length],no:n,
-      createdAt:new Date(Date.parse('2026-08-26T03:00:00+08:00')+i*3600000).toISOString()
-    });
-  });
-
-  const reqNames=[
-    '謝維仁','郭秀蘭','洪子晴','曾瑞芳','邱俊傑','廖宗翰','賴佩玲','周惠雯',
-    '徐欣怡','蘇怡君','葉淑芬','莊怡蓁','呂俊宏','江麗華','何郁婷','蕭冠宇',
-    '羅美玲','高志明','陳哲宇','林宜庭','黃佳慧','張佳蓉','李佳穎','王家豪',
-    '吳明哲','劉國豪','蔡家銘','楊佩珊'
-  ];
-  reqNames.forEach((name,i)=>{
-    const n=i+11,nn=String(n).padStart(2,'0'),nn3=String(n).padStart(3,'0'),provider=roleCycle[i%4];
-    addRoleUser({
-      id:`USR-REQ-${nn}`,name,phone:`+886940700${nn3}`,email:`req.${nn3}@care-ride.demo`,
-      provider,subject:`demo-${provider}-req-${nn3}`,role:'requester',orgId:APP_CONFIG.requesterOrganizationId,
-      createdAt:new Date(Date.parse('2026-08-27T03:00:00+08:00')+i*3600000).toISOString()
-    });
-  });
-
-  [
-    {id:'USR-DISP-004',name:'曾怡蓁',phone:'+886900001204',email:'tseng.yizhen@example.com',provider:'google',subject:'demo-google-dispatch-004',role:'dispatcher',orgId:'ORG-TP-001'},
-    {id:'USR-G-6240D86490774EAC',name:'Jerry',phone:'0955000001',email:'viz963@gmail.com',provider:'google',subject:'104290654280709152686',role:'requester'},
-    {id:'USR-PW-0B9EF44D1A004744',name:'Alex',phone:'0912345678',email:'ijsfi@yahoo.com.tw',provider:'password',role:'requester'},
-    {id:'USR-PW-FBAD8971D89A471F',name:'Alex',phone:'0987654321',email:'hrugrhu@yahoo.com.tw',provider:'password',role:'requester'},
-    {id:'USR-PW-1A91865497464747',name:'小王',phone:'0988888888',email:'',provider:'password',role:'requester'},
-    {id:'USR-REQ-39',name:'陳秀琴',phone:'+886940700039',email:'req.039@care-ride.demo',provider:'google',subject:'demo-google-req-039',role:'requester'}
-  ].forEach((x,i)=>addRoleUser({...x,orgId:x.orgId||APP_CONFIG.requesterOrganizationId,createdAt:`2026-08-30T18:${String(13+i).padStart(2,'0')}:00+08:00`}));
-
-  let seq=40;
-  while(db.users.length<100){
-    const nn=String(seq).padStart(3,'0');
-    addRoleUser({
-      id:`USR-REQ-VOLUME-${nn}`,name:`展示需求者 ${nn}`,phone:`0958${String(seq).padStart(6,'0')}`,
-      email:`volume.${nn}@care-ride.demo`,provider:'password',role:'requester',
-      orgId:APP_CONFIG.requesterOrganizationId,createdAt:updatedAt
-    });
-    seq++;
-  }
-
-  db.reportDemoVolume={
-    source:'Google Sheet 使用者資料＋報告展示補量',
-    targetUsers:100,
-    actualUsers:db.users.length,
-    generatedAt:updatedAt
-  };
-}
-
-function prepareReportDemoData_({reset=false}={}){
-  if(reset){
-    store.reset(false);
-    try{GoogleDatabase?.hydrateEmbedded?.({force:true});}
-    catch(error){console.warn('[Demo] embedded snapshot hydration warning',error);}
-  }
-  store.mutate(db=>{
-    ensureExpandedDemoData(db);
-    mergeReportSpreadsheetVolume_(db);
-    (db.users||[]).forEach(user=>{
-      if(user&&user.active!==false)user.password='123456';
-    });
-    const admin=(db.users||[]).find(u=>u.id==='usr_super_admin');
-    if(admin){
-      admin.name='平台超級管理者';
-      admin.phone='0999999999';
-      admin.password='123456';
-      admin.active=true;
-      admin.platformRole='super_admin';
-    }
-    db.integration={
-      ...(db.integration||{}),
-      googleDatabaseLastSyncAt:nowISO(),
-      lastSyncAt:nowISO(),
-      lastSyncStatus:'Demo 展示資料已載入',
-      lastSyncDetails:[
-        '報告展示模式',
-        `本機展示使用者：${(db.users||[]).length} 名`,
-        `本機組織：${(db.organizations||[]).length} 個`,
-        '不連線 Apps Script / Netlify / Google Database',
-        '所有 Demo 帳號密碼：123456'
-      ]
-    };
-  },{remote:false,reason:'report_demo'});
-  return {
-    ok:true,
-    mode:'report_demo_local',
-    message:'Demo 展示資料已重新載入',
-    counts:{
-      organizations:(store.state.organizations||[]).length,
-      users:(store.state.users||[]).length,
-      memberships:(store.state.memberships||[]).length,
-      careRecipients:(store.state.careRecipients||[]).length,
-      bookings:(store.state.bookings||[]).length,
-      trips:(store.state.trips||[]).length
-    }
-  };
-}
-if(window.CARE_RIDE_RUNTIME?.demo){
-  window.resetReportDemo=()=>{
-    try{
-      Identity?.logout?.();
-      prepareReportDemoData_({reset:true});
-      location.reload();
-    }catch(error){
-      console.error('[Demo] reset failed',error);
-    }
   };
 }
 
@@ -3395,7 +2850,7 @@ function repairCareRecipientReferencesInDb(db,{source='load'}={}){
   db.dataRepairLog=Array.isArray(db.dataRepairLog)?db.dataRepairLog:[];
   const changed=Object.entries(stats).some(([k,v])=>k!=='unresolved'&&Number(v)>0);
   if(changed||stats.unresolved.length){
-    db.dataRepairLog.unshift({id:uid('repair'),module:'care_recipient',version:'12.25.14',source,stats:deepClone(stats),createdAt:nowISO()});
+    db.dataRepairLog.unshift({id:uid('repair'),module:'care_recipient',version:'12.26.0',source,stats:deepClone(stats),createdAt:nowISO()});
     if(db.dataRepairLog.length>30)db.dataRepairLog.length=30;
   }
   return stats;
@@ -3425,7 +2880,7 @@ function authoritativeDiff_(before,after){
     a.forEach((record,id)=>{if(!b.has(id))changes.push({collection,id,record:authoritativeSanitizeRecord_(collection,record),previousRecord:authoritativeSanitizeRecord_(collection,record),deleted:true,expectedRevision:collection==='trips'?Math.max(0,Number(record.revision)||0):undefined});});
   });return changes;
 }
-function authoritativeProduction_(){return !window.CARE_RIDE_RUNTIME?.previewSafe&&!window.CARE_RIDE_RUNTIME?.demo;}
+function authoritativeProduction_(){return true;}
 function authoritativeCurrentActor_(){try{return Identity?.currentUser?.()?.id||null;}catch{return null;}}
 function authoritativePersistQueue_(){
   try{LocalStore.setItem(AUTHORITATIVE_QUEUE_KEY,JSON.stringify([...authoritativeQueue.values()]));}catch{}
@@ -4070,8 +3525,6 @@ const GOOGLE_DB_SHEETS=Object.freeze([
   '預約異動歷史','調度最佳化','異常回報','通知紀錄','補助試算','系統回報','KPI每日','預約報價快照','取消退單','行程遙測事件','應用狀態'
 ]);
 const GOOGLE_DB_REQUIRED=Object.freeze(['組織','使用者','成員資格','服務對象','預約','司機','車輛','行程','行程預約關聯']);
-const GOOGLE_DB_EMBEDDED_REVISION='2026-08-29T02:37:00+08:00';
-const GOOGLE_DB_EMBEDDED_TABLES=Object.freeze({"組織":[{"組織ID":"ORG-TP-001","組織類型":"transport_provider","組織名稱":"安馨福祉交通有限公司","統一編號":"83521467","聯絡電話":"02-27931280","啟用狀態":true,"建立時間":"2026-08-20T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00"},{"組織ID":"ORG-TP-002","組織類型":"transport_provider","組織名稱":"暖行長照接送有限公司","統一編號":"42763195","聯絡電話":"02-29581066","啟用狀態":true,"建立時間":"2026-08-21T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00"},{"組織ID":"ORG-CF-001","組織類型":"care_facility","組織名稱":"松柏日間照顧中心","統一編號":"50728431","聯絡電話":"02-28341572","啟用狀態":true,"建立時間":"2026-08-22T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00"},{"組織ID":"ORG-REQ-001","組織類型":"requester_hub","組織名稱":"個人需求者中心","統一編號":"","聯絡電話":"","啟用狀態":true,"建立時間":"2026-08-20T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00"},{"組織ID":"ORG-TP-003","組織類型":"transport_provider","組織名稱":"樂福無障礙車隊有限公司","統一編號":"90831642","聯絡電話":"02-86671258","啟用狀態":true,"建立時間":"2026-08-29T00:20:00+08:00","更新時間":"2026-08-29T00:40:00+08:00"}],"使用者":[{"使用者ID":"USR-SUPER-JERRY","顯示名稱":"Jerry","手機號碼(E.164)":"","電子郵件":"","驗證提供者":"firebase","驗證主體ID":"pending-firebase-USR-SUPER-JERRY","啟用狀態":true,"建立時間":"2026-08-20T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","平台角色":"super_admin"},{"使用者ID":"USR-OWNER-001","顯示名稱":"林雅雯","手機號碼(E.164)":"+886900001101","電子郵件":"lin.yawen@example.com","驗證提供者":"google","驗證主體ID":"demo-google-owner-001","啟用狀態":true,"建立時間":"2026-08-20T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","平台角色":"none"},{"使用者ID":"USR-OWNER-002","顯示名稱":"周雅婷","手機號碼(E.164)":"+886900001102","電子郵件":"chou.yating@example.com","驗證提供者":"apple","驗證主體ID":"demo-apple-owner-002","啟用狀態":true,"建立時間":"2026-08-21T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","平台角色":"none"},{"使用者ID":"USR-OWNER-003","顯示名稱":"鄭佩珊","手機號碼(E.164)":"+886900001103","電子郵件":"cheng.peishan@example.com","驗證提供者":"facebook","驗證主體ID":"demo-facebook-owner-003","啟用狀態":true,"建立時間":"2026-08-24T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","平台角色":"none"},{"使用者ID":"USR-DISP-001","顯示名稱":"張怡婷","手機號碼(E.164)":"+886900001201","電子郵件":"chang.yiting@example.com","驗證提供者":"google","驗證主體ID":"demo-google-dispatch-001","啟用狀態":true,"建立時間":"2026-08-20T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","平台角色":"none"},{"使用者ID":"USR-DISP-002","顯示名稱":"陳冠宇","手機號碼(E.164)":"+886900001202","電子郵件":"chen.guanyu@example.com","驗證提供者":"apple","驗證主體ID":"demo-apple-dispatch-002","啟用狀態":true,"建立時間":"2026-08-21T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","平台角色":"none"},{"使用者ID":"USR-DISP-003","顯示名稱":"黃佳穎","手機號碼(E.164)":"+886900001203","電子郵件":"huang.jiaying@example.com","驗證提供者":"firebase","驗證主體ID":"demo-firebase-dispatch-003","啟用狀態":true,"建立時間":"2026-08-24T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","平台角色":"none"},{"使用者ID":"USR-DRV-01","顯示名稱":"李志豪","手機號碼(E.164)":"+886900002101","電子郵件":"li.zhihao@example.com","驗證提供者":"google","驗證主體ID":"demo-google-driver-01","啟用狀態":true,"建立時間":"2026-08-20T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","平台角色":"none"},{"使用者ID":"USR-DRV-02","顯示名稱":"王柏翰","手機號碼(E.164)":"+886900002102","電子郵件":"wang.bohan@example.com","驗證提供者":"firebase","驗證主體ID":"demo-firebase-driver-02","啟用狀態":true,"建立時間":"2026-08-21T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","平台角色":"none"},{"使用者ID":"USR-DRV-03","顯示名稱":"吳建宏","手機號碼(E.164)":"+886900002103","電子郵件":"wu.jianhong@example.com","驗證提供者":"google","驗證主體ID":"demo-google-driver-03","啟用狀態":true,"建立時間":"2026-08-20T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","平台角色":"none"},{"使用者ID":"USR-DRV-04","顯示名稱":"許家豪","手機號碼(E.164)":"+886900002104","電子郵件":"hsu.jiahao@example.com","驗證提供者":"apple","驗證主體ID":"demo-apple-driver-04","啟用狀態":true,"建立時間":"2026-08-21T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","平台角色":"none"},{"使用者ID":"USR-DRV-05","顯示名稱":"郭俊傑","手機號碼(E.164)":"+886900002105","電子郵件":"kuo.junjie@example.com","驗證提供者":"facebook","驗證主體ID":"demo-facebook-driver-05","啟用狀態":true,"建立時間":"2026-08-24T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","平台角色":"none"},{"使用者ID":"USR-DRV-06","顯示名稱":"蔡宗翰","手機號碼(E.164)":"+886900002106","電子郵件":"tsai.zonghan@example.com","驗證提供者":"firebase","驗證主體ID":"demo-firebase-driver-06","啟用狀態":true,"建立時間":"2026-08-20T09:00:00+08:00","更新時間":"2026-08-27T18:20:00+08:00","平台角色":"none"},{"使用者ID":"USR-REQ-01","顯示名稱":"王淑芬","手機號碼(E.164)":"+886900003101","電子郵件":"wang.shufen@example.com","驗證提供者":"google","驗證主體ID":"demo-google-requester-01","啟用狀態":true,"建立時間":"2026-08-22T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","平台角色":"none"},{"使用者ID":"USR-REQ-02","顯示名稱":"陳佩玲","手機號碼(E.164)":"+886900003102","電子郵件":"chen.peiling@example.com","驗證提供者":"apple","驗證主體ID":"demo-apple-requester-02","啟用狀態":true,"建立時間":"2026-08-23T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","平台角色":"none"},{"使用者ID":"USR-REQ-03","顯示名稱":"林志明","手機號碼(E.164)":"+886900003103","電子郵件":"lin.zhiming@example.com","驗證提供者":"facebook","驗證主體ID":"demo-facebook-requester-03","啟用狀態":true,"建立時間":"2026-08-24T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","平台角色":"none"},{"使用者ID":"USR-REQ-04","顯示名稱":"黃美玲","手機號碼(E.164)":"+886900003104","電子郵件":"huang.meiling@example.com","驗證提供者":"google","驗證主體ID":"demo-google-requester-04","啟用狀態":true,"建立時間":"2026-08-22T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","平台角色":"none"},{"使用者ID":"USR-REQ-05","顯示名稱":"李怡君","手機號碼(E.164)":"+886900003105","電子郵件":"li.yijun@example.com","驗證提供者":"firebase","驗證主體ID":"demo-firebase-requester-05","啟用狀態":true,"建立時間":"2026-08-23T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","平台角色":"none"},{"使用者ID":"USR-REQ-06","顯示名稱":"張維仁","手機號碼(E.164)":"+886900003106","電子郵件":"chang.weiren@example.com","驗證提供者":"google","驗證主體ID":"demo-google-requester-06","啟用狀態":true,"建立時間":"2026-08-24T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","平台角色":"none"},{"使用者ID":"USR-REQ-07","顯示名稱":"吳佳蓉","手機號碼(E.164)":"+886900003107","電子郵件":"wu.jiarong@example.com","驗證提供者":"apple","驗證主體ID":"demo-apple-requester-07","啟用狀態":true,"建立時間":"2026-08-25T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","平台角色":"none"},{"使用者ID":"USR-REQ-08","顯示名稱":"劉冠廷","手機號碼(E.164)":"+886900003108","電子郵件":"liu.guanting@example.com","驗證提供者":"google","驗證主體ID":"demo-google-requester-08","啟用狀態":true,"建立時間":"2026-08-25T10:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","平台角色":"none"},{"使用者ID":"USR-REQ-09","顯示名稱":"蔡雅雯","手機號碼(E.164)":"+886900003109","電子郵件":"tsai.yawen@example.com","驗證提供者":"facebook","驗證主體ID":"demo-facebook-requester-09","啟用狀態":true,"建立時間":"2026-08-25T11:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","平台角色":"none"},{"使用者ID":"USR-REQ-10","顯示名稱":"許佳豪","手機號碼(E.164)":"+886900003110","電子郵件":"hsu.jiahao.family@example.com","驗證提供者":"firebase","驗證主體ID":"demo-firebase-requester-10","啟用狀態":true,"建立時間":"2026-08-25T12:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","平台角色":"none"},{"使用者ID":"USR-DISP-004","顯示名稱":"曾怡蓁","手機號碼(E.164)":"+886900001204","電子郵件":"tseng.yizhen@example.com","驗證提供者":"google","驗證主體ID":"demo-google-dispatch-004","啟用狀態":true,"建立時間":"2026-08-28T14:00:00+08:00","更新時間":"2026-08-31T11:45:00+08:00","平台角色":"none"}],"成員資格":[{"成員資格ID":"MEM-OWNER-001","使用者ID":"USR-OWNER-001","組織ID":"ORG-TP-001","角色":"owner","狀態":"active","建立時間":"2026-08-20T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","撤銷時間":"","撤銷者使用者ID":""},{"成員資格ID":"MEM-OWNER-002","使用者ID":"USR-OWNER-002","組織ID":"ORG-TP-002","角色":"owner","狀態":"active","建立時間":"2026-08-21T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","撤銷時間":"","撤銷者使用者ID":""},{"成員資格ID":"MEM-OWNER-003","使用者ID":"USR-OWNER-003","組織ID":"ORG-TP-003","角色":"owner","狀態":"active","建立時間":"2026-08-24T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","撤銷時間":"","撤銷者使用者ID":""},{"成員資格ID":"MEM-DISP-001","使用者ID":"USR-DISP-001","組織ID":"ORG-TP-001","角色":"dispatcher","狀態":"active","建立時間":"2026-08-20T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","撤銷時間":"","撤銷者使用者ID":""},{"成員資格ID":"MEM-DISP-002","使用者ID":"USR-DISP-002","組織ID":"ORG-TP-002","角色":"dispatcher","狀態":"active","建立時間":"2026-08-21T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","撤銷時間":"","撤銷者使用者ID":""},{"成員資格ID":"MEM-DISP-003","使用者ID":"USR-DISP-003","組織ID":"ORG-TP-003","角色":"dispatcher","狀態":"active","建立時間":"2026-08-24T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","撤銷時間":"","撤銷者使用者ID":""},{"成員資格ID":"MEM-DRV-01","使用者ID":"USR-DRV-01","組織ID":"ORG-TP-001","角色":"driver","狀態":"active","建立時間":"2026-08-20T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","撤銷時間":"","撤銷者使用者ID":""},{"成員資格ID":"MEM-DRV-02","使用者ID":"USR-DRV-02","組織ID":"ORG-TP-001","角色":"driver","狀態":"active","建立時間":"2026-08-21T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","撤銷時間":"","撤銷者使用者ID":""},{"成員資格ID":"MEM-DRV-03","使用者ID":"USR-DRV-03","組織ID":"ORG-TP-002","角色":"driver","狀態":"active","建立時間":"2026-08-20T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","撤銷時間":"","撤銷者使用者ID":""},{"成員資格ID":"MEM-DRV-04","使用者ID":"USR-DRV-04","組織ID":"ORG-TP-002","角色":"driver","狀態":"active","建立時間":"2026-08-21T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","撤銷時間":"","撤銷者使用者ID":""},{"成員資格ID":"MEM-DRV-05","使用者ID":"USR-DRV-05","組織ID":"ORG-TP-003","角色":"driver","狀態":"active","建立時間":"2026-08-24T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","撤銷時間":"","撤銷者使用者ID":""},{"成員資格ID":"MEM-DRV-06","使用者ID":"USR-DRV-06","組織ID":"ORG-TP-001","角色":"driver","狀態":"revoked","建立時間":"2026-08-20T09:00:00+08:00","更新時間":"2026-08-27T18:20:00+08:00","撤銷時間":"2026-08-27T18:20:00+08:00","撤銷者使用者ID":"USR-OWNER-001"},{"成員資格ID":"MEM-REQ-01","使用者ID":"USR-REQ-01","組織ID":"ORG-REQ-001","角色":"requester","狀態":"active","建立時間":"2026-08-22T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","撤銷時間":"","撤銷者使用者ID":""},{"成員資格ID":"MEM-REQ-02","使用者ID":"USR-REQ-02","組織ID":"ORG-REQ-001","角色":"requester","狀態":"active","建立時間":"2026-08-23T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","撤銷時間":"","撤銷者使用者ID":""},{"成員資格ID":"MEM-REQ-03","使用者ID":"USR-REQ-03","組織ID":"ORG-REQ-001","角色":"requester","狀態":"active","建立時間":"2026-08-24T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","撤銷時間":"","撤銷者使用者ID":""},{"成員資格ID":"MEM-REQ-04","使用者ID":"USR-REQ-04","組織ID":"ORG-REQ-001","角色":"requester","狀態":"active","建立時間":"2026-08-22T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","撤銷時間":"","撤銷者使用者ID":""},{"成員資格ID":"MEM-REQ-05","使用者ID":"USR-REQ-05","組織ID":"ORG-REQ-001","角色":"requester","狀態":"active","建立時間":"2026-08-23T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","撤銷時間":"","撤銷者使用者ID":""},{"成員資格ID":"MEM-REQ-06","使用者ID":"USR-REQ-06","組織ID":"ORG-REQ-001","角色":"requester","狀態":"active","建立時間":"2026-08-24T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","撤銷時間":"","撤銷者使用者ID":""},{"成員資格ID":"MEM-REQ-07","使用者ID":"USR-REQ-07","組織ID":"ORG-REQ-001","角色":"requester","狀態":"active","建立時間":"2026-08-25T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","撤銷時間":"","撤銷者使用者ID":""},{"成員資格ID":"MEM-REQ-08","使用者ID":"USR-REQ-08","組織ID":"ORG-REQ-001","角色":"requester","狀態":"active","建立時間":"2026-08-25T10:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","撤銷時間":"","撤銷者使用者ID":""},{"成員資格ID":"MEM-REQ-09","使用者ID":"USR-REQ-09","組織ID":"ORG-REQ-001","角色":"requester","狀態":"active","建立時間":"2026-08-25T11:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","撤銷時間":"","撤銷者使用者ID":""},{"成員資格ID":"MEM-REQ-10","使用者ID":"USR-REQ-10","組織ID":"ORG-REQ-001","角色":"requester","狀態":"active","建立時間":"2026-08-25T12:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","撤銷時間":"","撤銷者使用者ID":""},{"成員資格ID":"MEM-OWNER1-REQ","使用者ID":"USR-OWNER-001","組織ID":"ORG-REQ-001","角色":"requester","狀態":"active","建立時間":"2026-08-26T18:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","撤銷時間":"","撤銷者使用者ID":""},{"成員資格ID":"MEM-DRV6-REQ","使用者ID":"USR-DRV-06","組織ID":"ORG-REQ-001","角色":"requester","狀態":"active","建立時間":"2026-08-27T18:25:00+08:00","更新時間":"2026-08-29T00:40:00+08:00","撤銷時間":"","撤銷者使用者ID":""},{"成員資格ID":"MEM-DISP-004","使用者ID":"USR-DISP-004","組織ID":"ORG-TP-003","角色":"dispatcher","狀態":"suspended","建立時間":"2026-08-28T14:05:00+08:00","更新時間":"2026-08-31T11:45:00+08:00","撤銷時間":"","撤銷者使用者ID":""}],"服務對象":[{"服務對象ID":"REC-01","顯示名稱":"王美華","出生日期":"1948-03-12","主要電話":"0900004101","居住地址":"臺北市中山區民生東路二段 88 號","行走能力":"assisted","輪椅類型":"none","需要無障礙車輛":false,"需要陪同":true,"移位協助程度":"partial","特殊需求":"步行較慢、需攙扶；不可久候","狀態":"active","同意版本":"CONSENT-v1.2","建立時間":"2026-08-22T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00"},{"服務對象ID":"REC-02","顯示名稱":"陳阿春","出生日期":"1943-11-05","主要電話":"0900004102","居住地址":"新北市板橋區中山路一段 120 號","行走能力":"wheelchair","輪椅類型":"manual","需要無障礙車輛":true,"需要陪同":false,"移位協助程度":"partial","特殊需求":"手動輪椅；上下車需斜坡板協助","狀態":"active","同意版本":"CONSENT-v1.2","建立時間":"2026-08-23T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00"},{"服務對象ID":"REC-03","顯示名稱":"林秀蘭","出生日期":"1952-06-21","主要電話":"0900004103","居住地址":"臺北市大安區復興南路二段 156 號","行走能力":"assisted","輪椅類型":"none","需要無障礙車輛":false,"需要陪同":true,"移位協助程度":"partial","特殊需求":"攜帶助行器；上下車需較多時間","狀態":"active","同意版本":"CONSENT-v1.2","建立時間":"2026-08-24T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00"},{"服務對象ID":"REC-04","顯示名稱":"黃國雄","出生日期":"1946-01-28","主要電話":"0900004104","居住地址":"臺北市士林區中正路 420 號","行走能力":"wheelchair","輪椅類型":"electric","需要無障礙車輛":true,"需要陪同":true,"移位協助程度":"full","特殊需求":"電動輪椅；需升降設備與全程協助","狀態":"active","同意版本":"CONSENT-v1.2","建立時間":"2026-08-22T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00"},{"服務對象ID":"REC-05","顯示名稱":"李玉梅","出生日期":"1950-09-14","主要電話":"0900004105","居住地址":"新北市新店區北新路二段 60 號","行走能力":"assisted","輪椅類型":"none","需要無障礙車輛":false,"需要陪同":false,"移位協助程度":"partial","特殊需求":"膝關節不便；上車時需扶手協助","狀態":"active","同意版本":"CONSENT-v1.2","建立時間":"2026-08-23T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00"},{"服務對象ID":"REC-06","顯示名稱":"張清水","出生日期":"1941-12-02","主要電話":"0900004106","居住地址":"新北市三重區重新路三段 95 號","行走能力":"independent","輪椅類型":"none","需要無障礙車輛":false,"需要陪同":false,"移位協助程度":"none","特殊需求":"固定洗腎接送；希望準時到院","狀態":"active","同意版本":"CONSENT-v1.2","建立時間":"2026-08-24T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00"},{"服務對象ID":"REC-07","顯示名稱":"吳秀枝","出生日期":"1949-04-30","主要電話":"0900004107","居住地址":"新北市中和區景平路 310 號","行走能力":"assisted","輪椅類型":"none","需要無障礙車輛":false,"需要陪同":true,"移位協助程度":"partial","特殊需求":"使用助行器；不可久候","狀態":"active","同意版本":"CONSENT-v1.2","建立時間":"2026-08-25T09:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00"},{"服務對象ID":"REC-08","顯示名稱":"劉進財","出生日期":"1945-08-18","主要電話":"0900004108","居住地址":"臺北市內湖區成功路四段 168 號","行走能力":"wheelchair","輪椅類型":"manual","需要無障礙車輛":true,"需要陪同":true,"移位協助程度":"partial","特殊需求":"手動輪椅；車門旁需保留較大上下車空間","狀態":"active","同意版本":"CONSENT-v1.2","建立時間":"2026-08-25T10:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00"},{"服務對象ID":"REC-09","顯示名稱":"蔡月英","出生日期":"1947-02-11","主要電話":"0900004109","居住地址":"臺北市松山區南京東路五段 210 號","行走能力":"independent","輪椅類型":"none","需要無障礙車輛":false,"需要陪同":false,"移位協助程度":"none","特殊需求":"門診固定報到時間；需準時抵達","狀態":"active","同意版本":"CONSENT-v1.2","建立時間":"2026-08-25T11:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00"},{"服務對象ID":"REC-10","顯示名稱":"許添福","出生日期":"1944-07-09","主要電話":"0900004110","居住地址":"新北市永和區中正路 530 號","行走能力":"assisted","輪椅類型":"none","需要無障礙車輛":false,"需要陪同":true,"移位協助程度":"partial","特殊需求":"使用助行器；下車需協助至院門口","狀態":"active","同意版本":"CONSENT-v1.2","建立時間":"2026-08-25T12:00:00+08:00","更新時間":"2026-08-29T00:40:00+08:00"}],"服務對象聯絡人":[{"聯絡人ID":"CON-01","服務對象ID":"REC-01","使用者ID":"USR-REQ-01","姓名":"王淑芬","關係":"child","電話":"0900003101","主要聯絡人":true,"可代為預約":true,"狀態":"active","更新時間":"2026-08-28T10:00:00+08:00"},{"聯絡人ID":"CON-02","服務對象ID":"REC-02","使用者ID":"USR-REQ-02","姓名":"陳佩玲","關係":"child","電話":"0900003102","主要聯絡人":true,"可代為預約":true,"狀態":"active","更新時間":"2026-08-28T10:00:00+08:00"},{"聯絡人ID":"CON-03","服務對象ID":"REC-03","使用者ID":"USR-REQ-03","姓名":"林志明","關係":"spouse","電話":"0900003103","主要聯絡人":true,"可代為預約":true,"狀態":"active","更新時間":"2026-08-28T10:00:00+08:00"},{"聯絡人ID":"CON-04","服務對象ID":"REC-04","使用者ID":"USR-REQ-04","姓名":"黃美玲","關係":"child","電話":"0900003104","主要聯絡人":true,"可代為預約":true,"狀態":"active","更新時間":"2026-08-28T10:00:00+08:00"},{"聯絡人ID":"CON-05","服務對象ID":"REC-05","使用者ID":"USR-REQ-05","姓名":"李怡君","關係":"child","電話":"0900003105","主要聯絡人":true,"可代為預約":true,"狀態":"active","更新時間":"2026-08-28T10:00:00+08:00"},{"聯絡人ID":"CON-06","服務對象ID":"REC-06","使用者ID":"USR-REQ-06","姓名":"張維仁","關係":"child","電話":"0900003106","主要聯絡人":true,"可代為預約":true,"狀態":"active","更新時間":"2026-08-28T10:00:00+08:00"},{"聯絡人ID":"CON-07","服務對象ID":"REC-07","使用者ID":"USR-REQ-07","姓名":"吳佳蓉","關係":"child","電話":"0900003107","主要聯絡人":true,"可代為預約":true,"狀態":"active","更新時間":"2026-08-29T00:20:00+08:00"},{"聯絡人ID":"CON-08","服務對象ID":"REC-08","使用者ID":"USR-REQ-08","姓名":"劉冠廷","關係":"child","電話":"0900003108","主要聯絡人":true,"可代為預約":true,"狀態":"","更新時間":""},{"聯絡人ID":"CON-09","服務對象ID":"REC-09","使用者ID":"USR-REQ-09","姓名":"蔡雅雯","關係":"child","電話":"0900003109","主要聯絡人":true,"可代為預約":true,"狀態":"","更新時間":""},{"聯絡人ID":"CON-10","服務對象ID":"REC-10","使用者ID":"USR-REQ-10","姓名":"許佳豪","關係":"child","電話":"0900003110","主要聯絡人":true,"可代為預約":true,"狀態":"","更新時間":""}],"預約":[{"預約ID":"BKG-01","服務對象ID":"REC-01","預約者使用者ID":"USR-REQ-01","組織ID":"ORG-TP-001","預約狀態":"completed","上車時間":"2026-08-30T07:40:00+08:00","上車地址":"臺北市中山區民生東路二段 88 號","目的地":"臺大醫院｜臺北市中正區中山南路 7 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":0.0,"特殊需求":"需攙扶，家屬陪同 1 人；不可久候","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-25T09:10:00+08:00","更新時間":"2026-08-30T09:05:00+08:00"},{"預約ID":"BKG-02","服務對象ID":"REC-03","預約者使用者ID":"USR-REQ-03","組織ID":"ORG-TP-001","預約狀態":"completed","上車時間":"2026-08-30T07:55:00+08:00","上車地址":"臺北市大安區復興南路二段 156 號","目的地":"臺大醫院｜臺北市中正區中山南路 7 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":0.0,"特殊需求":"攜帶助行器，家屬陪同 1 人","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-25T09:25:00+08:00","更新時間":"2026-08-30T09:05:00+08:00"},{"預約ID":"BKG-03","服務對象ID":"REC-02","預約者使用者ID":"USR-REQ-02","組織ID":"ORG-TP-002","預約狀態":"scheduled","上車時間":"2026-08-30T09:20:00+08:00","上車地址":"新北市板橋區中山路一段 120 號","目的地":"亞東紀念醫院｜新北市板橋區南雅南路二段 21 號","行程類型":"one_way","乘客人數":1.0,"輪椅席次":1.0,"特殊需求":"手動輪椅，需斜坡板固定","共乘同意":false,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-25T10:00:00+08:00","更新時間":"2026-08-29T00:45:00+08:00"},{"預約ID":"BKG-04","服務對象ID":"REC-04","預約者使用者ID":"USR-REQ-04","組織ID":"ORG-TP-001","預約狀態":"cancelled","上車時間":"2026-08-30T10:30:00+08:00","上車地址":"臺北市士林區中正路 420 號","目的地":"臺北榮民總醫院｜臺北市北投區石牌路二段 201 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":1.0,"特殊需求":"電動輪椅，需升降設備；家屬陪同","共乘同意":false,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-25T10:20:00+08:00","更新時間":"2026-08-30T08:15:00+08:00"},{"預約ID":"BKG-05","服務對象ID":"REC-05","預約者使用者ID":"USR-REQ-05","組織ID":"","預約狀態":"open","上車時間":"2026-08-30T11:00:00+08:00","上車地址":"新北市新店區北新路二段 60 號","目的地":"耕莘醫院｜新北市新店區中正路 362 號","行程類型":"one_way","乘客人數":1.0,"輪椅席次":0.0,"特殊需求":"上車時需扶手協助","共乘同意":false,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-26T08:40:00+08:00","更新時間":"2026-08-29T00:45:00+08:00"},{"預約ID":"BKG-06","服務對象ID":"REC-06","預約者使用者ID":"USR-REQ-06","組織ID":"ORG-TP-001","預約狀態":"claimed","上車時間":"2026-08-30T13:10:00+08:00","上車地址":"新北市三重區重新路三段 95 號","目的地":"馬偕紀念醫院｜臺北市中山區中山北路二段 92 號","行程類型":"round_trip","乘客人數":1.0,"輪椅席次":0.0,"特殊需求":"固定洗腎；返程預計 17:20","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-26T09:05:00+08:00","更新時間":"2026-08-29T00:45:00+08:00"},{"預約ID":"BKG-07","服務對象ID":"REC-07","預約者使用者ID":"USR-REQ-07","組織ID":"","預約狀態":"expired","上車時間":"2026-08-30T14:00:00+08:00","上車地址":"新北市中和區景平路 310 號","目的地":"衛福部雙和醫院｜新北市中和區中正路 291 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":0.0,"特殊需求":"使用助行器；家屬陪同；不可久候","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-24T20:30:00+08:00","更新時間":"2026-08-30T13:30:00+08:00"},{"預約ID":"BKG-08","服務對象ID":"REC-08","預約者使用者ID":"USR-REQ-08","組織ID":"ORG-TP-002","預約狀態":"completed","上車時間":"2026-08-30T15:10:00+08:00","上車地址":"臺北市內湖區成功路四段 168 號","目的地":"三軍總醫院內湖院區｜臺北市內湖區成功路二段 325 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":1.0,"特殊需求":"手動輪椅；家屬陪同 1 人","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-26T10:15:00+08:00","更新時間":"2026-08-30T16:35:00+08:00"},{"預約ID":"BKG-09","服務對象ID":"REC-09","預約者使用者ID":"USR-REQ-09","組織ID":"ORG-TP-003","預約狀態":"scheduled","上車時間":"2026-08-30T16:20:00+08:00","上車地址":"臺北市松山區南京東路五段 210 號","目的地":"臺北醫學大學附設醫院｜臺北市信義區吳興街 252 號","行程類型":"one_way","乘客人數":1.0,"輪椅席次":0.0,"特殊需求":"門診 17:00 前完成報到","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-26T11:05:00+08:00","更新時間":"2026-08-29T00:45:00+08:00"},{"預約ID":"BKG-10","服務對象ID":"REC-10","預約者使用者ID":"USR-REQ-10","組織ID":"ORG-TP-003","預約狀態":"scheduled","上車時間":"2026-08-30T17:30:00+08:00","上車地址":"新北市永和區中正路 530 號","目的地":"衛福部雙和醫院｜新北市中和區中正路 291 號","行程類型":"round_trip","乘客人數":2.0,"輪椅席次":0.0,"特殊需求":"使用助行器；家屬陪同；返程約 20:00","共乘同意":false,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-26T11:45:00+08:00","更新時間":"2026-08-29T00:45:00+08:00"},{"預約ID":"BKG-11","服務對象ID":"REC-06","預約者使用者ID":"USR-REQ-06","組織ID":"ORG-TP-001","預約狀態":"completed","上車時間":"2026-08-31T06:50:00+08:00","上車地址":"新北市三重區重新路三段 95 號","目的地":"馬偕紀念醫院｜臺北市中山區中山北路二段 92 號","行程類型":"one_way","乘客人數":1.0,"輪椅席次":0.0,"特殊需求":"固定洗腎；請於 07:30 前抵達","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-26T13:00:00+08:00","更新時間":"2026-08-31T08:05:00+08:00"},{"預約ID":"BKG-12","服務對象ID":"REC-07","預約者使用者ID":"USR-REQ-07","組織ID":"ORG-TP-001","預約狀態":"completed","上車時間":"2026-08-31T07:05:00+08:00","上車地址":"新北市中和區景平路 310 號","目的地":"衛福部雙和醫院｜新北市中和區中正路 291 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":0.0,"特殊需求":"助行器；家屬陪同 1 人","共乘同意":false,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-26T13:20:00+08:00","更新時間":"2026-08-31T08:25:00+08:00"},{"預約ID":"BKG-13","服務對象ID":"REC-04","預約者使用者ID":"USR-REQ-04","組織ID":"ORG-TP-001","預約狀態":"scheduled","上車時間":"2026-08-31T08:45:00+08:00","上車地址":"臺北市士林區中正路 420 號","目的地":"臺北榮民總醫院｜臺北市北投區石牌路二段 201 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":1.0,"特殊需求":"電動輪椅；需升降設備","共乘同意":false,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-26T14:10:00+08:00","更新時間":"2026-08-29T00:45:00+08:00"},{"預約ID":"BKG-14","服務對象ID":"REC-05","預約者使用者ID":"USR-REQ-05","組織ID":"","預約狀態":"open","上車時間":"2026-08-31T09:40:00+08:00","上車地址":"新北市新店區北新路二段 60 號","目的地":"耕莘醫院｜新北市新店區中正路 362 號","行程類型":"one_way","乘客人數":1.0,"輪椅席次":0.0,"特殊需求":"需扶手協助","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-27T08:00:00+08:00","更新時間":"2026-08-29T00:45:00+08:00"},{"預約ID":"BKG-15","服務對象ID":"REC-02","預約者使用者ID":"USR-REQ-02","組織ID":"ORG-TP-002","預約狀態":"claimed","上車時間":"2026-08-31T10:00:00+08:00","上車地址":"新北市板橋區中山路一段 120 號","目的地":"亞東紀念醫院｜新北市板橋區南雅南路二段 21 號","行程類型":"round_trip","乘客人數":1.0,"輪椅席次":1.0,"特殊需求":"手動輪椅；返程約 14:30","共乘同意":false,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-27T08:20:00+08:00","更新時間":"2026-08-29T00:45:00+08:00"},{"預約ID":"BKG-16","服務對象ID":"REC-03","預約者使用者ID":"USR-REQ-03","組織ID":"ORG-TP-002","預約狀態":"cancelled","上車時間":"2026-08-31T11:00:00+08:00","上車地址":"臺北市大安區復興南路二段 156 號","目的地":"臺大醫院｜臺北市中正區中山南路 7 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":0.0,"特殊需求":"助行器；家屬陪同","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-27T08:40:00+08:00","更新時間":"2026-08-31T09:15:00+08:00"},{"預約ID":"BKG-17","服務對象ID":"REC-09","預約者使用者ID":"USR-REQ-09","組織ID":"","預約狀態":"expired","上車時間":"2026-08-31T12:30:00+08:00","上車地址":"臺北市松山區南京東路五段 210 號","目的地":"臺北醫學大學附設醫院｜臺北市信義區吳興街 252 號","行程類型":"one_way","乘客人數":1.0,"輪椅席次":0.0,"特殊需求":"門診報到時間固定","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-26T18:20:00+08:00","更新時間":"2026-08-31T12:00:00+08:00"},{"預約ID":"BKG-18","服務對象ID":"REC-01","預約者使用者ID":"USR-REQ-01","組織ID":"ORG-TP-001","預約狀態":"completed","上車時間":"2026-08-31T13:20:00+08:00","上車地址":"臺北市中山區民生東路二段 88 號","目的地":"臺大醫院｜臺北市中正區中山南路 7 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":0.0,"特殊需求":"需攙扶；家屬陪同","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-27T09:10:00+08:00","更新時間":"2026-08-31T14:45:00+08:00"},{"預約ID":"BKG-19","服務對象ID":"REC-08","預約者使用者ID":"USR-REQ-08","組織ID":"ORG-TP-002","預約狀態":"scheduled","上車時間":"2026-08-31T14:40:00+08:00","上車地址":"臺北市內湖區成功路四段 168 號","目的地":"三軍總醫院內湖院區｜臺北市內湖區成功路二段 325 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":1.0,"特殊需求":"手動輪椅；需無障礙車","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-27T09:35:00+08:00","更新時間":"2026-08-29T00:45:00+08:00"},{"預約ID":"BKG-20","服務對象ID":"REC-10","預約者使用者ID":"USR-REQ-10","組織ID":"ORG-TP-003","預約狀態":"cancelled","上車時間":"2026-08-31T16:10:00+08:00","上車地址":"新北市永和區中正路 530 號","目的地":"衛福部雙和醫院｜新北市中和區中正路 291 號","行程類型":"round_trip","乘客人數":2.0,"輪椅席次":0.0,"特殊需求":"助行器；家屬陪同；返程約 19:30","共乘同意":false,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-27T10:00:00+08:00","更新時間":"2026-08-31T16:22:00+08:00"},{"預約ID":"BKG-21","服務對象ID":"REC-01","預約者使用者ID":"USR-REQ-01","組織ID":"ORG-TP-001","預約狀態":"scheduled","上車時間":"2026-09-01T07:30:00+08:00","上車地址":"臺北市中山區民生東路二段 88 號","目的地":"臺大醫院｜臺北市中正區中山南路 7 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":0.0,"特殊需求":"需攙扶；家屬陪同","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-27T11:00:00+08:00","更新時間":"2026-08-29T00:45:00+08:00"},{"預約ID":"BKG-22","服務對象ID":"REC-03","預約者使用者ID":"USR-REQ-03","組織ID":"ORG-TP-001","預約狀態":"scheduled","上車時間":"2026-09-01T07:42:00+08:00","上車地址":"臺北市大安區復興南路二段 156 號","目的地":"臺大醫院｜臺北市中正區中山南路 7 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":0.0,"特殊需求":"助行器；家屬陪同","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-27T11:15:00+08:00","更新時間":"2026-08-29T00:45:00+08:00"},{"預約ID":"BKG-23","服務對象ID":"REC-02","預約者使用者ID":"USR-REQ-02","組織ID":"","預約狀態":"open","上車時間":"2026-09-01T09:00:00+08:00","上車地址":"新北市板橋區中山路一段 120 號","目的地":"亞東紀念醫院｜新北市板橋區南雅南路二段 21 號","行程類型":"one_way","乘客人數":1.0,"輪椅席次":1.0,"特殊需求":"手動輪椅；需無障礙車","共乘同意":false,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-27T12:00:00+08:00","更新時間":"2026-08-29T00:45:00+08:00"},{"預約ID":"BKG-24","服務對象ID":"REC-04","預約者使用者ID":"USR-REQ-04","組織ID":"ORG-TP-001","預約狀態":"claimed","上車時間":"2026-09-01T09:30:00+08:00","上車地址":"臺北市士林區中正路 420 號","目的地":"臺北榮民總醫院｜臺北市北投區石牌路二段 201 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":1.0,"特殊需求":"電動輪椅；需升降設備","共乘同意":false,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-27T12:20:00+08:00","更新時間":"2026-08-29T00:45:00+08:00"},{"預約ID":"BKG-25","服務對象ID":"REC-05","預約者使用者ID":"USR-REQ-05","組織ID":"ORG-TP-003","預約狀態":"completed","上車時間":"2026-09-01T10:30:00+08:00","上車地址":"新北市新店區北新路二段 60 號","目的地":"耕莘醫院｜新北市新店區中正路 362 號","行程類型":"one_way","乘客人數":1.0,"輪椅席次":0.0,"特殊需求":"上車時需扶手協助","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-27T13:00:00+08:00","更新時間":"2026-09-01T11:45:00+08:00"},{"預約ID":"BKG-26","服務對象ID":"REC-06","預約者使用者ID":"USR-REQ-06","組織ID":"ORG-TP-001","預約狀態":"cancelled","上車時間":"2026-09-01T11:15:00+08:00","上車地址":"新北市三重區重新路三段 95 號","目的地":"馬偕紀念醫院｜臺北市中山區中山北路二段 92 號","行程類型":"one_way","乘客人數":1.0,"輪椅席次":0.0,"特殊需求":"固定洗腎接送","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-27T13:20:00+08:00","更新時間":"2026-09-01T09:40:00+08:00"},{"預約ID":"BKG-27","服務對象ID":"REC-07","預約者使用者ID":"USR-REQ-07","組織ID":"","預約狀態":"expired","上車時間":"2026-09-01T12:00:00+08:00","上車地址":"新北市中和區景平路 310 號","目的地":"衛福部雙和醫院｜新北市中和區中正路 291 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":0.0,"特殊需求":"助行器；不可久候","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-27T13:40:00+08:00","更新時間":"2026-09-01T11:30:00+08:00"},{"預約ID":"BKG-28","服務對象ID":"REC-08","預約者使用者ID":"USR-REQ-08","組織ID":"ORG-TP-002","預約狀態":"scheduled","上車時間":"2026-09-01T13:30:00+08:00","上車地址":"臺北市內湖區成功路四段 168 號","目的地":"三軍總醫院內湖院區｜臺北市內湖區成功路二段 325 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":1.0,"特殊需求":"手動輪椅；家屬陪同","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-27T14:00:00+08:00","更新時間":"2026-08-29T00:45:00+08:00"},{"預約ID":"BKG-29","服務對象ID":"REC-09","預約者使用者ID":"USR-REQ-09","組織ID":"ORG-TP-003","預約狀態":"claimed","上車時間":"2026-09-01T15:00:00+08:00","上車地址":"臺北市松山區南京東路五段 210 號","目的地":"臺北醫學大學附設醫院｜臺北市信義區吳興街 252 號","行程類型":"one_way","乘客人數":1.0,"輪椅席次":0.0,"特殊需求":"需準時抵達門診","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-27T14:20:00+08:00","更新時間":"2026-08-29T00:45:00+08:00"},{"預約ID":"BKG-30","服務對象ID":"REC-10","預約者使用者ID":"USR-REQ-10","組織ID":"ORG-TP-003","預約狀態":"scheduled","上車時間":"2026-09-01T16:40:00+08:00","上車地址":"新北市永和區中正路 530 號","目的地":"衛福部雙和醫院｜新北市中和區中正路 291 號","行程類型":"round_trip","乘客人數":2.0,"輪椅席次":0.0,"特殊需求":"助行器；家屬陪同；返程約 20:10","共乘同意":false,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-27T14:40:00+08:00","更新時間":"2026-08-29T00:45:00+08:00"},{"預約ID":"BKG-31","服務對象ID":"REC-01","預約者使用者ID":"USR-REQ-01","組織ID":"ORG-TP-001","預約狀態":"completed","上車時間":"2026-08-31T07:15:00+08:00","上車地址":"臺北市中山區民生東路二段 88 號","目的地":"臺大醫院｜臺北市中正區中山南路 7 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":0.0,"特殊需求":"需攙扶；家屬陪同 1 人","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-28T09:10:00+08:00","更新時間":"2026-08-31T08:30:00+08:00"},{"預約ID":"BKG-32","服務對象ID":"REC-03","預約者使用者ID":"USR-REQ-03","組織ID":"ORG-TP-001","預約狀態":"completed","上車時間":"2026-08-31T07:28:00+08:00","上車地址":"臺北市大安區復興南路二段 156 號","目的地":"臺大醫院｜臺北市中正區中山南路 7 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":0.0,"特殊需求":"攜帶助行器；家屬陪同 1 人","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-28T09:18:00+08:00","更新時間":"2026-08-31T08:30:00+08:00"},{"預約ID":"BKG-33","服務對象ID":"REC-02","預約者使用者ID":"USR-REQ-02","組織ID":"ORG-TP-002","預約狀態":"scheduled","上車時間":"2026-08-31T09:10:00+08:00","上車地址":"新北市板橋區中山路一段 120 號","目的地":"亞東紀念醫院｜新北市板橋區南雅南路二段 21 號","行程類型":"one_way","乘客人數":1.0,"輪椅席次":1.0,"特殊需求":"手動輪椅；需斜坡板固定","共乘同意":false,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-28T10:00:00+08:00","更新時間":"2026-08-29T01:05:00+08:00"},{"預約ID":"BKG-34","服務對象ID":"REC-04","預約者使用者ID":"USR-REQ-04","組織ID":"ORG-TP-002","預約狀態":"completed","上車時間":"2026-08-31T09:25:00+08:00","上車地址":"臺北市士林區中正路 420 號","目的地":"臺北榮民總醫院｜臺北市北投區石牌路二段 201 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":1.0,"特殊需求":"電動輪椅；需升降設備；展示故障改派","共乘同意":false,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-28T10:20:00+08:00","更新時間":"2026-08-31T10:45:00+08:00"},{"預約ID":"BKG-35","服務對象ID":"REC-05","預約者使用者ID":"USR-REQ-05","組織ID":"","預約狀態":"open","上車時間":"2026-08-31T10:20:00+08:00","上車地址":"新北市新店區北新路二段 60 號","目的地":"耕莘醫院｜新北市新店區中正路 362 號","行程類型":"one_way","乘客人數":1.0,"輪椅席次":0.0,"特殊需求":"上車時需扶手協助；公開需求池展示","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-28T11:00:00+08:00","更新時間":"2026-08-29T01:05:00+08:00"},{"預約ID":"BKG-36","服務對象ID":"REC-08","預約者使用者ID":"USR-REQ-08","組織ID":"ORG-TP-002","預約狀態":"claimed","上車時間":"2026-08-31T11:30:00+08:00","上車地址":"臺北市內湖區成功路四段 168 號","目的地":"三軍總醫院內湖院區｜臺北市內湖區成功路二段 325 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":1.0,"特殊需求":"手動輪椅；家屬陪同；等待建立行程","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-28T11:20:00+08:00","更新時間":"2026-08-31T08:50:00+08:00"},{"預約ID":"BKG-37","服務對象ID":"REC-09","預約者使用者ID":"USR-REQ-09","組織ID":"ORG-TP-003","預約狀態":"completed","上車時間":"2026-08-31T12:10:00+08:00","上車地址":"臺北市松山區南京東路五段 210 號","目的地":"臺北醫學大學附設醫院｜臺北市信義區吳興街 252 號","行程類型":"one_way","乘客人數":1.0,"輪椅席次":0.0,"特殊需求":"門診報到時間固定","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-28T12:00:00+08:00","更新時間":"2026-08-31T13:25:00+08:00"},{"預約ID":"BKG-38","服務對象ID":"REC-10","預約者使用者ID":"USR-REQ-10","組織ID":"ORG-TP-003","預約狀態":"scheduled","上車時間":"2026-08-31T13:00:00+08:00","上車地址":"新北市永和區中正路 530 號","目的地":"衛福部雙和醫院｜新北市中和區中正路 291 號","行程類型":"round_trip","乘客人數":2.0,"輪椅席次":0.0,"特殊需求":"助行器；家屬陪同；返程由 16:40 改為 17:10","共乘同意":false,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-28T12:20:00+08:00","更新時間":"2026-08-31T08:55:00+08:00"},{"預約ID":"BKG-39","服務對象ID":"REC-06","預約者使用者ID":"USR-REQ-06","組織ID":"ORG-TP-001","預約狀態":"completed","上車時間":"2026-08-31T14:00:00+08:00","上車地址":"新北市三重區重新路三段 95 號","目的地":"馬偕紀念醫院｜臺北市中山區中山北路二段 92 號","行程類型":"one_way","乘客人數":1.0,"輪椅席次":0.0,"特殊需求":"固定洗腎接送；共乘展示","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-28T13:00:00+08:00","更新時間":"2026-08-31T15:15:00+08:00"},{"預約ID":"BKG-40","服務對象ID":"REC-01","預約者使用者ID":"USR-REQ-01","組織ID":"ORG-TP-001","預約狀態":"completed","上車時間":"2026-08-31T14:12:00+08:00","上車地址":"臺北市中山區民生東路二段 88 號","目的地":"馬偕紀念醫院｜臺北市中山區中山北路二段 92 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":0.0,"特殊需求":"需攙扶；展示司機換人與車輛改派","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-28T13:12:00+08:00","更新時間":"2026-08-31T15:15:00+08:00"},{"預約ID":"BKG-41","服務對象ID":"REC-06","預約者使用者ID":"USR-REQ-06","組織ID":"ORG-TP-001","預約狀態":"completed","上車時間":"2026-08-29T06:40:00+08:00","上車地址":"新北市三重區重新路三段 95 號","目的地":"馬偕紀念醫院｜臺北市中山區中山北路二段 92 號","行程類型":"one_way","乘客人數":1.0,"輪椅席次":0.0,"特殊需求":"固定洗腎；清晨接送","共乘同意":false,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-27T08:00:00+08:00","更新時間":"2026-08-29T07:55:00+08:00"},{"預約ID":"BKG-42","服務對象ID":"REC-07","預約者使用者ID":"USR-REQ-07","組織ID":"ORG-TP-002","預約狀態":"completed","上車時間":"2026-08-29T08:00:00+08:00","上車地址":"新北市中和區景平路 310 號","目的地":"衛福部雙和醫院｜新北市中和區中正路 291 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":0.0,"特殊需求":"助行器；家屬陪同","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-27T08:20:00+08:00","更新時間":"2026-08-29T09:05:00+08:00"},{"預約ID":"BKG-43","服務對象ID":"REC-02","預約者使用者ID":"USR-REQ-02","組織ID":"ORG-TP-002","預約狀態":"cancelled","上車時間":"2026-08-29T09:10:00+08:00","上車地址":"新北市板橋區中山路一段 120 號","目的地":"亞東紀念醫院｜新北市板橋區南雅南路二段 21 號","行程類型":"one_way","乘客人數":1.0,"輪椅席次":1.0,"特殊需求":"手動輪椅；家屬於出車前取消","共乘同意":false,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-27T09:00:00+08:00","更新時間":"2026-08-29T07:40:00+08:00"},{"預約ID":"BKG-44","服務對象ID":"REC-05","預約者使用者ID":"USR-REQ-05","組織ID":"","預約狀態":"open","上車時間":"2026-08-29T10:30:00+08:00","上車地址":"新北市新店區北新路二段 60 號","目的地":"耕莘醫院｜新北市新店區中正路 362 號","行程類型":"one_way","乘客人數":1.0,"輪椅席次":0.0,"特殊需求":"公開需求池；尚無車隊承接","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-28T08:10:00+08:00","更新時間":"2026-08-29T00:50:00+08:00"},{"預約ID":"BKG-45","服務對象ID":"REC-08","預約者使用者ID":"USR-REQ-08","組織ID":"ORG-TP-002","預約狀態":"completed","上車時間":"2026-08-29T13:20:00+08:00","上車地址":"臺北市內湖區成功路四段 168 號","目的地":"三軍總醫院內湖院區｜臺北市內湖區成功路二段 325 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":1.0,"特殊需求":"手動輪椅；家屬陪同","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-28T09:00:00+08:00","更新時間":"2026-08-29T14:40:00+08:00"},{"預約ID":"BKG-46","服務對象ID":"REC-10","預約者使用者ID":"USR-REQ-10","組織ID":"ORG-TP-003","預約狀態":"claimed","上車時間":"2026-08-29T16:00:00+08:00","上車地址":"新北市永和區中正路 530 號","目的地":"衛福部雙和醫院｜新北市中和區中正路 291 號","行程類型":"round_trip","乘客人數":2.0,"輪椅席次":0.0,"特殊需求":"助行器；返程約 19:10；已承接待排程","共乘同意":false,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-28T10:00:00+08:00","更新時間":"2026-08-29T00:52:00+08:00"},{"預約ID":"BKG-47","服務對象ID":"REC-01","預約者使用者ID":"USR-REQ-01","組織ID":"ORG-TP-001","預約狀態":"scheduled","上車時間":"2026-09-02T07:35:00+08:00","上車地址":"臺北市中山區民生東路二段 88 號","目的地":"臺大醫院｜臺北市中正區中山南路 7 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":0.0,"特殊需求":"需攙扶；9/2 共乘候選","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-29T01:10:00+08:00","更新時間":"2026-08-29T01:10:00+08:00"},{"預約ID":"BKG-48","服務對象ID":"REC-03","預約者使用者ID":"USR-REQ-03","組織ID":"ORG-TP-001","預約狀態":"scheduled","上車時間":"2026-09-02T07:48:00+08:00","上車地址":"臺北市大安區復興南路二段 156 號","目的地":"臺大醫院｜臺北市中正區中山南路 7 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":0.0,"特殊需求":"助行器；9/2 共乘候選","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-29T01:12:00+08:00","更新時間":"2026-08-29T01:12:00+08:00"},{"預約ID":"BKG-49","服務對象ID":"REC-02","預約者使用者ID":"USR-REQ-02","組織ID":"","預約狀態":"open","上車時間":"2026-09-02T09:20:00+08:00","上車地址":"新北市板橋區中山路一段 120 號","目的地":"亞東紀念醫院｜新北市板橋區南雅南路二段 21 號","行程類型":"one_way","乘客人數":1.0,"輪椅席次":1.0,"特殊需求":"手動輪椅；尚待車隊承接","共乘同意":false,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-29T01:15:00+08:00","更新時間":"2026-08-29T01:15:00+08:00"},{"預約ID":"BKG-50","服務對象ID":"REC-04","預約者使用者ID":"USR-REQ-04","組織ID":"ORG-TP-001","預約狀態":"claimed","上車時間":"2026-09-02T10:10:00+08:00","上車地址":"臺北市士林區中正路 420 號","目的地":"臺北榮民總醫院｜臺北市北投區石牌路二段 201 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":1.0,"特殊需求":"電動輪椅；已承接等待車輛確認","共乘同意":false,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-29T01:18:00+08:00","更新時間":"2026-08-29T01:18:00+08:00"},{"預約ID":"BKG-51","服務對象ID":"REC-06","預約者使用者ID":"USR-REQ-06","組織ID":"ORG-TP-001","預約狀態":"scheduled","上車時間":"2026-09-02T13:00:00+08:00","上車地址":"新北市三重區重新路三段 95 號","目的地":"馬偕紀念醫院｜臺北市中山區中山北路二段 92 號","行程類型":"round_trip","乘客人數":1.0,"輪椅席次":0.0,"特殊需求":"固定洗腎；返程約 17:10","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-29T01:20:00+08:00","更新時間":"2026-08-29T01:20:00+08:00"},{"預約ID":"BKG-52","服務對象ID":"REC-08","預約者使用者ID":"USR-REQ-08","組織ID":"ORG-TP-002","預約狀態":"scheduled","上車時間":"2026-09-02T15:00:00+08:00","上車地址":"臺北市內湖區成功路四段 168 號","目的地":"三軍總醫院內湖院區｜臺北市內湖區成功路二段 325 號","行程類型":"one_way","乘客人數":2.0,"輪椅席次":1.0,"特殊需求":"手動輪椅；家屬陪同","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-29T01:22:00+08:00","更新時間":"2026-08-29T01:22:00+08:00"},{"預約ID":"BKG-CBADEBAB","服務對象ID":"REC-05","預約者使用者ID":"USR-REQ-05","組織ID":"","預約狀態":"open","上車時間":"2026-09-03T10:00:00+08:00","上車地址":"新北市新店區北新路二段 60 號","目的地":"耕莘醫院｜新北市新店區中正路 362 號","行程類型":"one_way","乘客人數":1.0,"輪椅席次":0.0,"特殊需求":"Apps Script API 寫入測試","共乘同意":true,"服務條款版本":"TERMS-v1.3","建立時間":"2026-08-28T17:48:02.334Z","更新時間":"2026-08-28T17:48:02.334Z"}],"司機":[{"司機ID":"DRV-01","使用者ID":"USR-DRV-01","組織ID":"ORG-TP-001","車隊ID":"FLEET-001","值勤狀態":"on_duty","服務區域":"臺北市中山區、松山區","啟用狀態":true,"更新時間":"2026-08-29T00:40:00+08:00"},{"司機ID":"DRV-02","使用者ID":"USR-DRV-02","組織ID":"ORG-TP-001","車隊ID":"FLEET-001","值勤狀態":"on_duty","服務區域":"臺北市內湖區、南港區","啟用狀態":true,"更新時間":"2026-08-29T00:40:00+08:00"},{"司機ID":"DRV-03","使用者ID":"USR-DRV-03","組織ID":"ORG-TP-002","車隊ID":"FLEET-002","值勤狀態":"on_duty","服務區域":"新北市板橋區、新莊區","啟用狀態":true,"更新時間":"2026-08-29T00:40:00+08:00"},{"司機ID":"DRV-04","使用者ID":"USR-DRV-04","組織ID":"ORG-TP-002","車隊ID":"FLEET-002","值勤狀態":"break","服務區域":"新北市中和區、永和區","啟用狀態":true,"更新時間":"2026-08-29T00:40:00+08:00"},{"司機ID":"DRV-05","使用者ID":"USR-DRV-05","組織ID":"ORG-TP-003","車隊ID":"FLEET-003","值勤狀態":"on_duty","服務區域":"臺北市大安區、文山區","啟用狀態":true,"更新時間":"2026-08-29T00:40:00+08:00"},{"司機ID":"DRV-06","使用者ID":"USR-DRV-06","組織ID":"ORG-TP-001","車隊ID":"FLEET-001","值勤狀態":"off_duty","服務區域":"臺北市士林區、北投區","啟用狀態":false,"更新時間":"2026-08-27T18:20:00+08:00"}],"車輛":[{"車輛ID":"VEH-01","組織ID":"ORG-TP-001","車牌":"RAE-3812","車型":"Toyota Sienta 福祉車","載客人數":4.0,"輪椅席次":1.0,"無障礙車輛":true,"車輛狀態":"available","更新時間":"2026-08-29T00:40:00+08:00"},{"車輛ID":"VEH-02","組織ID":"ORG-TP-001","車牌":"RBC-7256","車型":"Volkswagen Caddy Maxi 福祉車","載客人數":5.0,"輪椅席次":1.0,"無障礙車輛":true,"車輛狀態":"available","更新時間":"2026-08-29T00:40:00+08:00"},{"車輛ID":"VEH-03","組織ID":"ORG-TP-002","車牌":"RDP-5168","車型":"Toyota Hiace 無障礙車","載客人數":7.0,"輪椅席次":2.0,"無障礙車輛":true,"車輛狀態":"available","更新時間":"2026-08-29T00:40:00+08:00"},{"車輛ID":"VEH-04","組織ID":"ORG-TP-002","車牌":"RFT-9032","車型":"Ford Tourneo Connect","載客人數":6.0,"輪椅席次":0.0,"無障礙車輛":false,"車輛狀態":"maintenance","更新時間":"2026-08-29T00:40:00+08:00"},{"車輛ID":"VEH-05","組織ID":"ORG-TP-003","車牌":"RKU-2385","車型":"Nissan Serena 福祉車","載客人數":4.0,"輪椅席次":1.0,"無障礙車輛":true,"車輛狀態":"available","更新時間":"2026-08-29T00:40:00+08:00"},{"車輛ID":"VEH-06","組織ID":"ORG-TP-003","車牌":"RJL-6620","車型":"Mercedes-Benz Vito 無障礙車","載客人數":6.0,"輪椅席次":1.0,"無障礙車輛":true,"車輛狀態":"retired","更新時間":"2026-08-26T16:30:00+08:00"}],"行程":[{"行程ID":"TRIP-01","組織ID":"ORG-TP-001","司機ID":"DRV-01","車輛ID":"VEH-01","行程狀態":"completed","預計開始時間":"2026-08-30T07:20:00+08:00","預計結束時間":"2026-08-30T09:05:00+08:00","實際開始時間":"2026-08-30T07:24:00+08:00","實際結束時間":"2026-08-30T09:02:00+08:00","預估公里數":12.4,"實際公里數":12.1,"修訂版本":1.0,"更新時間":"2026-08-30T09:05:00+08:00"},{"行程ID":"TRIP-02","組織ID":"ORG-TP-002","司機ID":"DRV-03","車輛ID":"VEH-03","行程狀態":"scheduled","預計開始時間":"2026-08-30T09:00:00+08:00","預計結束時間":"2026-08-30T10:25:00+08:00","實際開始時間":"","實際結束時間":"","預估公里數":6.8,"實際公里數":"","修訂版本":1.0,"更新時間":"2026-08-29T00:45:00+08:00"},{"行程ID":"TRIP-03","組織ID":"ORG-TP-001","司機ID":"DRV-02","車輛ID":"VEH-02","行程狀態":"cancelled","預計開始時間":"2026-08-30T10:10:00+08:00","預計結束時間":"2026-08-30T11:35:00+08:00","實際開始時間":"","實際結束時間":"","預估公里數":10.2,"實際公里數":"","修訂版本":1.0,"更新時間":"2026-08-30T08:15:00+08:00"},{"行程ID":"TRIP-04","組織ID":"ORG-TP-002","司機ID":"DRV-03","車輛ID":"VEH-03","行程狀態":"completed","預計開始時間":"2026-08-30T14:50:00+08:00","預計結束時間":"2026-08-30T16:35:00+08:00","實際開始時間":"2026-08-30T14:55:00+08:00","實際結束時間":"2026-08-30T16:31:00+08:00","預估公里數":7.5,"實際公里數":7.8,"修訂版本":1.0,"更新時間":"2026-08-30T16:35:00+08:00"},{"行程ID":"TRIP-05","組織ID":"ORG-TP-003","司機ID":"DRV-05","車輛ID":"VEH-05","行程狀態":"in_progress","預計開始時間":"2026-08-30T16:00:00+08:00","預計結束時間":"2026-08-30T17:20:00+08:00","實際開始時間":"2026-08-30T16:04:00+08:00","實際結束時間":"","預估公里數":6.4,"實際公里數":"","修訂版本":1.0,"更新時間":"2026-08-30T16:28:00+08:00"},{"行程ID":"TRIP-06","組織ID":"ORG-TP-003","司機ID":"DRV-05","車輛ID":"VEH-05","行程狀態":"interrupted","預計開始時間":"2026-08-30T17:30:00+08:00","預計結束時間":"2026-08-30T19:40:00+08:00","實際開始時間":"2026-08-30T17:34:00+08:00","實際結束時間":"","預估公里數":8.6,"實際公里數":"","修訂版本":2.0,"更新時間":"2026-08-30T18:05:00+08:00"},{"行程ID":"TRIP-07","組織ID":"ORG-TP-001","司機ID":"DRV-02","車輛ID":"VEH-02","行程狀態":"completed","預計開始時間":"2026-08-31T06:30:00+08:00","預計結束時間":"2026-08-31T08:05:00+08:00","實際開始時間":"2026-08-31T06:34:00+08:00","實際結束時間":"2026-08-31T08:02:00+08:00","預估公里數":8.9,"實際公里數":9.1,"修訂版本":1.0,"更新時間":"2026-08-31T08:05:00+08:00"},{"行程ID":"TRIP-08","組織ID":"ORG-TP-001","司機ID":"DRV-01","車輛ID":"VEH-01","行程狀態":"completed","預計開始時間":"2026-08-31T06:50:00+08:00","預計結束時間":"2026-08-31T08:25:00+08:00","實際開始時間":"2026-08-31T06:53:00+08:00","實際結束時間":"2026-08-31T08:21:00+08:00","預估公里數":5.6,"實際公里數":5.4,"修訂版本":1.0,"更新時間":"2026-08-31T08:25:00+08:00"},{"行程ID":"TRIP-09","組織ID":"ORG-TP-001","司機ID":"DRV-01","車輛ID":"VEH-01","行程狀態":"scheduled","預計開始時間":"2026-08-31T08:40:00+08:00","預計結束時間":"2026-08-31T10:00:00+08:00","實際開始時間":"","實際結束時間":"","預估公里數":6.7,"實際公里數":"","修訂版本":1.0,"更新時間":"2026-08-29T00:45:00+08:00"},{"行程ID":"TRIP-10","組織ID":"ORG-TP-002","司機ID":"DRV-04","車輛ID":"VEH-04","行程狀態":"cancelled","預計開始時間":"2026-08-31T10:45:00+08:00","預計結束時間":"2026-08-31T12:05:00+08:00","實際開始時間":"","實際結束時間":"","預估公里數":5.2,"實際公里數":"","修訂版本":1.0,"更新時間":"2026-08-31T09:15:00+08:00"},{"行程ID":"TRIP-11","組織ID":"ORG-TP-001","司機ID":"DRV-02","車輛ID":"VEH-02","行程狀態":"completed","預計開始時間":"2026-08-31T13:00:00+08:00","預計結束時間":"2026-08-31T14:45:00+08:00","實際開始時間":"2026-08-31T13:03:00+08:00","實際結束時間":"2026-08-31T14:41:00+08:00","預估公里數":7.9,"實際公里數":8.0,"修訂版本":1.0,"更新時間":"2026-08-31T14:45:00+08:00"},{"行程ID":"TRIP-12","組織ID":"ORG-TP-002","司機ID":"DRV-03","車輛ID":"VEH-03","行程狀態":"scheduled","預計開始時間":"2026-08-31T14:20:00+08:00","預計結束時間":"2026-08-31T16:00:00+08:00","實際開始時間":"","實際結束時間":"","預估公里數":4.8,"實際公里數":"","修訂版本":1.0,"更新時間":"2026-08-29T00:45:00+08:00"},{"行程ID":"TRIP-13","組織ID":"ORG-TP-003","司機ID":"DRV-05","車輛ID":"VEH-05","行程狀態":"aborted","預計開始時間":"2026-08-31T15:50:00+08:00","預計結束時間":"2026-08-31T18:20:00+08:00","實際開始時間":"2026-08-31T15:55:00+08:00","實際結束時間":"2026-08-31T16:18:00+08:00","預估公里數":7.1,"實際公里數":2.9,"修訂版本":2.0,"更新時間":"2026-08-31T16:22:00+08:00"},{"行程ID":"TRIP-14","組織ID":"ORG-TP-001","司機ID":"DRV-01","車輛ID":"VEH-01","行程狀態":"scheduled","預計開始時間":"2026-09-01T07:10:00+08:00","預計結束時間":"2026-09-01T08:55:00+08:00","實際開始時間":"","實際結束時間":"","預估公里數":12.0,"實際公里數":"","修訂版本":1.0,"更新時間":"2026-08-29T00:45:00+08:00"},{"行程ID":"TRIP-15","組織ID":"ORG-TP-003","司機ID":"DRV-05","車輛ID":"VEH-05","行程狀態":"completed","預計開始時間":"2026-09-01T10:10:00+08:00","預計結束時間":"2026-09-01T11:45:00+08:00","實際開始時間":"2026-09-01T10:13:00+08:00","實際結束時間":"2026-09-01T11:41:00+08:00","預估公里數":4.5,"實際公里數":4.7,"修訂版本":1.0,"更新時間":"2026-09-01T11:45:00+08:00"},{"行程ID":"TRIP-16","組織ID":"ORG-TP-001","司機ID":"DRV-02","車輛ID":"VEH-02","行程狀態":"cancelled","預計開始時間":"2026-09-01T11:00:00+08:00","預計結束時間":"2026-09-01T12:25:00+08:00","實際開始時間":"","實際結束時間":"","預估公里數":9.0,"實際公里數":"","修訂版本":1.0,"更新時間":"2026-09-01T09:40:00+08:00"},{"行程ID":"TRIP-17","組織ID":"ORG-TP-002","司機ID":"DRV-03","車輛ID":"VEH-03","行程狀態":"in_progress","預計開始時間":"2026-09-01T13:10:00+08:00","預計結束時間":"2026-09-01T15:00:00+08:00","實際開始時間":"2026-09-01T13:12:00+08:00","實際結束時間":"","預估公里數":5.1,"實際公里數":"","修訂版本":1.0,"更新時間":"2026-09-01T13:42:00+08:00"},{"行程ID":"TRIP-18","組織ID":"ORG-TP-003","司機ID":"DRV-05","車輛ID":"VEH-05","行程狀態":"scheduled","預計開始時間":"2026-09-01T16:20:00+08:00","預計結束時間":"2026-09-01T18:30:00+08:00","實際開始時間":"","實際結束時間":"","預估公里數":4.2,"實際公里數":"","修訂版本":1.0,"更新時間":"2026-08-29T00:45:00+08:00"},{"行程ID":"TRIP-19","組織ID":"ORG-TP-001","司機ID":"DRV-01","車輛ID":"VEH-01","行程狀態":"completed","預計開始時間":"2026-08-31T06:55:00+08:00","預計結束時間":"2026-08-31T08:35:00+08:00","實際開始時間":"2026-08-31T06:58:00+08:00","實際結束時間":"2026-08-31T08:30:00+08:00","預估公里數":12.8,"實際公里數":12.5,"修訂版本":1.0,"更新時間":"2026-08-31T08:32:00+08:00"},{"行程ID":"TRIP-20","組織ID":"ORG-TP-002","司機ID":"DRV-03","車輛ID":"VEH-03","行程狀態":"scheduled","預計開始時間":"2026-08-31T08:50:00+08:00","預計結束時間":"2026-08-31T10:15:00+08:00","實際開始時間":"","實際結束時間":"","預估公里數":6.9,"實際公里數":"","修訂版本":1.0,"更新時間":"2026-08-29T01:05:00+08:00"},{"行程ID":"TRIP-21","組織ID":"ORG-TP-002","司機ID":"DRV-04","車輛ID":"VEH-04","行程狀態":"cancelled","預計開始時間":"2026-08-31T08:55:00+08:00","預計結束時間":"2026-08-31T10:40:00+08:00","實際開始時間":"","實際結束時間":"","預估公里數":13.9,"實際公里數":"","修訂版本":1.0,"更新時間":"2026-08-31T09:08:00+08:00"},{"行程ID":"TRIP-22","組織ID":"ORG-TP-002","司機ID":"DRV-03","車輛ID":"VEH-03","行程狀態":"completed","預計開始時間":"2026-08-31T09:05:00+08:00","預計結束時間":"2026-08-31T10:50:00+08:00","實際開始時間":"2026-08-31T09:08:00+08:00","實際結束時間":"2026-08-31T10:42:00+08:00","預估公里數":14.6,"實際公里數":14.8,"修訂版本":2.0,"更新時間":"2026-08-31T10:45:00+08:00"},{"行程ID":"TRIP-23","組織ID":"ORG-TP-003","司機ID":"DRV-05","車輛ID":"VEH-05","行程狀態":"completed","預計開始時間":"2026-08-31T11:50:00+08:00","預計結束時間":"2026-08-31T13:30:00+08:00","實際開始時間":"2026-08-31T11:54:00+08:00","實際結束時間":"2026-08-31T13:24:00+08:00","預估公里數":5.9,"實際公里數":6.1,"修訂版本":1.0,"更新時間":"2026-08-31T13:26:00+08:00"},{"行程ID":"TRIP-24","組織ID":"ORG-TP-001","司機ID":"DRV-02","車輛ID":"VEH-02","行程狀態":"completed","預計開始時間":"2026-08-31T13:40:00+08:00","預計結束時間":"2026-08-31T15:20:00+08:00","實際開始時間":"2026-08-31T13:46:00+08:00","實際結束時間":"2026-08-31T15:15:00+08:00","預估公里數":11.0,"實際公里數":10.8,"修訂版本":2.0,"更新時間":"2026-08-31T15:17:00+08:00"},{"行程ID":"TRIP-25","組織ID":"ORG-TP-001","司機ID":"DRV-02","車輛ID":"VEH-01","行程狀態":"completed","預計開始時間":"2026-08-29T06:20:00+08:00","預計結束時間":"2026-08-29T07:55:00+08:00","實際開始時間":"2026-08-29T06:24:00+08:00","實際結束時間":"2026-08-29T07:51:00+08:00","預估公里數":9.2,"實際公里數":9.4,"修訂版本":1.0,"更新時間":"2026-08-29T07:55:00+08:00"},{"行程ID":"TRIP-26","組織ID":"ORG-TP-001","司機ID":"DRV-01","車輛ID":"VEH-02","行程狀態":"scheduled","預計開始時間":"2026-09-02T12:40:00+08:00","預計結束時間":"2026-09-02T17:30:00+08:00","實際開始時間":"","實際結束時間":"","預估公里數":10.1,"實際公里數":"","修訂版本":1.0,"更新時間":"2026-08-29T01:35:00+08:00"}],"行程預約關聯":[{"行程預約關聯ID":"TB-01","行程ID":"TRIP-01","預約ID":"BKG-01","順序":1.0,"實際上車時間":"2026-08-30T07:42:00+08:00","實際下車時間":"2026-08-30T08:32:00+08:00","乘客狀態":"dropped_off","更新時間":"2026-08-30T09:05:00+08:00"},{"行程預約關聯ID":"TB-02","行程ID":"TRIP-01","預約ID":"BKG-02","順序":2.0,"實際上車時間":"2026-08-30T07:58:00+08:00","實際下車時間":"2026-08-30T08:38:00+08:00","乘客狀態":"dropped_off","更新時間":"2026-08-30T09:05:00+08:00"},{"行程預約關聯ID":"TB-03","行程ID":"TRIP-02","預約ID":"BKG-03","順序":1.0,"實際上車時間":"","實際下車時間":"","乘客狀態":"pending","更新時間":"2026-08-29T00:45:00+08:00"},{"行程預約關聯ID":"TB-04","行程ID":"TRIP-03","預約ID":"BKG-04","順序":1.0,"實際上車時間":"","實際下車時間":"","乘客狀態":"cancelled","更新時間":"2026-08-30T08:15:00+08:00"},{"行程預約關聯ID":"TB-05","行程ID":"TRIP-04","預約ID":"BKG-08","順序":1.0,"實際上車時間":"2026-08-30T15:12:00+08:00","實際下車時間":"2026-08-30T16:27:00+08:00","乘客狀態":"dropped_off","更新時間":"2026-08-30T16:35:00+08:00"},{"行程預約關聯ID":"TB-06","行程ID":"TRIP-05","預約ID":"BKG-09","順序":1.0,"實際上車時間":"2026-08-30T16:23:00+08:00","實際下車時間":"","乘客狀態":"picked_up","更新時間":"2026-08-30T16:28:00+08:00"},{"行程預約關聯ID":"TB-07","行程ID":"TRIP-06","預約ID":"BKG-10","順序":1.0,"實際上車時間":"2026-08-30T17:38:00+08:00","實際下車時間":"","乘客狀態":"picked_up","更新時間":"2026-08-30T18:05:00+08:00"},{"行程預約關聯ID":"TB-08","行程ID":"TRIP-07","預約ID":"BKG-11","順序":1.0,"實際上車時間":"2026-08-31T06:53:00+08:00","實際下車時間":"2026-08-31T07:51:00+08:00","乘客狀態":"dropped_off","更新時間":"2026-08-31T08:05:00+08:00"},{"行程預約關聯ID":"TB-09","行程ID":"TRIP-08","預約ID":"BKG-12","順序":1.0,"實際上車時間":"2026-08-31T07:08:00+08:00","實際下車時間":"2026-08-31T08:16:00+08:00","乘客狀態":"dropped_off","更新時間":"2026-08-31T08:25:00+08:00"},{"行程預約關聯ID":"TB-10","行程ID":"TRIP-09","預約ID":"BKG-13","順序":1.0,"實際上車時間":"","實際下車時間":"","乘客狀態":"pending","更新時間":"2026-08-29T00:45:00+08:00"},{"行程預約關聯ID":"TB-11","行程ID":"TRIP-10","預約ID":"BKG-16","順序":1.0,"實際上車時間":"","實際下車時間":"","乘客狀態":"cancelled","更新時間":"2026-08-31T09:15:00+08:00"},{"行程預約關聯ID":"TB-12","行程ID":"TRIP-11","預約ID":"BKG-18","順序":1.0,"實際上車時間":"2026-08-31T13:23:00+08:00","實際下車時間":"2026-08-31T14:36:00+08:00","乘客狀態":"dropped_off","更新時間":"2026-08-31T14:45:00+08:00"},{"行程預約關聯ID":"TB-13","行程ID":"TRIP-12","預約ID":"BKG-19","順序":1.0,"實際上車時間":"","實際下車時間":"","乘客狀態":"pending","更新時間":"2026-08-29T00:45:00+08:00"},{"行程預約關聯ID":"TB-14","行程ID":"TRIP-13","預約ID":"BKG-20","順序":1.0,"實際上車時間":"2026-08-31T16:13:00+08:00","實際下車時間":"","乘客狀態":"cancelled","更新時間":"2026-08-31T16:22:00+08:00"},{"行程預約關聯ID":"TB-15","行程ID":"TRIP-14","預約ID":"BKG-21","順序":1.0,"實際上車時間":"","實際下車時間":"","乘客狀態":"pending","更新時間":"2026-08-29T00:45:00+08:00"},{"行程預約關聯ID":"TB-16","行程ID":"TRIP-14","預約ID":"BKG-22","順序":2.0,"實際上車時間":"","實際下車時間":"","乘客狀態":"pending","更新時間":"2026-08-29T00:45:00+08:00"},{"行程預約關聯ID":"TB-17","行程ID":"TRIP-15","預約ID":"BKG-25","順序":1.0,"實際上車時間":"2026-09-01T10:33:00+08:00","實際下車時間":"2026-09-01T11:37:00+08:00","乘客狀態":"dropped_off","更新時間":"2026-09-01T11:45:00+08:00"},{"行程預約關聯ID":"TB-18","行程ID":"TRIP-16","預約ID":"BKG-26","順序":1.0,"實際上車時間":"","實際下車時間":"","乘客狀態":"cancelled","更新時間":"2026-09-01T09:40:00+08:00"},{"行程預約關聯ID":"TB-19","行程ID":"TRIP-17","預約ID":"BKG-28","順序":1.0,"實際上車時間":"2026-09-01T13:34:00+08:00","實際下車時間":"","乘客狀態":"picked_up","更新時間":"2026-09-01T13:42:00+08:00"},{"行程預約關聯ID":"TB-20","行程ID":"TRIP-18","預約ID":"BKG-30","順序":1.0,"實際上車時間":"","實際下車時間":"","乘客狀態":"pending","更新時間":"2026-08-29T00:45:00+08:00"},{"行程預約關聯ID":"TB-21","行程ID":"TRIP-19","預約ID":"BKG-31","順序":1.0,"實際上車時間":"2026-08-31T07:18:00+08:00","實際下車時間":"2026-08-31T08:15:00+08:00","乘客狀態":"dropped_off","更新時間":"2026-08-31T08:30:00+08:00"},{"行程預約關聯ID":"TB-22","行程ID":"TRIP-19","預約ID":"BKG-32","順序":2.0,"實際上車時間":"2026-08-31T07:31:00+08:00","實際下車時間":"2026-08-31T08:24:00+08:00","乘客狀態":"dropped_off","更新時間":"2026-08-31T08:30:00+08:00"},{"行程預約關聯ID":"TB-23","行程ID":"TRIP-20","預約ID":"BKG-33","順序":1.0,"實際上車時間":"","實際下車時間":"","乘客狀態":"pending","更新時間":"2026-08-29T01:05:00+08:00"},{"行程預約關聯ID":"TB-24","行程ID":"TRIP-21","預約ID":"BKG-34","順序":1.0,"實際上車時間":"","實際下車時間":"","乘客狀態":"cancelled","更新時間":"2026-08-31T09:08:00+08:00"},{"行程預約關聯ID":"TB-25","行程ID":"TRIP-22","預約ID":"BKG-34","順序":1.0,"實際上車時間":"2026-08-31T09:28:00+08:00","實際下車時間":"2026-08-31T10:38:00+08:00","乘客狀態":"dropped_off","更新時間":"2026-08-31T10:45:00+08:00"},{"行程預約關聯ID":"TB-26","行程ID":"TRIP-23","預約ID":"BKG-37","順序":1.0,"實際上車時間":"2026-08-31T12:12:00+08:00","實際下車時間":"2026-08-31T13:20:00+08:00","乘客狀態":"dropped_off","更新時間":"2026-08-31T13:26:00+08:00"},{"行程預約關聯ID":"TB-27","行程ID":"TRIP-24","預約ID":"BKG-39","順序":1.0,"實際上車時間":"2026-08-31T14:03:00+08:00","實際下車時間":"2026-08-31T15:05:00+08:00","乘客狀態":"dropped_off","更新時間":"2026-08-31T15:17:00+08:00"},{"行程預約關聯ID":"TB-28","行程ID":"TRIP-24","預約ID":"BKG-40","順序":2.0,"實際上車時間":"2026-08-31T14:15:00+08:00","實際下車時間":"2026-08-31T15:10:00+08:00","乘客狀態":"dropped_off","更新時間":"2026-08-31T15:17:00+08:00"},{"行程預約關聯ID":"TB-29","行程ID":"TRIP-25","預約ID":"BKG-41","順序":1.0,"實際上車時間":"2026-08-29T06:43:00+08:00","實際下車時間":"2026-08-29T07:47:00+08:00","乘客狀態":"dropped_off","更新時間":"2026-08-29T07:55:00+08:00"},{"行程預約關聯ID":"TB-30","行程ID":"TRIP-26","預約ID":"BKG-51","順序":1.0,"實際上車時間":"","實際下車時間":"","乘客狀態":"pending","更新時間":"2026-08-29T01:35:00+08:00"}],"服務證明":[{"服務證明ID":"PROOF-01","行程ID":"TRIP-01","Drive檔案ID":"1rK7xPq8L2mN5vT9aB3cD6eF0gH4jQ7wX","簽收人姓名":"王淑芬","拍攝時間":"2026-08-30T09:01:00+08:00","保存至日期":"2026-11-28","SHA-256校驗碼":"9507ff0e8c8f9e856fc9946add2f2b131746b006d0c0f050dcdab4b352973528","建立者使用者ID":"USR-DRV-01"},{"服務證明ID":"PROOF-02","行程ID":"TRIP-04","Drive檔案ID":"1mV4sJq2D9kR7pA5xC8nL0eT6uW3bH1fG5yZ","簽收人姓名":"劉冠廷","拍攝時間":"2026-08-30T16:29:00+08:00","保存至日期":"2026-11-28","SHA-256校驗碼":"8e7e0164888637b1f1abb8d57edddf7922a1fd98dcd39e88db57430d0eafb1ea","建立者使用者ID":"USR-DRV-03"},{"服務證明ID":"PROOF-03","行程ID":"TRIP-07","Drive檔案ID":"1bN8qT4rP7wX2cL5mK9dF0sV6hJ3aE1uG8zY","簽收人姓名":"張維仁","拍攝時間":"2026-08-31T07:54:00+08:00","保存至日期":"2026-11-29","SHA-256校驗碼":"4a6e7f74e1a7549b6b0e8f74e97d90f4d9ac0353db0f191c407cf8c2f12e0a73","建立者使用者ID":"USR-DRV-02"},{"服務證明ID":"PROOF-04","行程ID":"TRIP-08","Drive檔案ID":"1gC5pR9xK2nM7vB4dS8qL0tH6jF3aW1yE5uZ","簽收人姓名":"吳佳蓉","拍攝時間":"2026-08-31T08:18:00+08:00","保存至日期":"2026-11-29","SHA-256校驗碼":"1b5a22d34d848c19f62e5db452af77ca4032b7ae9f88d15763cd03f13f9db218","建立者使用者ID":"USR-DRV-01"},{"服務證明ID":"PROOF-05","行程ID":"TRIP-11","Drive檔案ID":"1uD3mH7qP5xV9cN2kR8sL0bF6jT4aW1eG5yZ","簽收人姓名":"王淑芬","拍攝時間":"2026-08-31T14:38:00+08:00","保存至日期":"2026-11-29","SHA-256校驗碼":"88b013355104358aca22e424cd5d4c87ba67c86f4811dfabb5eb16dd4017c45a","建立者使用者ID":"USR-DRV-02"},{"服務證明ID":"PROOF-06","行程ID":"TRIP-15","Drive檔案ID":"1qA9vT3mK6xP2dR8nH5sL0cF7jW4bE1uG9yZ","簽收人姓名":"李怡君","拍攝時間":"2026-09-01T11:39:00+08:00","保存至日期":"2026-11-30","SHA-256校驗碼":"6fb1b3863b2db58aa55d58a1be94dcf85ed7679eef0be2f760f9c67f4712601f","建立者使用者ID":"USR-DRV-05"},{"服務證明ID":"PROOF-07","行程ID":"TRIP-19","Drive檔案ID":"1demoProofTrip19A8nQ4xK7mP2","簽收人姓名":"王淑芬","拍攝時間":"2026-08-31T08:28:00+08:00","保存至日期":"2026-11-29","SHA-256校驗碼":"2e4475034fbea862d32dded5eabfce54c9f8bd57b7a83dc72620e31c11af8d21","建立者使用者ID":"USR-DRV-01"},{"服務證明ID":"PROOF-08","行程ID":"TRIP-22","Drive檔案ID":"1demoProofTrip22B7vR5mN2kL9","簽收人姓名":"黃美玲","拍攝時間":"2026-08-31T10:40:00+08:00","保存至日期":"2026-11-29","SHA-256校驗碼":"99c97e53daae6bd0649d93e74280c993af7ca2a772c6a98a0692535f96dc2cc8","建立者使用者ID":"USR-DRV-03"},{"服務證明ID":"PROOF-09","行程ID":"TRIP-23","Drive檔案ID":"1demoProofTrip23C3qW8pD6sH1","簽收人姓名":"蔡雅雯","拍攝時間":"2026-08-31T13:22:00+08:00","保存至日期":"2026-11-29","SHA-256校驗碼":"c664535254f7322b79e5a6270ecb60fcd60e1725701c57aff3b22ba20cf0df17","建立者使用者ID":"USR-DRV-05"},{"服務證明ID":"PROOF-10","行程ID":"TRIP-24","Drive檔案ID":"1demoProofTrip24D9tE4yU7aF2","簽收人姓名":"張維仁","拍攝時間":"2026-08-31T15:12:00+08:00","保存至日期":"2026-11-29","SHA-256校驗碼":"690d44d2fcb8f47a17d0664fd3fe647a07f32b5944f023e6c974b6e98df5d7d8","建立者使用者ID":"USR-DRV-02"},{"服務證明ID":"PROOF-11","行程ID":"TRIP-25","Drive檔案ID":"1demoProofTrip25E4rT8uI2oP6","簽收人姓名":"張維仁","拍攝時間":"2026-08-29T07:49:00+08:00","保存至日期":"2026-11-27","SHA-256校驗碼":"bbca0f775eaf26f211e8e2caf0f915b34038d412568c61cc40e4c641e3ad4be1","建立者使用者ID":"USR-DRV-02"}],"稽核紀錄":[{"事件ID":"EVT-01","事件類型":"organization.updated","操作者使用者ID":"USR-SUPER-JERRY","組織ID":"ORG-TP-001","實體類型":"organization","實體ID":"ORG-TP-001","原因代碼":"DEMO_PROFILE_REFRESH","詳細資料JSON":"{\"field\":\"display_name\",\"after\":\"安馨福祉交通有限公司\"}","建立時間":"2026-08-29T00:40:00+08:00"},{"事件ID":"EVT-02","事件類型":"membership.revoked","操作者使用者ID":"USR-OWNER-001","組織ID":"ORG-TP-001","實體類型":"membership","實體ID":"MEM-DRV-06","原因代碼":"EMPLOYMENT_ENDED","詳細資料JSON":"{\"user_id\":\"USR-DRV-06\",\"company_role\":\"driver\",\"requester_membership_preserved\":true}","建立時間":"2026-08-27T18:20:00+08:00"},{"事件ID":"EVT-03","事件類型":"booking.created","操作者使用者ID":"USR-REQ-01","組織ID":"","實體類型":"booking","實體ID":"BKG-01","原因代碼":"REQUESTER_CREATED","詳細資料JSON":"{\"trip_type\":\"one_way\",\"pooling\":true}","建立時間":"2026-08-25T09:10:00+08:00"},{"事件ID":"EVT-04","事件類型":"booking.claimed","操作者使用者ID":"USR-DISP-001","組織ID":"ORG-TP-001","實體類型":"booking","實體ID":"BKG-06","原因代碼":"DISPATCH_ACCEPTED","詳細資料JSON":"{\"previous_status\":\"open\",\"new_status\":\"claimed\"}","建立時間":"2026-08-29T00:32:00+08:00"},{"事件ID":"EVT-05","事件類型":"booking.cancelled","操作者使用者ID":"USR-REQ-04","組織ID":"ORG-TP-001","實體類型":"booking","實體ID":"BKG-04","原因代碼":"OUTPATIENT_APPOINTMENT_CANCELLED","詳細資料JSON":"{\"note\":\"院方通知門診改期，家屬於出車前取消\"}","建立時間":"2026-08-30T08:15:00+08:00"},{"事件ID":"EVT-06","事件類型":"booking.expired","操作者使用者ID":"","組織ID":"","實體類型":"booking","實體ID":"BKG-07","原因代碼":"MARKET_EXPIRED","詳細資料JSON":"{\"note\":\"公開需求於接送前仍未被承接\"}","建立時間":"2026-08-30T13:30:00+08:00"},{"事件ID":"EVT-07","事件類型":"booking.updated","操作者使用者ID":"USR-REQ-10","組織ID":"ORG-TP-003","實體類型":"booking","實體ID":"BKG-10","原因代碼":"RETURN_TIME_CHANGED","詳細資料JSON":"{\"before\":\"19:40\",\"after\":\"20:00\",\"revision\":2}","建立時間":"2026-08-29T00:35:00+08:00"},{"事件ID":"EVT-08","事件類型":"booking.duplicate.detected","操作者使用者ID":"USR-REQ-03","組織ID":"","實體類型":"booking","實體ID":"BKG-22","原因代碼":"POSSIBLE_DUPLICATE","詳細資料JSON":"{\"matched_booking_id\":\"BKG-21\",\"reason\":\"same_destination_close_time\",\"action\":\"kept_as_separate_passenger\"}","建立時間":"2026-08-27T11:16:00+08:00"},{"事件ID":"EVT-09","事件類型":"dispatch.optimized","操作者使用者ID":"USR-DISP-001","組織ID":"ORG-TP-001","實體類型":"dispatch_plan","實體ID":"PLAN-0830-A","原因代碼":"POOLING_RECOMMENDED","詳細資料JSON":"{\"bookings\":[\"BKG-01\",\"BKG-02\"],\"driver\":\"DRV-01\",\"vehicle\":\"VEH-01\",\"estimated_empty_km_saved\":4.8}","建立時間":"2026-08-29T00:36:00+08:00"},{"事件ID":"EVT-10","事件類型":"trip.assigned","操作者使用者ID":"USR-DISP-002","組織ID":"ORG-TP-002","實體類型":"trip","實體ID":"TRIP-02","原因代碼":"ACCESSIBLE_VEHICLE_REQUIRED","詳細資料JSON":"{\"driver\":\"DRV-03\",\"vehicle\":\"VEH-03\",\"wheelchair_slots\":2}","建立時間":"2026-08-29T00:37:00+08:00"},{"事件ID":"EVT-11","事件類型":"trip.step.completed","操作者使用者ID":"USR-DRV-01","組織ID":"ORG-TP-001","實體類型":"trip","實體ID":"TRIP-01","原因代碼":"PICKUP_CONFIRMED","詳細資料JSON":"{\"booking_id\":\"BKG-01\",\"step\":\"pickup\",\"actual_at\":\"2026-08-30T07:42:00+08:00\"}","建立時間":"2026-08-30T07:42:00+08:00"},{"事件ID":"EVT-12","事件類型":"trip.step.undo","操作者使用者ID":"USR-DRV-01","組織ID":"ORG-TP-001","實體類型":"trip","實體ID":"TRIP-01","原因代碼":"ACCIDENTAL_TAP","詳細資料JSON":"{\"step\":\"dropoff\",\"restored_to\":\"pickup_completed\"}","建立時間":"2026-08-30T08:21:00+08:00"},{"事件ID":"EVT-13","事件類型":"trip.status.changed","操作者使用者ID":"USR-DRV-05","組織ID":"ORG-TP-003","實體類型":"trip","實體ID":"TRIP-06","原因代碼":"VEHICLE_EQUIPMENT_WARNING","詳細資料JSON":"{\"from\":\"in_progress\",\"to\":\"interrupted\",\"issue_id\":\"ISS-03\"}","建立時間":"2026-08-30T18:05:00+08:00"},{"事件ID":"EVT-14","事件類型":"trip.assignment.changed","操作者使用者ID":"USR-DISP-003","組織ID":"ORG-TP-003","實體類型":"trip","實體ID":"TRIP-06","原因代碼":"HANDOVER_AFTER_ISSUE","詳細資料JSON":"{\"original_driver\":\"DRV-05\",\"recommended_action\":\"handover\",\"revision\":2}","建立時間":"2026-08-30T18:12:00+08:00"},{"事件ID":"EVT-15","事件類型":"issue.created","操作者使用者ID":"USR-DRV-05","組織ID":"ORG-TP-003","實體類型":"issue","實體ID":"ISS-03","原因代碼":"VEHICLE_EQUIPMENT_ABNORMAL","詳細資料JSON":"{\"trip_id\":\"TRIP-06\",\"note\":\"輪椅固定帶扣環異常，暫停行程等待調度\"}","建立時間":"2026-08-30T18:05:00+08:00"},{"事件ID":"EVT-16","事件類型":"issue.resolved","操作者使用者ID":"USR-DISP-003","組織ID":"ORG-TP-003","實體類型":"issue","實體ID":"ISS-03","原因代碼":"SAFE_HANDOVER_COMPLETED","詳細資料JSON":"{\"resolution\":\"由調度安排備援車接續，原車回場檢查\"}","建立時間":"2026-08-30T18:32:00+08:00"},{"事件ID":"EVT-17","事件類型":"trip.aborted","操作者使用者ID":"USR-DRV-05","組織ID":"ORG-TP-003","實體類型":"trip","實體ID":"TRIP-13","原因代碼":"PASSENGER_UNWELL","詳細資料JSON":"{\"note\":\"乘客上車後身體不適，家屬決定取消原接送並自行就醫\"}","建立時間":"2026-08-31T16:22:00+08:00"},{"事件ID":"EVT-18","事件類型":"proof.created","操作者使用者ID":"USR-DRV-03","組織ID":"ORG-TP-002","實體類型":"service_proof","實體ID":"PROOF-02","原因代碼":"DROPOFF_SIGNED","詳細資料JSON":"{\"trip_id\":\"TRIP-04\",\"signed_by\":\"劉冠廷\"}","建立時間":"2026-08-30T16:29:00+08:00"},{"事件ID":"EVT-19","事件類型":"notification.sent","操作者使用者ID":"USR-DISP-001","組織ID":"ORG-TP-001","實體類型":"notification","實體ID":"NTF-02","原因代碼":"TRIP_ASSIGNED","詳細資料JSON":"{\"channel\":\"LINE\",\"recipient\":\"USR-REQ-02\"}","建立時間":"2026-08-29T00:38:00+08:00"},{"事件ID":"EVT-20","事件類型":"notification.failed","操作者使用者ID":"","組織ID":"ORG-TP-002","實體類型":"notification","實體ID":"NTF-06","原因代碼":"SMS_PROVIDER_TIMEOUT","詳細資料JSON":"{\"retry\":\"queued\",\"attempt\":1}","建立時間":"2026-08-31T09:18:00+08:00"},{"事件ID":"EVT-21","事件類型":"benefit.assessment.created","操作者使用者ID":"USR-REQ-04","組織ID":"","實體類型":"benefit_assessment","實體ID":"BEN-04","原因代碼":"DEMO_ESTIMATE","詳細資料JSON":"{\"cms_level\":5,\"result\":\"展示試算，非正式核定\"}","建立時間":"2026-08-29T00:39:00+08:00"},{"事件ID":"EVT-22","事件類型":"system_report.created","操作者使用者ID":"USR-DISP-002","組織ID":"ORG-TP-002","實體類型":"system_report","實體ID":"RPT-01","原因代碼":"MOBILE_NAV_INTERMITTENT","詳細資料JSON":"{\"title\":\"手機版底部導覽偶爾第一次點擊無反應\"}","建立時間":"2026-08-30T12:10:00+08:00"},{"事件ID":"EVT-23","事件類型":"system_report.resolved","操作者使用者ID":"USR-SUPER-JERRY","組織ID":"ORG-TP-002","實體類型":"system_report","實體ID":"RPT-01","原因代碼":"UI_EVENT_FIXED","詳細資料JSON":"{\"resolution\":\"重新綁定 mobile navigation click handler\"}","建立時間":"2026-08-31T10:25:00+08:00"},{"事件ID":"EVT-24","事件類型":"care_recipient.updated","操作者使用者ID":"USR-REQ-08","組織ID":"","實體類型":"care_recipient","實體ID":"REC-08","原因代碼":"ACCESSIBILITY_NEED_UPDATED","詳細資料JSON":"{\"wheelchair_type\":\"manual\",\"accessible_vehicle\":true}","建立時間":"2026-08-28T18:30:00+08:00"},{"事件ID":"EVT-25","事件類型":"vehicle.status.changed","操作者使用者ID":"USR-OWNER-003","組織ID":"ORG-TP-003","實體類型":"vehicle","實體ID":"VEH-06","原因代碼":"RETIRED_AFTER_LIFECYCLE_REVIEW","詳細資料JSON":"{\"from\":\"maintenance\",\"to\":\"retired\",\"recoverable\":false}","建立時間":"2026-08-26T16:30:00+08:00"},{"事件ID":"EVT-26","事件類型":"membership.status.changed","操作者使用者ID":"USR-OWNER-003","組織ID":"ORG-TP-003","實體類型":"membership","實體ID":"MEM-DISP-004","原因代碼":"MEMBERSHIP_SUSPENDED","詳細資料JSON":"{\"from\":\"active\",\"to\":\"suspended\",\"account_enabled\":true}","建立時間":"2026-08-31T11:45:00+08:00"},{"事件ID":"EVT-27","事件類型":"dispatch.optimized","操作者使用者ID":"USR-DISP-001","組織ID":"ORG-TP-001","實體類型":"dispatch_plan","實體ID":"PLAN-0831-C","原因代碼":"POOLING_APPLIED","詳細資料JSON":"{\"bookings\":[\"BKG-31\",\"BKG-32\"],\"trip\":\"TRIP-19\",\"empty_km_saved\":5.2}","建立時間":"2026-08-30T20:10:00+08:00"},{"事件ID":"EVT-28","事件類型":"vehicle.status.changed","操作者使用者ID":"USR-DISP-002","組織ID":"ORG-TP-002","實體類型":"vehicle","實體ID":"VEH-04","原因代碼":"BREAKDOWN_PRETRIP","詳細資料JSON":"{\"from\":\"available\",\"to\":\"maintenance\",\"issue\":\"ISS-08\"}","建立時間":"2026-08-31T09:08:00+08:00"},{"事件ID":"EVT-29","事件類型":"trip.assignment.changed","操作者使用者ID":"USR-DISP-002","組織ID":"ORG-TP-002","實體類型":"trip","實體ID":"TRIP-22","原因代碼":"VEHICLE_BREAKDOWN_REASSIGN","詳細資料JSON":"{\"from_driver\":\"DRV-04\",\"from_vehicle\":\"VEH-04\",\"to_driver\":\"DRV-03\",\"to_vehicle\":\"VEH-03\",\"booking\":\"BKG-34\"}","建立時間":"2026-08-31T09:12:00+08:00"},{"事件ID":"EVT-30","事件類型":"notification.retry.succeeded","操作者使用者ID":"","組織ID":"ORG-TP-002","實體類型":"notification","實體ID":"NTF-11","原因代碼":"SECOND_ATTEMPT_SUCCESS","詳細資料JSON":"{\"original\":\"NTF-06\",\"attempt\":2,\"channel\":\"SMS\"}","建立時間":"2026-08-31T09:20:04+08:00"},{"事件ID":"EVT-31","事件類型":"trip.assignment.changed","操作者使用者ID":"USR-DISP-001","組織ID":"ORG-TP-001","實體類型":"trip","實體ID":"TRIP-24","原因代碼":"DRIVER_UNWELL_REASSIGN","詳細資料JSON":"{\"from_driver\":\"DRV-01\",\"from_vehicle\":\"VEH-01\",\"to_driver\":\"DRV-02\",\"to_vehicle\":\"VEH-02\",\"issue\":\"ISS-09\"}","建立時間":"2026-08-31T13:44:00+08:00"},{"事件ID":"EVT-32","事件類型":"dispatch.optimized","操作者使用者ID":"USR-DISP-001","組織ID":"ORG-TP-001","實體類型":"dispatch_plan","實體ID":"PLAN-0831-E","原因代碼":"POOLING_PRESERVED_AFTER_REASSIGN","詳細資料JSON":"{\"bookings\":[\"BKG-39\",\"BKG-40\"],\"trip\":\"TRIP-24\",\"revision\":2}","建立時間":"2026-08-31T13:45:00+08:00"},{"事件ID":"EVT-33","事件類型":"proof.created","操作者使用者ID":"USR-DRV-02","組織ID":"ORG-TP-001","實體類型":"service_proof","實體ID":"PROOF-10","原因代碼":"DROPOFF_SIGNED","詳細資料JSON":"{\"trip\":\"TRIP-24\",\"signed_by\":\"張維仁\"}","建立時間":"2026-08-31T15:12:00+08:00"},{"事件ID":"EVT-34","事件類型":"booking.updated","操作者使用者ID":"USR-REQ-10","組織ID":"ORG-TP-003","實體類型":"booking","實體ID":"BKG-38","原因代碼":"RETURN_TIME_CHANGED","詳細資料JSON":"{\"from\":\"16:40\",\"to\":\"17:10\",\"trip_type\":\"round_trip\"}","建立時間":"2026-08-31T08:55:00+08:00"},{"事件ID":"EVT-35","事件類型":"dispatch.suggestion.rejected","操作者使用者ID":"USR-DISP-001","組織ID":"ORG-TP-001","實體類型":"booking","實體ID":"BKG-35","原因代碼":"SCHEDULE_CONFLICT","詳細資料JSON":"{\"plan\":\"PLAN-0831-F\",\"action\":\"keep_open_pool\"}","建立時間":"2026-08-31T09:35:00+08:00"},{"事件ID":"EVT-36","事件類型":"permission.denied","操作者使用者ID":"USR-DRV-02","組織ID":"ORG-TP-001","實體類型":"booking","實體ID":"BKG-35","原因代碼":"DRIVER_PUBLIC_POOL_FORBIDDEN","詳細資料JSON":"{\"permission\":\"booking.pool.read\",\"role\":\"driver\",\"allowed\":false}","建立時間":"2026-08-31T09:36:00+08:00"},{"事件ID":"EVT-37","事件類型":"membership.status.changed","操作者使用者ID":"USR-OWNER-001","組織ID":"ORG-TP-001","實體類型":"membership","實體ID":"MEM-DRV-06","原因代碼":"TEMPORARY_SUSPEND","詳細資料JSON":"{\"from\":\"active\",\"to\":\"suspended\"}","建立時間":"2026-08-26T17:30:00+08:00"},{"事件ID":"EVT-38","事件類型":"membership.status.changed","操作者使用者ID":"USR-OWNER-001","組織ID":"ORG-TP-001","實體類型":"membership","實體ID":"MEM-DRV-06","原因代碼":"MEMBERSHIP_REVOKED","詳細資料JSON":"{\"from\":\"suspended\",\"to\":\"revoked\",\"personal_requester_membership\":\"MEM-DRV6-REQ\"}","建立時間":"2026-08-27T18:20:00+08:00"},{"事件ID":"EVT-39","事件類型":"vehicle.deleted","操作者使用者ID":"USR-OWNER-001","組織ID":"ORG-TP-001","實體類型":"vehicle","實體ID":"VEH-DEMO-DEL-01","原因代碼":"ADMIN_DELETE_UNUSED_VEHICLE","詳細資料JSON":"{\"plate\":\"RZX-1028\",\"status_before\":\"available\",\"no_active_trip\":true,\"deleted_from_current_vehicle_list\":true}","建立時間":"2026-08-29T17:20:00+08:00"},{"事件ID":"EVT-545A6358-B","事件類型":"api.error","操作者使用者ID":"","組織ID":"","實體類型":"api","實體ID":"1e8aaaee-7a35-40cb-9ca6-b7094b20d54c","原因代碼":"API_ERROR","詳細資料JSON":"","建立時間":"2026-08-28T17:30:30.950Z"},{"事件ID":"EVT-990E9159-0","事件類型":"api.error","操作者使用者ID":"","組織ID":"","實體類型":"api","實體ID":"6b0f49bf-ccbe-4be8-8f24-ec729bf3855e","原因代碼":"API_ERROR","詳細資料JSON":"","建立時間":"2026-08-28T17:30:31.626Z"},{"事件ID":"EVT-B8B04627-E","事件類型":"api.error","操作者使用者ID":"","組織ID":"","實體類型":"api","實體ID":"9c5c5786-8941-45a3-947a-78cca606e825","原因代碼":"API_ERROR","詳細資料JSON":"","建立時間":"2026-08-28T17:30:33.526Z"},{"事件ID":"EVT-3EA12821-7","事件類型":"api.error","操作者使用者ID":"","組織ID":"","實體類型":"api","實體ID":"ade69438-806e-404b-b5b9-9109097227c6","原因代碼":"API_ERROR","詳細資料JSON":"","建立時間":"2026-08-28T17:35:18.742Z"},{"事件ID":"EVT-C3E0F4EF-9","事件類型":"api.error","操作者使用者ID":"","組織ID":"","實體類型":"api","實體ID":"5a570adf-f1d1-4d82-b5a1-bb3bcda2f273","原因代碼":"API_ERROR","詳細資料JSON":"","建立時間":"2026-08-28T17:35:18.780Z"},{"事件ID":"EVT-69D5F8AC-4","事件類型":"api.error","操作者使用者ID":"","組織ID":"","實體類型":"api","實體ID":"e4339413-a045-4c19-9a44-9a6758ceba34","原因代碼":"API_ERROR","詳細資料JSON":"","建立時間":"2026-08-28T17:35:19.199Z"},{"事件ID":"EVT-AC2E16A3-7","事件類型":"api.error","操作者使用者ID":"","組織ID":"","實體類型":"api","實體ID":"be4b6055-d8e2-48e3-87fd-3fffd1028b6b","原因代碼":"API_ERROR","詳細資料JSON":"","建立時間":"2026-08-28T17:37:36.578Z"},{"事件ID":"EVT-6EC0BABA-D","事件類型":"api.error","操作者使用者ID":"","組織ID":"","實體類型":"api","實體ID":"51d0253b-754b-43d8-80d3-2c7b37dd65d0","原因代碼":"API_ERROR","詳細資料JSON":"","建立時間":"2026-08-28T17:37:36.685Z"},{"事件ID":"EVT-3CE9AC88-2","事件類型":"api.error","操作者使用者ID":"","組織ID":"","實體類型":"api","實體ID":"50cb6fdf-16e7-484e-8bd8-6b0d30d259dd","原因代碼":"API_ERROR","詳細資料JSON":"","建立時間":"2026-08-28T17:37:37.065Z"},{"事件ID":"EVT-95794723-D","事件類型":"api.error","操作者使用者ID":"","組織ID":"","實體類型":"api","實體ID":"107551d9-1dd3-4d8c-9410-b1e310c7deb5","原因代碼":"API_ERROR","詳細資料JSON":"","建立時間":"2026-08-28T17:38:33.410Z"},{"事件ID":"EVT-9ECDF01D-8","事件類型":"api.error","操作者使用者ID":"","組織ID":"","實體類型":"api","實體ID":"805af2a4-421d-47b8-80b8-7616489309c2","原因代碼":"API_ERROR","詳細資料JSON":"","建立時間":"2026-08-28T17:38:33.227Z"},{"事件ID":"EVT-D279E81A-7","事件類型":"api.error","操作者使用者ID":"","組織ID":"","實體類型":"api","實體ID":"17d4eed8-3887-4c8e-867b-d6292fcdcc8c","原因代碼":"API_ERROR","詳細資料JSON":"","建立時間":"2026-08-28T17:38:33.601Z"},{"事件ID":"EVT-E86AFC94-0","事件類型":"api.error","操作者使用者ID":"","組織ID":"","實體類型":"api","實體ID":"ef7d21dc-70c2-4c5a-ac59-9dca94a8304c","原因代碼":"API_ERROR","詳細資料JSON":"","建立時間":"2026-08-28T17:39:51.231Z"},{"事件ID":"EVT-0F414BF9-A","事件類型":"api.error","操作者使用者ID":"","組織ID":"","實體類型":"api","實體ID":"4a10c890-d665-4e63-be0f-1ba284798177","原因代碼":"API_ERROR","詳細資料JSON":"","建立時間":"2026-08-28T17:39:51.833Z"},{"事件ID":"EVT-5F8FEE5B-C","事件類型":"api.error","操作者使用者ID":"","組織ID":"","實體類型":"api","實體ID":"fce89c73-542b-4bca-bdb8-5d9dcf3e9182","原因代碼":"API_ERROR","詳細資料JSON":"","建立時間":"2026-08-28T17:39:51.797Z"},{"事件ID":"EVT-904E44BB-3","事件類型":"api.error","操作者使用者ID":"","組織ID":"","實體類型":"api","實體ID":"bd4330dc-2500-412b-bf20-c17900e3a1f8","原因代碼":"API_ERROR","詳細資料JSON":"","建立時間":"2026-08-28T17:40:57.343Z"},{"事件ID":"EVT-D309BEE7-F","事件類型":"api.error","操作者使用者ID":"","組織ID":"","實體類型":"api","實體ID":"4729f696-edb3-43ab-b893-788931ad08be","原因代碼":"API_ERROR","詳細資料JSON":"","建立時間":"2026-08-28T17:40:58.265Z"},{"事件ID":"EVT-E542C90D-A","事件類型":"api.error","操作者使用者ID":"","組織ID":"","實體類型":"api","實體ID":"7134166f-369c-4ce1-a368-8583a8a3e085","原因代碼":"API_ERROR","詳細資料JSON":"","建立時間":"2026-08-28T17:41:33.968Z"},{"事件ID":"EVT-F403D94C-2","事件類型":"api.error","操作者使用者ID":"","組織ID":"","實體類型":"api","實體ID":"c72576ce-cf99-4324-bcca-74c2515e18ae","原因代碼":"API_ERROR","詳細資料JSON":"","建立時間":"2026-08-28T17:42:20.024Z"},{"事件ID":"EVT-1A9C1A19-B","事件類型":"api.error","操作者使用者ID":"","組織ID":"","實體類型":"api","實體ID":"55fd1a34-07f3-4b55-acf3-018afc131516","原因代碼":"API_ERROR","詳細資料JSON":"","建立時間":"2026-08-28T17:42:48.583Z"},{"事件ID":"EVT-51687495-F","事件類型":"api.error","操作者使用者ID":"","組織ID":"","實體類型":"api","實體ID":"422e9d8b-6cfb-4e8f-b1f9-4bcbce0af5ad","原因代碼":"API_ERROR","詳細資料JSON":"","建立時間":"2026-08-28T17:44:32.590Z"},{"事件ID":"EVT-656431CA-6","事件類型":"booking.created","操作者使用者ID":"USR-REQ-05","組織ID":"","實體類型":"booking","實體ID":"BKG-CBADEBAB","原因代碼":"API_CREATE","詳細資料JSON":"","建立時間":"2026-08-28T17:48:03.250Z"},{"事件ID":"EVT-2E28683A-6","事件類型":"api.error","操作者使用者ID":"","組織ID":"","實體類型":"api","實體ID":"e3cff7f5-1815-443c-accb-8a93751ebe76","原因代碼":"API_ERROR","詳細資料JSON":"","建立時間":"2026-08-28T18:09:58.029Z"}],"預約異動歷史":[{"事件ID":"BH-01","預約ID":"BKG-01","事件類型":"created","原狀態":"","新狀態":"open","操作者使用者ID":"USR-REQ-01","原因代碼":"REQUESTER_CREATED","詳細說明":"王淑芬替母親建立門診接送預約","建立時間":"2026-08-25T09:10:00+08:00"},{"事件ID":"BH-02","預約ID":"BKG-01","事件類型":"claimed","原狀態":"open","新狀態":"claimed","操作者使用者ID":"USR-DISP-001","原因代碼":"DISPATCH_ACCEPTED","詳細說明":"安馨福祉交通承接需求","建立時間":"2026-08-28T16:20:00+08:00"},{"事件ID":"BH-03","預約ID":"BKG-01","事件類型":"scheduled","原狀態":"claimed","新狀態":"scheduled","操作者使用者ID":"USR-DISP-001","原因代碼":"TRIP_CREATED","詳細說明":"與 BKG-02 共乘，建立 TRIP-01","建立時間":"2026-08-29T00:36:00+08:00"},{"事件ID":"BH-04","預約ID":"BKG-01","事件類型":"completed","原狀態":"scheduled","新狀態":"completed","操作者使用者ID":"USR-DRV-01","原因代碼":"DROPOFF_COMPLETED","詳細說明":"安全送達臺大醫院並完成服務證明","建立時間":"2026-08-30T09:02:00+08:00"},{"事件ID":"BH-05","預約ID":"BKG-04","事件類型":"cancelled","原狀態":"scheduled","新狀態":"cancelled","操作者使用者ID":"USR-REQ-04","原因代碼":"OUTPATIENT_APPOINTMENT_CANCELLED","詳細說明":"院方通知門診改期，出車前取消","建立時間":"2026-08-30T08:15:00+08:00"},{"事件ID":"BH-06","預約ID":"BKG-06","事件類型":"claimed","原狀態":"open","新狀態":"claimed","操作者使用者ID":"USR-DISP-001","原因代碼":"DISPATCH_ACCEPTED","詳細說明":"洗腎來回案已承接，等待司機與車輛排程","建立時間":"2026-08-29T00:32:00+08:00"},{"事件ID":"BH-07","預約ID":"BKG-07","事件類型":"expired","原狀態":"open","新狀態":"expired","操作者使用者ID":"","原因代碼":"MARKET_EXPIRED","詳細說明":"接送前 30 分鐘仍無車隊承接，自動到期","建立時間":"2026-08-30T13:30:00+08:00"},{"事件ID":"BH-08","預約ID":"BKG-10","事件類型":"updated","原狀態":"scheduled","新狀態":"scheduled","操作者使用者ID":"USR-REQ-10","原因代碼":"RETURN_TIME_CHANGED","詳細說明":"家屬將返程需求從 19:40 調整為 20:00","建立時間":"2026-08-29T00:35:00+08:00"},{"事件ID":"BH-09","預約ID":"BKG-16","事件類型":"cancelled","原狀態":"scheduled","新狀態":"cancelled","操作者使用者ID":"USR-REQ-03","原因代碼":"FAMILY_CHANGED_PLAN","詳細說明":"家屬臨時改由親友接送","建立時間":"2026-08-31T09:15:00+08:00"},{"事件ID":"BH-10","預約ID":"BKG-21","事件類型":"created","原狀態":"","新狀態":"open","操作者使用者ID":"USR-REQ-01","原因代碼":"REQUESTER_CREATED","詳細說明":"建立 9/1 臺大門診接送","建立時間":"2026-08-27T11:00:00+08:00"},{"事件ID":"BH-11","預約ID":"BKG-21","事件類型":"scheduled","原狀態":"claimed","新狀態":"scheduled","操作者使用者ID":"USR-DISP-001","原因代碼":"POOL_PLAN_APPLIED","詳細說明":"與 BKG-22 共乘，安排 TRIP-14","建立時間":"2026-08-29T00:41:00+08:00"},{"事件ID":"BH-12","預約ID":"BKG-22","事件類型":"duplicate_warning","原狀態":"open","新狀態":"open","操作者使用者ID":"USR-DISP-001","原因代碼":"POSSIBLE_DUPLICATE","詳細說明":"系統偵測同目的地近時間案件；確認為不同服務對象後保留","建立時間":"2026-08-27T11:16:00+08:00"},{"事件ID":"BH-13","預約ID":"BKG-31","事件類型":"scheduled","原狀態":"claimed","新狀態":"scheduled","操作者使用者ID":"USR-DISP-001","原因代碼":"POOL_PLAN_APPLIED","詳細說明":"與 BKG-32 共乘，建立 TRIP-19","建立時間":"2026-08-30T20:10:00+08:00"},{"事件ID":"BH-14","預約ID":"BKG-32","事件類型":"scheduled","原狀態":"claimed","新狀態":"scheduled","操作者使用者ID":"USR-DISP-001","原因代碼":"POOL_PLAN_APPLIED","詳細說明":"與 BKG-31 共乘，目的地均為臺大醫院","建立時間":"2026-08-30T20:10:00+08:00"},{"事件ID":"BH-15","預約ID":"BKG-34","事件類型":"reassigned","原狀態":"scheduled","新狀態":"scheduled","操作者使用者ID":"USR-DISP-002","原因代碼":"VEHICLE_REASSIGNED","詳細說明":"VEH-04 出車前故障，改派 DRV-03／VEH-03，原需求不取消","建立時間":"2026-08-31T09:12:00+08:00"},{"事件ID":"BH-16","預約ID":"BKG-35","事件類型":"created","原狀態":"","新狀態":"open","操作者使用者ID":"USR-REQ-05","原因代碼":"REQUESTER_CREATED","詳細說明":"建立公開需求，等待車隊承接","建立時間":"2026-08-28T11:00:00+08:00"},{"事件ID":"BH-17","預約ID":"BKG-36","事件類型":"claimed","原狀態":"open","新狀態":"claimed","操作者使用者ID":"USR-DISP-002","原因代碼":"DISPATCH_ACCEPTED","詳細說明":"已承接三總輪椅案，等待正式排程","建立時間":"2026-08-31T08:50:00+08:00"},{"事件ID":"BH-18","預約ID":"BKG-38","事件類型":"updated","原狀態":"scheduled","新狀態":"scheduled","操作者使用者ID":"USR-REQ-10","原因代碼":"RETURN_TIME_CHANGED","詳細說明":"返程預估由 16:40 改為 17:10，保留原預約 ID","建立時間":"2026-08-31T08:55:00+08:00"},{"事件ID":"BH-19","預約ID":"BKG-39","事件類型":"scheduled","原狀態":"claimed","新狀態":"scheduled","操作者使用者ID":"USR-DISP-001","原因代碼":"POOL_PLAN_APPLIED","詳細說明":"與 BKG-40 合併為 TRIP-24","建立時間":"2026-08-31T12:55:00+08:00"},{"事件ID":"BH-20","預約ID":"BKG-40","事件類型":"scheduled","原狀態":"claimed","新狀態":"scheduled","操作者使用者ID":"USR-DISP-001","原因代碼":"POOL_PLAN_APPLIED","詳細說明":"與 BKG-39 合併為 TRIP-24；後續發生司機改派","建立時間":"2026-08-31T12:55:00+08:00"},{"事件ID":"BH-21","預約ID":"BKG-43","事件類型":"cancelled","原狀態":"scheduled","新狀態":"cancelled","操作者使用者ID":"USR-REQ-02","原因代碼":"FAMILY_CHANGED_PLAN","詳細說明":"家屬於司機出發前改由親友接送","建立時間":"2026-08-29T07:40:00+08:00"},{"事件ID":"BH-22","預約ID":"BKG-47","事件類型":"created","原狀態":"","新狀態":"open","操作者使用者ID":"USR-REQ-01","原因代碼":"REQUESTER_CREATED","詳細說明":"建立 9/2 臺大門診接送","建立時間":"2026-08-29T01:10:00+08:00"},{"事件ID":"BH-23","預約ID":"BKG-47","事件類型":"scheduled","原狀態":"claimed","新狀態":"scheduled","操作者使用者ID":"USR-DISP-001","原因代碼":"POOL_CANDIDATE_CONFIRMED","詳細說明":"與 BKG-48 列為 9/2 共乘候選","建立時間":"2026-08-29T01:25:00+08:00"},{"事件ID":"BH-24","預約ID":"BKG-48","事件類型":"duplicate_warning","原狀態":"open","新狀態":"open","操作者使用者ID":"USR-DISP-001","原因代碼":"POSSIBLE_DUPLICATE","詳細說明":"時間與目的地接近；確認為不同服務對象後保留並列入共乘候選","建立時間":"2026-08-29T01:26:00+08:00"}],"調度最佳化":[{"方案ID":"PLAN-0830-A","日期":"2026-08-30","組織ID":"ORG-TP-001","預約IDs":"BKG-01,BKG-02","建議司機ID":"DRV-01","建議車輛ID":"VEH-01","共乘":true,"效率分數":92.0,"最佳化前空車km":8.1,"最佳化後空車km":3.3,"方案狀態":"applied","建議理由":"兩案時間相差 15 分鐘、目的地相同；可減少重複進市區空車里程"},{"方案ID":"PLAN-0830-B","日期":"2026-08-30","組織ID":"ORG-TP-002","預約IDs":"BKG-03","建議司機ID":"DRV-03","建議車輛ID":"VEH-03","共乘":false,"效率分數":88.0,"最佳化前空車km":4.6,"最佳化後空車km":2.1,"方案狀態":"applied","建議理由":"服務區域接近案家，且 2 席輪椅位符合需求"},{"方案ID":"PLAN-0831-A","日期":"2026-08-31","組織ID":"ORG-TP-001","預約IDs":"BKG-11,BKG-13","建議司機ID":"DRV-02","建議車輛ID":"VEH-02","共乘":false,"效率分數":84.0,"最佳化前空車km":7.0,"最佳化後空車km":4.4,"方案狀態":"draft","建議理由":"前後趟銜接時間充足；優先維持司機工作量平衡"},{"方案ID":"PLAN-0831-B","日期":"2026-08-31","組織ID":"ORG-TP-002","預約IDs":"BKG-19","建議司機ID":"DRV-03","建議車輛ID":"VEH-03","共乘":false,"效率分數":90.0,"最佳化前空車km":5.2,"最佳化後空車km":1.8,"方案狀態":"applied","建議理由":"無障礙設備符合，前一趟結束後仍有充足轉場時間"},{"方案ID":"PLAN-0901-A","日期":"2026-09-01","組織ID":"ORG-TP-001","預約IDs":"BKG-21,BKG-22","建議司機ID":"DRV-01","建議車輛ID":"VEH-01","共乘":true,"效率分數":94.0,"最佳化前空車km":7.2,"最佳化後空車km":2.4,"方案狀態":"applied","建議理由":"兩案均前往臺大醫院且時間差 12 分鐘，符合共乘候選條件"},{"方案ID":"PLAN-0901-B","日期":"2026-09-01","組織ID":"ORG-TP-002","預約IDs":"BKG-28","建議司機ID":"DRV-03","建議車輛ID":"VEH-03","共乘":false,"效率分數":90.0,"最佳化前空車km":4.0,"最佳化後空車km":1.5,"方案狀態":"applied","建議理由":"輪椅需求符合且司機當日下午無重疊行程"},{"方案ID":"PLAN-0901-C","日期":"2026-09-01","組織ID":"ORG-TP-003","預約IDs":"BKG-30","建議司機ID":"DRV-05","建議車輛ID":"VEH-05","共乘":false,"效率分數":87.0,"最佳化前空車km":5.1,"最佳化後空車km":2.2,"方案狀態":"draft","建議理由":"完成前一趟後可於 10 分鐘內轉場至永和案家"},{"方案ID":"PLAN-0831-C","日期":"2026-08-31","組織ID":"ORG-TP-001","預約IDs":"BKG-31,BKG-32","建議司機ID":"DRV-01","建議車輛ID":"VEH-01","共乘":true,"效率分數":95.0,"最佳化前空車km":7.8,"最佳化後空車km":2.6,"方案狀態":"applied","建議理由":"兩案相差 13 分鐘且目的地相同，安排早晨共乘"},{"方案ID":"PLAN-0831-D","日期":"2026-08-31","組織ID":"ORG-TP-002","預約IDs":"BKG-34","建議司機ID":"DRV-03","建議車輛ID":"VEH-03","共乘":false,"效率分數":91.0,"最佳化前空車km":6.2,"最佳化後空車km":2.0,"方案狀態":"applied","建議理由":"VEH-04 故障後立即改派具輪椅席次的 VEH-03"},{"方案ID":"PLAN-0831-E","日期":"2026-08-31","組織ID":"ORG-TP-001","預約IDs":"BKG-39,BKG-40","建議司機ID":"DRV-02","建議車輛ID":"VEH-02","共乘":true,"效率分數":93.0,"最佳化前空車km":6.9,"最佳化後空車km":2.3,"方案狀態":"applied","建議理由":"兩案皆前往馬偕；原司機臨時不適後改派 DRV-02，仍維持共乘"},{"方案ID":"PLAN-0831-F","日期":"2026-08-31","組織ID":"ORG-TP-001","預約IDs":"BKG-35","建議司機ID":"DRV-02","建議車輛ID":"VEH-02","共乘":false,"效率分數":68.0,"最佳化前空車km":9.1,"最佳化後空車km":7.8,"方案狀態":"rejected","建議理由":"既有行程重疊，暫不派車，需求保持在公開需求池"},{"方案ID":"PLAN-0902-A","日期":"2026-09-02","組織ID":"ORG-TP-001","預約IDs":"BKG-47,BKG-48","建議司機ID":"DRV-01","建議車輛ID":"VEH-01","共乘":true,"效率分數":94.0,"最佳化前空車km":7.4,"最佳化後空車km":2.5,"方案狀態":"draft","建議理由":"兩案均往臺大醫院，先列入隔日共乘候選等待調度確認"}],"異常回報":[{"異常ID":"ISS-01","行程ID":"TRIP-01","司機ID":"DRV-01","異常類型":"乘客尚未準備","嚴重程度":"low","狀態":"resolved","說明":"家屬準備輪椅與隨身物品，延後約 4 分鐘上車","建立時間":"2026-08-30T07:38:00+08:00","解決時間":"2026-08-30T07:42:00+08:00","處理者使用者ID":"USR-DISP-001"},{"異常ID":"ISS-02","行程ID":"TRIP-05","司機ID":"DRV-05","異常類型":"交通壅塞","嚴重程度":"medium","狀態":"open","說明":"信義區尖峰車流增加，ETA 延後約 8 分鐘","建立時間":"2026-08-30T16:20:00+08:00","解決時間":"","處理者使用者ID":"USR-DISP-003"},{"異常ID":"ISS-03","行程ID":"TRIP-06","司機ID":"DRV-05","異常類型":"車輛設備異常","嚴重程度":"high","狀態":"resolved","說明":"輪椅固定帶扣環異常，立即暫停行程並由調度安排備援接續","建立時間":"2026-08-30T18:05:00+08:00","解決時間":"2026-08-30T18:32:00+08:00","處理者使用者ID":"USR-DISP-003"},{"異常ID":"ISS-04","行程ID":"TRIP-10","司機ID":"DRV-04","異常類型":"車輛故障","嚴重程度":"high","狀態":"resolved","說明":"出車前檢查發現右側滑門警示燈異常，取消派車並轉維修狀態","建立時間":"2026-08-31T09:08:00+08:00","解決時間":"2026-08-31T09:20:00+08:00","處理者使用者ID":"USR-DISP-002"},{"異常ID":"ISS-05","行程ID":"TRIP-13","司機ID":"DRV-05","異常類型":"病患身體不適","嚴重程度":"high","狀態":"resolved","說明":"乘客上車後出現暈眩，家屬決定取消原接送並自行就醫","建立時間":"2026-08-31T16:12:00+08:00","解決時間":"2026-08-31T16:22:00+08:00","處理者使用者ID":"USR-DISP-003"},{"異常ID":"ISS-06","行程ID":"TRIP-17","司機ID":"DRV-03","異常類型":"無法臨停或停車","嚴重程度":"medium","狀態":"open","說明":"醫院入口臨停區滿位，司機改至第二下車區並通知家屬","建立時間":"2026-09-01T13:42:00+08:00","解決時間":"","處理者使用者ID":"USR-DISP-002"},{"異常ID":"ISS-07","行程ID":"TRIP-12","司機ID":"DRV-03","異常類型":"地址有誤","嚴重程度":"low","狀態":"resolved","說明":"門牌正確但入口位於側巷，與家屬電話確認後更新上車備註","建立時間":"2026-08-31T14:28:00+08:00","解決時間":"2026-08-31T14:34:00+08:00","處理者使用者ID":"USR-DISP-002"},{"異常ID":"ISS-08","行程ID":"TRIP-21","司機ID":"DRV-04","異常類型":"車輛故障","嚴重程度":"high","狀態":"resolved","說明":"出車前發現 VEH-04 右側滑門警示與感應器異常，取消原行程並立即改派","建立時間":"2026-08-31T09:08:00+08:00","解決時間":"2026-08-31T09:18:00+08:00","處理者使用者ID":"USR-DISP-002"},{"異常ID":"ISS-09","行程ID":"TRIP-24","司機ID":"DRV-01","異常類型":"司機臨時身體不適","嚴重程度":"medium","狀態":"resolved","說明":"原定司機出車前回報不適，調度於乘客上車前完成換人換車","建立時間":"2026-08-31T13:35:00+08:00","解決時間":"2026-08-31T13:44:00+08:00","處理者使用者ID":"USR-DISP-001"},{"異常ID":"ISS-10","行程ID":"TRIP-23","司機ID":"DRV-05","異常類型":"乘客延遲上車","嚴重程度":"low","狀態":"resolved","說明":"家屬臨時整理證件，較預定時間晚約 4 分鐘上車","建立時間":"2026-08-31T12:08:00+08:00","解決時間":"2026-08-31T12:12:00+08:00","處理者使用者ID":"USR-DISP-003"}],"通知紀錄":[{"通知ID":"NTF-01","預約ID":"BKG-01","行程ID":"TRIP-01","接收者使用者ID":"USR-REQ-01","頻道":"LINE","通知類型":"booking_confirmed","狀態":"sent","訊息摘要":"8/30 07:40 接送已確認，司機李志豪將前往接送","建立時間":"2026-08-29T00:36:00+08:00","發送時間":"2026-08-29T00:36:05+08:00"},{"通知ID":"NTF-02","預約ID":"BKG-03","行程ID":"TRIP-02","接收者使用者ID":"USR-REQ-02","頻道":"LINE","通知類型":"trip_assigned","狀態":"sent","訊息摘要":"已安排無障礙車 RDP-5168，預計 09:20 抵達","建立時間":"2026-08-29T00:38:00+08:00","發送時間":"2026-08-29T00:38:02+08:00"},{"通知ID":"NTF-03","預約ID":"BKG-03","行程ID":"TRIP-02","接收者使用者ID":"USR-DRV-03","頻道":"Push","通知類型":"new_trip","狀態":"sent","訊息摘要":"新增 09:20 板橋至亞東醫院輪椅接送","建立時間":"2026-08-29T00:38:00+08:00","發送時間":"2026-08-29T00:38:01+08:00"},{"通知ID":"NTF-04","預約ID":"BKG-04","行程ID":"TRIP-03","接收者使用者ID":"USR-DRV-02","頻道":"Push","通知類型":"booking_cancelled","狀態":"sent","訊息摘要":"10:30 北投接送已取消，不需前往案家","建立時間":"2026-08-30T08:15:00+08:00","發送時間":"2026-08-30T08:15:03+08:00"},{"通知ID":"NTF-05","預約ID":"BKG-06","行程ID":"","接收者使用者ID":"USR-REQ-06","頻道":"SMS","通知類型":"booking_claimed","狀態":"sent","訊息摘要":"您的 8/30 洗腎接送需求已由安馨福祉交通承接","建立時間":"2026-08-29T00:32:00+08:00","發送時間":"2026-08-29T00:32:09+08:00"},{"通知ID":"NTF-06","預約ID":"BKG-16","行程ID":"TRIP-10","接收者使用者ID":"USR-REQ-03","頻道":"SMS","通知類型":"booking_cancelled","狀態":"failed","訊息摘要":"取消通知第一次發送逾時，已排入重試佇列","建立時間":"2026-08-31T09:18:00+08:00","發送時間":""},{"通知ID":"NTF-07","預約ID":"BKG-10","行程ID":"TRIP-06","接收者使用者ID":"USR-REQ-10","頻道":"LINE","通知類型":"trip_issue","狀態":"sent","訊息摘要":"車輛設備異常，調度已安排備援接續，請依現場司機指示","建立時間":"2026-08-30T18:08:00+08:00","發送時間":"2026-08-30T18:08:04+08:00"},{"通知ID":"NTF-08","預約ID":"BKG-21","行程ID":"TRIP-14","接收者使用者ID":"USR-REQ-01","頻道":"LINE","通知類型":"trip_reminder","狀態":"queued","訊息摘要":"9/1 07:30 接送提醒，預計於行程前 60 分鐘發送","建立時間":"2026-08-29T00:42:00+08:00","發送時間":""},{"通知ID":"NTF-09","預約ID":"BKG-22","行程ID":"TRIP-14","接收者使用者ID":"USR-REQ-03","頻道":"Push","通知類型":"pooling_info","狀態":"sent","訊息摘要":"此趟採共乘安排，預計 07:42 接送後共同前往臺大醫院","建立時間":"2026-08-29T00:42:00+08:00","發送時間":"2026-08-29T00:42:01+08:00"},{"通知ID":"NTF-10","預約ID":"BKG-28","行程ID":"TRIP-17","接收者使用者ID":"USR-REQ-08","頻道":"SMS","通知類型":"driver_arriving","狀態":"sent","訊息摘要":"司機吳建宏已出發，預計約 8 分鐘後抵達","建立時間":"2026-09-01T13:22:00+08:00","發送時間":"2026-09-01T13:22:06+08:00"},{"通知ID":"NTF-11","預約ID":"BKG-16","行程ID":"TRIP-10","接收者使用者ID":"USR-REQ-03","頻道":"SMS","通知類型":"booking_cancelled_retry","狀態":"sent","訊息摘要":"取消通知第一次逾時；第二次重試成功","建立時間":"2026-08-31T09:20:00+08:00","發送時間":"2026-08-31T09:20:04+08:00"},{"通知ID":"NTF-12","預約ID":"BKG-34","行程ID":"TRIP-22","接收者使用者ID":"USR-REQ-04","頻道":"LINE","通知類型":"trip_reassigned","狀態":"sent","訊息摘要":"原車故障，已改派吳建宏與 RDP-5168，接送時間維持不變","建立時間":"2026-08-31T09:13:00+08:00","發送時間":"2026-08-31T09:13:03+08:00"},{"通知ID":"NTF-13","預約ID":"BKG-31","行程ID":"TRIP-19","接收者使用者ID":"USR-REQ-01","頻道":"Push","通知類型":"pooling_info","狀態":"sent","訊息摘要":"本趟採共乘，預計 07:15 接送後依序前往臺大醫院","建立時間":"2026-08-30T20:11:00+08:00","發送時間":"2026-08-30T20:11:01+08:00"},{"通知ID":"NTF-14","預約ID":"BKG-32","行程ID":"TRIP-19","接收者使用者ID":"USR-REQ-03","頻道":"Push","通知類型":"pooling_info","狀態":"sent","訊息摘要":"本趟採共乘，預計 07:28 接送後共同前往臺大醫院","建立時間":"2026-08-30T20:11:00+08:00","發送時間":"2026-08-30T20:11:02+08:00"},{"通知ID":"NTF-15","預約ID":"BKG-40","行程ID":"TRIP-24","接收者使用者ID":"USR-REQ-01","頻道":"LINE","通知類型":"driver_reassigned","狀態":"sent","訊息摘要":"原司機臨時不適，已改由王柏翰駕駛 RBC-7256，時間不變","建立時間":"2026-08-31T13:44:00+08:00","發送時間":"2026-08-31T13:44:03+08:00"},{"通知ID":"NTF-16","預約ID":"","行程ID":"","接收者使用者ID":"USR-DISP-004","頻道":"Push","通知類型":"membership_suspended","狀態":"sent","訊息摘要":"您的車隊調度員資格已暫停；個人帳號仍可登入查看帳戶資訊","建立時間":"2026-08-31T11:45:00+08:00","發送時間":"2026-08-31T11:45:01+08:00"},{"通知ID":"NTF-17","預約ID":"BKG-47","行程ID":"","接收者使用者ID":"USR-REQ-01","頻道":"LINE","通知類型":"trip_reminder","狀態":"queued","訊息摘要":"9/2 07:35 接送已建立，行程前 60 分鐘將再次提醒","建立時間":"2026-08-29T01:30:00+08:00","發送時間":""}],"補助試算":[{"試算ID":"BEN-01","服務對象ID":"REC-01","試算日期":"2026-08-29","CMS等級":"CMS 3","身分類別":"一般戶","服務項目":"交通接送","展示預估補助":"NT$420","展示預估自付":"NT$180","規則版本":"DEMO-2026.08","資料來源":"展示規則資料集","結果":"可進行試算","備註":"Demo 數字，非政府正式核定金額"},{"試算ID":"BEN-02","服務對象ID":"REC-02","試算日期":"2026-08-29","CMS等級":"CMS 5","身分類別":"一般戶","服務項目":"交通接送＋無障礙需求","展示預估補助":"NT$560","展示預估自付":"NT$240","規則版本":"DEMO-2026.08","資料來源":"展示規則資料集","結果":"需人工確認","備註":"無障礙車型與實際服務範圍需由承辦確認"},{"試算ID":"BEN-03","服務對象ID":"REC-03","試算日期":"2026-08-29","CMS等級":"CMS 2","身分類別":"一般戶","服務項目":"交通接送","展示預估補助":"NT$350","展示預估自付":"NT$150","規則版本":"DEMO-2026.08","資料來源":"展示規則資料集","結果":"可進行試算","備註":"Demo 數字，非正式核定"},{"試算ID":"BEN-04","服務對象ID":"REC-04","試算日期":"2026-08-29","CMS等級":"CMS 5","身分類別":"中低收入","服務項目":"交通接送＋電動輪椅","展示預估補助":"NT$720","展示預估自付":"NT$80","規則版本":"DEMO-2026.08","資料來源":"展示規則資料集","結果":"可進行試算","備註":"僅展示 Benefit 引擎流程，不代表實際資格"},{"試算ID":"BEN-05","服務對象ID":"REC-06","試算日期":"2026-08-29","CMS等級":"CMS 4","身分類別":"一般戶","服務項目":"固定洗腎接送","展示預估補助":"NT$490","展示預估自付":"NT$210","規則版本":"DEMO-2026.08","資料來源":"展示規則資料集","結果":"需確認服務類別","備註":"是否適用長照交通給付需依正式資格與地方規定確認"},{"試算ID":"BEN-06","服務對象ID":"REC-08","試算日期":"2026-08-29","CMS等級":"CMS 6","身分類別":"低收入","服務項目":"交通接送＋輪椅","展示預估補助":"NT$800","展示預估自付":"NT$0","規則版本":"DEMO-2026.08","資料來源":"展示規則資料集","結果":"可進行試算","備註":"Demo 數字，非正式核定"},{"試算ID":"BEN-07","服務對象ID":"REC-07","試算日期":"2026-08-31","CMS等級":"CMS 3","身分類別":"一般戶","服務項目":"交通接送＋助行器","展示預估補助":"NT$420","展示預估自付":"NT$180","規則版本":"DEMO-2026.08","資料來源":"展示規則資料集","結果":"需人工確認","備註":"部分資格欄位未完成，展示人工確認流程；非正式核定"},{"試算ID":"BEN-08","服務對象ID":"REC-10","試算日期":"2026-08-31","CMS等級":"CMS 4","身分類別":"中低收入","服務項目":"交通接送","展示預估補助":"NT$630","展示預估自付":"NT$70","規則版本":"DEMO-2026.08","資料來源":"展示規則資料集","結果":"可進行試算","備註":"Demo 數字，僅用於展示試算流程"},{"試算ID":"BEN-09","服務對象ID":"REC-04","試算日期":"2026-08-31","CMS等級":"CMS 5","身分類別":"一般戶","服務項目":"交通接送＋電動輪椅","展示預估補助":"NT$560","展示預估自付":"NT$240","規則版本":"DEMO-2026.08","資料來源":"展示規則資料集","結果":"需人工確認","備註":"電動輪椅設備與車型適用性需人工確認；非正式核定"}],"系統回報":[{"回報ID":"RPT-01","使用者ID":"USR-DISP-002","組織ID":"ORG-TP-002","問題類型":"介面／操作","標題":"手機版底部導覽偶爾第一次點擊無反應","狀態":"resolved","優先級":"P1","詳細說明":"Android Chrome 偶發，重新點擊第二次可進入頁面","建立時間":"2026-08-30T12:10:00+08:00","解決時間":"2026-08-31T10:25:00+08:00"},{"回報ID":"RPT-02","使用者ID":"USR-DISP-001","組織ID":"ORG-TP-001","問題類型":"Google 表單同步","標題":"一筆新預約同步後地址欄位多出換行","狀態":"open","優先級":"P2","詳細說明":"資料可正常建立，但地址正規化前需要移除換行字元","建立時間":"2026-08-31T09:05:00+08:00","解決時間":""},{"回報ID":"RPT-03","使用者ID":"USR-OWNER-001","組織ID":"ORG-TP-001","問題類型":"預約／派車","標題":"重複預約提示需要顯示比對理由","狀態":"resolved","優先級":"P2","詳細說明":"已補上同服務對象、近時間與相同目的地的比對說明","建立時間":"2026-08-29T14:20:00+08:00","解決時間":"2026-08-30T15:40:00+08:00"},{"回報ID":"RPT-04","使用者ID":"USR-DRV-03","組織ID":"ORG-TP-002","問題類型":"司機端","標題":"醫院多入口時希望導航顯示指定下車口","狀態":"open","優先級":"P2","詳細說明":"三軍總醫院等大型院區有多個入口，需支援 access note","建立時間":"2026-09-01T13:50:00+08:00","解決時間":""},{"回報ID":"RPT-05","使用者ID":"USR-REQ-04","組織ID":"","問題類型":"補助試算","標題":"希望顯示規則資料更新日期與來源","狀態":"open","優先級":"P1","詳細說明":"使用者需要知道試算採用哪一版資料，避免誤認為正式核定","建立時間":"2026-08-29T18:10:00+08:00","解決時間":""},{"回報ID":"RPT-06","使用者ID":"USR-DISP-002","組織ID":"ORG-TP-002","問題類型":"通知","標題":"改派後第一次通知曾顯示原車牌","狀態":"resolved","優先級":"P1","詳細說明":"TRIP-22 改派後快取未即時刷新；已改為讀取最新 assignment revision","建立時間":"2026-08-31T09:14:00+08:00","解決時間":"2026-08-31T10:05:00+08:00"},{"回報ID":"RPT-07","使用者ID":"USR-OWNER-001","組織ID":"ORG-TP-001","問題類型":"KPI","標題":"共乘率更新約慢一分鐘","狀態":"open","優先級":"P2","詳細說明":"TRIP-19 完成後 KPI 聚合為非同步更新，短時間可能顯示舊值","建立時間":"2026-08-31T08:34:00+08:00","解決時間":""},{"回報ID":"RPT-08","使用者ID":"USR-DISP-001","組織ID":"ORG-TP-001","問題類型":"行程操作","標題":"Undo 後時間線應更明顯標示已回復狀態","狀態":"open","優先級":"P2","詳細說明":"功能正常，但建議在司機端加入回復提示與 Audit 連結","建立時間":"2026-08-31T15:30:00+08:00","解決時間":""}],"KPI每日":[{"日期":"2026-08-30","組織ID":"ORG-TP-001","司機ID":"DRV-01","完成趟次":1.0,"空車公里":3.3,"載客公里":12.1,"平均載客率":82.0,"準時率":96.0,"平均等待分鐘":3.5,"取消率":0.0,"共乘率":100.0},{"日期":"2026-08-30","組織ID":"ORG-TP-001","司機ID":"DRV-02","完成趟次":0.0,"空車公里":1.2,"載客公里":0.0,"平均載客率":0.0,"準時率":"","平均等待分鐘":0.0,"取消率":100.0,"共乘率":0.0},{"日期":"2026-08-30","組織ID":"ORG-TP-002","司機ID":"DRV-03","完成趟次":1.0,"空車公里":4.2,"載客公里":7.8,"平均載客率":50.0,"準時率":92.0,"平均等待分鐘":2.5,"取消率":0.0,"共乘率":0.0},{"日期":"2026-08-30","組織ID":"ORG-TP-002","司機ID":"DRV-04","完成趟次":0.0,"空車公里":0.0,"載客公里":0.0,"平均載客率":0.0,"準時率":"","平均等待分鐘":"","取消率":0.0,"共乘率":0.0},{"日期":"2026-08-30","組織ID":"ORG-TP-003","司機ID":"DRV-05","完成趟次":0.0,"空車公里":5.1,"載客公里":4.8,"平均載客率":43.0,"準時率":88.0,"平均等待分鐘":3.0,"取消率":0.0,"共乘率":0.0},{"日期":"2026-08-31","組織ID":"ORG-TP-001","司機ID":"DRV-01","完成趟次":2.0,"空車公里":4.1,"載客公里":17.9,"平均載客率":66.0,"準時率":96.0,"平均等待分鐘":3.2,"取消率":0.0,"共乘率":50.0},{"日期":"2026-08-31","組織ID":"ORG-TP-001","司機ID":"DRV-02","完成趟次":3.0,"空車公里":6.1,"載客公里":27.9,"平均載客率":63.0,"準時率":95.0,"平均等待分鐘":3.4,"取消率":0.0,"共乘率":33.0},{"日期":"2026-08-31","組織ID":"ORG-TP-002","司機ID":"DRV-03","完成趟次":1.0,"空車公里":4.0,"載客公里":14.8,"平均載客率":55.0,"準時率":94.0,"平均等待分鐘":3.8,"取消率":0.0,"共乘率":0.0},{"日期":"2026-08-31","組織ID":"ORG-TP-002","司機ID":"DRV-04","完成趟次":0.0,"空車公里":0.8,"載客公里":0.0,"平均載客率":0.0,"準時率":"","平均等待分鐘":"","取消率":100.0,"共乘率":0.0},{"日期":"2026-08-31","組織ID":"ORG-TP-003","司機ID":"DRV-05","完成趟次":1.0,"空車公里":3.2,"載客公里":9.0,"平均載客率":35.0,"準時率":90.0,"平均等待分鐘":3.0,"取消率":50.0,"共乘率":0.0},{"日期":"2026-09-01","組織ID":"ORG-TP-001","司機ID":"DRV-01","完成趟次":0.0,"空車公里":2.4,"載客公里":12.0,"平均載客率":82.0,"準時率":"","平均等待分鐘":0.0,"取消率":0.0,"共乘率":100.0},{"日期":"2026-09-01","組織ID":"ORG-TP-001","司機ID":"DRV-02","完成趟次":0.0,"空車公里":1.5,"載客公里":0.0,"平均載客率":0.0,"準時率":"","平均等待分鐘":0.0,"取消率":100.0,"共乘率":0.0},{"日期":"2026-09-01","組織ID":"ORG-TP-002","司機ID":"DRV-03","完成趟次":0.0,"空車公里":1.5,"載客公里":2.4,"平均載客率":32.0,"準時率":94.0,"平均等待分鐘":4.0,"取消率":0.0,"共乘率":0.0},{"日期":"2026-09-01","組織ID":"ORG-TP-002","司機ID":"DRV-04","完成趟次":0.0,"空車公里":0.0,"載客公里":0.0,"平均載客率":0.0,"準時率":"","平均等待分鐘":"","取消率":0.0,"共乘率":0.0},{"日期":"2026-09-01","組織ID":"ORG-TP-003","司機ID":"DRV-05","完成趟次":1.0,"空車公里":3.1,"載客公里":4.7,"平均載客率":25.0,"準時率":97.0,"平均等待分鐘":3.0,"取消率":0.0,"共乘率":0.0}],"預約報價快照":[{"快照ID":"QUOTE-01","預約ID":"BKG-31","計價版本":"DEMO-FARE-v1.3","預估原價":"NT$620","展示補助預估":"NT$420","展示自付預估":"NT$200","預估距離km":6.4,"車型需求":"一般福祉車","建立時間":"2026-08-28T09:10:02+08:00","備註":"建立預約時固定保存，後續規則改版不回寫舊快照"},{"快照ID":"QUOTE-02","預約ID":"BKG-34","計價版本":"DEMO-FARE-v1.3","預估原價":"NT$800","展示補助預估":"NT$560","展示自付預估":"NT$240","預估距離km":14.6,"車型需求":"電動輪椅／無障礙車","建立時間":"2026-08-28T10:20:02+08:00","備註":"故障改派後仍保留原報價快照"},{"快照ID":"QUOTE-03","預約ID":"BKG-38","計價版本":"DEMO-FARE-v1.3","預估原價":"NT$980","展示補助預估":"NT$630","展示自付預估":"NT$350","預估距離km":9.8,"車型需求":"一般福祉車／來回","建立時間":"2026-08-28T12:20:02+08:00","備註":"修改返程時間不改寫原始報價版本；重新估價另建快照"},{"快照ID":"QUOTE-04","預約ID":"BKG-35","計價版本":"DEMO-FARE-v1.3","預估原價":"NT$520","展示補助預估":"NT$350","展示自付預估":"NT$170","預估距離km":4.2,"車型需求":"一般車","建立時間":"2026-08-28T11:00:02+08:00","備註":"公開需求池仍可顯示建立當下估價"},{"快照ID":"QUOTE-05","預約ID":"BKG-43","計價版本":"DEMO-FARE-v1.3","預估原價":"NT$760","展示補助預估":"NT$560","展示自付預估":"NT$200","預估距離km":5.6,"車型需求":"輪椅車","建立時間":"2026-08-27T09:00:02+08:00","備註":"預約取消後快照保留供稽核"}],"取消退單":[{"取消ID":"CAN-01","預約ID":"BKG-16","取消者使用者ID":"USR-REQ-03","取消時間":"2026-08-31T09:15:00+08:00","原狀態":"scheduled","取消原因":"家屬改由親友接送","是否收費":false,"退款金額":"NT$0","處理狀態":"completed","備註":"出車前取消，不收取消費；通知第一次失敗後已重試成功"},{"取消ID":"CAN-02","預約ID":"BKG-20","取消者使用者ID":"USR-REQ-10","取消時間":"2026-08-31T16:22:00+08:00","原狀態":"scheduled","取消原因":"乘客身體不適，家屬決定自行就醫","是否收費":false,"退款金額":"NT$0","處理狀態":"completed","備註":"特殊情況取消，保留事件紀錄"},{"取消ID":"CAN-03","預約ID":"BKG-43","取消者使用者ID":"USR-REQ-02","取消時間":"2026-08-29T07:40:00+08:00","原狀態":"scheduled","取消原因":"家屬改由親友接送","是否收費":false,"退款金額":"NT$0","處理狀態":"completed","備註":"取消後報價快照仍保留"},{"取消ID":"CAN-04","預約ID":"BKG-26","取消者使用者ID":"USR-REQ-06","取消時間":"2026-09-01T09:40:00+08:00","原狀態":"scheduled","取消原因":"院方臨時調整洗腎時段","是否收費":false,"退款金額":"NT$0","處理狀態":"completed","備註":"展示隔日取消／退單紀錄"}],"行程遙測事件":[{"遙測事件ID":"TEL-01","行程ID":"TRIP-19","事件類型":"eta_updated","緯度":25.0412,"經度":121.5448,"ETA分鐘":18.0,"路線偏離公尺":0.0,"網路狀態":"online","說明":"第一位乘客上車後重新估算第二位接送 ETA","建立時間":"2026-08-31T07:19:00+08:00"},{"遙測事件ID":"TEL-02","行程ID":"TRIP-19","事件類型":"route_deviation","緯度":25.0378,"經度":121.5385,"ETA分鐘":11.0,"路線偏離公尺":310.0,"網路狀態":"online","說明":"因臨時道路施工繞行，系統自動重新規劃路線","建立時間":"2026-08-31T07:48:00+08:00"},{"遙測事件ID":"TEL-03","行程ID":"TRIP-22","事件類型":"eta_updated","緯度":25.0797,"經度":121.5241,"ETA分鐘":14.0,"路線偏離公尺":0.0,"網路狀態":"online","說明":"故障改派完成後重新計算抵達北榮時間","建立時間":"2026-08-31T09:14:00+08:00"},{"遙測事件ID":"TEL-04","行程ID":"TRIP-24","事件類型":"offline_started","緯度":25.0551,"經度":121.4888,"ETA分鐘":22.0,"路線偏離公尺":0.0,"網路狀態":"offline","說明":"地下停車場訊號中斷，司機端改以離線佇列保存操作","建立時間":"2026-08-31T14:20:00+08:00"},{"遙測事件ID":"TEL-05","行程ID":"TRIP-24","事件類型":"offline_synced","緯度":25.0584,"經度":121.5026,"ETA分鐘":15.0,"路線偏離公尺":0.0,"網路狀態":"online","說明":"恢復網路後同步 4 筆離線事件，未產生重複操作","建立時間":"2026-08-31T14:27:00+08:00"},{"遙測事件ID":"TEL-06","行程ID":"TRIP-17","事件類型":"route_deviation","緯度":25.0714,"經度":121.5923,"ETA分鐘":6.0,"路線偏離公尺":220.0,"網路狀態":"online","說明":"醫院主要下車區滿位，依調度指示改至第二下車區","建立時間":"2026-09-01T13:42:00+08:00"}]});
 const gsBool=(v)=>/^(true|1|yes|y|是)$/i.test(String(v??'').trim());
 const gsNum=(v,fallback=0)=>{const raw=String(v??'').trim();if(!raw)return fallback;const n=Number(raw.replace(/[^0-9.\-]/g,''));return Number.isFinite(n)?n:fallback;};
 const gsMoney=(v)=>{const s=String(v??'').trim();if(!s)return null;const n=Number(s.replace(/[^0-9.\-]/g,''));return Number.isFinite(n)?n:null;};
@@ -4086,25 +3539,12 @@ const gsPhone=(v)=>{const d=digitsOnly(v);return /^8869\d{8}$/.test(d)?`0${d.sli
 const gsJson=(v)=>{try{return JSON.parse(gsText(v)||'{}');}catch{return {};}};
 const gsDateParts=(iso)=>{const text=gsText(iso);const m=text.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{1,2}):(\d{2})/);if(m)return {date:m[1],time:`${String(m[2]).padStart(2,'0')}:${m[3]}`};const d=new Date(text);return Number.isNaN(d.getTime())?{date:'',time:''}:localDateTimeParts(d);};
 const gsReturnTime=(text='')=>String(text).match(/返程(?:約|由)?\s*(\d{1,2}:\d{2})(?:\s*改為\s*(\d{1,2}:\d{2}))?/)?.slice(1).filter(Boolean).pop()||'';
-function gsObjectsFromCsv(text){
-  const rows=parseCSV(text);if(!rows.length)return [];
-  const headers=rows[0].map(h=>gsText(h));
-  return rows.slice(1).filter(r=>r.some(v=>gsText(v))).map(row=>{const obj={};headers.forEach((h,i)=>obj[h]=row[i]??'');return obj;});
-}
-function gsObjectsFromGviz(response){
-  const table=response?.table;if(!table?.cols||!table?.rows)return [];
-  const headers=table.cols.map((c,i)=>gsText(c.label||c.id||`欄位${i+1}`));
-  return table.rows.map(row=>{const obj={};headers.forEach((h,i)=>{const c=row.c?.[i];obj[h]=c?.f??c?.v??'';});return obj;}).filter(obj=>Object.values(obj).some(v=>gsText(v)));
-}
-function googleDatabaseCsvUrl(sheetName){
-  return `https://docs.google.com/spreadsheets/d/${encodeURIComponent(APP_CONFIG.googleSpreadsheetId)}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
-}
 async function fetchGoogleSheetBackend(sheetName,timeoutMs=15000){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
   try{
     const url=`${APP_CONFIG.googleDataProxyUrl}?sheet=${encodeURIComponent(sheetName)}&t=${Date.now()}`;
     const sessionToken=typeof window.backendAuthToken==='function'?window.backendAuthToken():'';
-    if(!sessionToken&&!window.CARE_RIDE_RUNTIME?.previewSafe&&!window.CARE_RIDE_RUNTIME?.demo)throw new Error('尚未登入，不能讀取私有 Google Database');
+    if(!sessionToken)throw new Error('尚未登入，不能讀取私有 Google Database');
     const response=await fetch(url,{
       method:'GET',
       headers:{'Accept':'application/json',...(sessionToken?{'Authorization':`Bearer ${sessionToken}`}:{})},
@@ -4120,45 +3560,9 @@ async function fetchGoogleSheetBackend(sheetName,timeoutMs=15000){
     return rows;
   }finally{clearTimeout(timer);}
 }
-async function fetchGoogleSheetCsv(sheetName,timeoutMs=5000){
-  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
-  try{
-    const response=await fetch(`${googleDatabaseCsvUrl(sheetName)}&t=${Date.now()}`,{cache:'no-store',credentials:'omit',signal:controller.signal});
-    if(!response.ok)throw new Error(`HTTP ${response.status}`);
-    const text=await response.text();
-    if(/^\s*<!doctype|^\s*<html/i.test(text))throw new Error('Google Sheet 不是公開可讀');
-    const rows=gsObjectsFromCsv(text);if(!rows.length)throw new Error('沒有可讀資料');
-    return rows;
-  }finally{clearTimeout(timer);}
-}
-function fetchGoogleSheetJsonp(sheetName,timeoutMs=5500){
-  return new Promise((resolve,reject)=>{
-    const callback=`__careRideGviz_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    const script=document.createElement('script');let settled=false;
-    const cleanup=()=>{try{delete window[callback];}catch{}script.remove();};
-    const timer=setTimeout(()=>{if(settled)return;settled=true;cleanup();reject(new Error('Google Sheet JSONP timeout'));},timeoutMs);
-    window[callback]=(response)=>{if(settled)return;settled=true;clearTimeout(timer);cleanup();if(response?.status==='error'){reject(new Error('Google Sheet 回傳錯誤'));return;}const rows=gsObjectsFromGviz(response);rows.length?resolve(rows):reject(new Error('Google Sheet 沒有資料'));};
-    script.onerror=()=>{if(settled)return;settled=true;clearTimeout(timer);cleanup();reject(new Error('Google Sheet script 載入失敗'));};
-    const tqx=`out:json;responseHandler:${callback}`;
-    script.src=`https://docs.google.com/spreadsheets/d/${encodeURIComponent(APP_CONFIG.googleSpreadsheetId)}/gviz/tq?sheet=${encodeURIComponent(sheetName)}&tqx=${encodeURIComponent(tqx)}&t=${Date.now()}`;
-    document.head.appendChild(script);
-  });
-}
 async function readGoogleDatabaseSheet(sheetName){
-  try{
-    return await fetchGoogleSheetBackend(sheetName);
-  }catch(proxyError){
-    console.warn(`[GoogleDatabase] backend proxy failed for ${sheetName}`,proxyError);
-    const allowPreviewFallback=!!window.CARE_RIDE_RUNTIME?.previewSafe||!!window.CARE_RIDE_RUNTIME?.demo;
-    if(!allowPreviewFallback){
-      throw new Error(`${sheetName}: 私有 Google Database API 無法讀取（${proxyError.message||'unknown error'}）`);
-    }
-    try{return await fetchGoogleSheetCsv(sheetName);}catch(csvError){
-      try{return await fetchGoogleSheetJsonp(sheetName);}catch(jsonpError){
-        throw new Error(`${sheetName}: ${proxyError.message||jsonpError.message||csvError.message}`);
-      }
-    }
-  }
+  // 只走已驗證的 Netlify -> Apps Script 代理；不再退回瀏覽器直讀公開試算表。
+  return fetchGoogleSheetBackend(sheetName);
 }
 function cloudBookingState(rawStatus){
   const s=gsText(rawStatus).toLowerCase();
@@ -4313,33 +3717,18 @@ function commitGoogleDatabaseSnapshot(tables,{details=[],mode='embedded_fallback
     db.benefitAssessmentEvents=priorBenefitAssessmentEvents.filter(e=>!e?.assessmentId||assessmentIds.has(e.assessmentId));
     db.schemaVersion=APP_CONFIG.schemaVersion;db.version=APP_CONFIG.version;
     db.integration={...(db.integration||{}),customerSheetCsv:APP_CONFIG.customerSheetCsv,googleSpreadsheetId:APP_CONFIG.googleSpreadsheetId,lastSyncAt:syncAt,googleDatabaseLastSyncAt:syncAt,lastSyncStatus:`正式資料庫同步成功｜預約 ${snapshot.bookings.length}・行程 ${snapshot.trips.length}・使用者 ${snapshot.users.length}`,lastSyncDetails:details};
-    db.googleDatabase={spreadsheetId:APP_CONFIG.googleSpreadsheetId,syncedAt:syncAt,mode,embeddedRevision:GOOGLE_DB_EMBEDDED_REVISION};
+    db.googleDatabase={spreadsheetId:APP_CONFIG.googleSpreadsheetId,syncedAt:syncAt,mode};
   },{remote:false,reason:'google_database_hydration'});
   return {ok:true,message:store.state.integration.lastSyncStatus,details,counts:{organizations:snapshot.organizations.length,users:snapshot.users.length,memberships:snapshot.memberships.length,careRecipients:snapshot.careRecipients.length,bookings:snapshot.bookings.length,trips:snapshot.trips.length}};
 }
 GoogleDatabase={
   spreadsheetId:APP_CONFIG.googleSpreadsheetId,
   sheetNames:GOOGLE_DB_SHEETS,
-  embeddedRevision:GOOGLE_DB_EMBEDDED_REVISION,
-  embeddedTables(){return deepClone(GOOGLE_DB_EMBEDDED_TABLES);},
-  hydrateEmbedded({force=false}={}){
-    const already=store.state.integration?.googleDatabaseLastSyncAt&&store.state.bookings?.length;
-    if(already&&!force)return {ok:true,skipped:true,message:'已保留上次 Google 資料庫快取'};
-    try{return commitGoogleDatabaseSnapshot(this.embeddedTables(),{details:[`內建資料快照 ${GOOGLE_DB_EMBEDDED_REVISION}`],mode:'embedded_bootstrap'});}catch(error){return {ok:false,error:`內建資料快照載入失敗：${error?.message||error}`};}
-  },
   async fetchSheet(sheetName){return readGoogleDatabaseSheet(sheetName);},
-  async syncAll({silent=false,strictProduction=true}={}){
-    if(window.CARE_RIDE_RUNTIME?.demo){
-      return prepareReportDemoData_({reset:false});
-    }
-    const embedded=this.embeddedTables(),tables={},details=[];
-    const allowPreviewFallback=!strictProduction||!!window.CARE_RIDE_RUNTIME?.previewSafe||!!window.CARE_RIDE_RUNTIME?.demo;
+  async syncAll({silent=false}={}){
+    const tables={},details=[];
     if(typeof navigator!=='undefined'&&navigator.onLine===false){
-      if(allowPreviewFallback){
-        Object.assign(tables,embedded);details.push('目前離線：預覽模式使用內建資料快照');
-        return commitGoogleDatabaseSnapshot(tables,{details,mode:'embedded_offline_fallback'});
-      }
-      const error='目前離線，正式環境不會以內建資料覆蓋 Google Database 快取。';
+      const error='目前離線，無法與正式資料庫同步；畫面維持上一次同步成功的內容。';
       store.mutate(db=>{db.integration={...(db.integration||{}),lastSyncStatus:error,lastSyncDetails:[error]};});
       return {ok:false,error,details:[error]};
     }
@@ -4356,8 +3745,6 @@ GoogleDatabase={
       const name=this.sheetNames[i];
       if(result.status==='fulfilled'){
         tables[name]=result.value[1];details.push(`${name} ${result.value[1].length} 筆`);
-      }else if(allowPreviewFallback&&Array.isArray(embedded[name])&&embedded[name].length){
-        tables[name]=deepClone(embedded[name]);details.push(`${name} 使用內建快照 ${embedded[name].length} 筆`);
       }else{
         details.push(`${name} 失敗：${result.reason?.message||result.reason||'unknown error'}`);
       }
@@ -6368,7 +5755,7 @@ async function cleanupProofBlobStorageP2(){
     return {ok:true,deleted,protectedLocal};
   }catch(error){return {ok:false,deleted:0,protectedLocal:0,error:String(error?.message||error)};}
 }
-const TripSyncAdapter={mode:'google_sheet_authoritative_ack',async syncBatch(items,context={}){if(window.CARE_RIDE_RUNTIME?.previewSafe||window.CARE_RIDE_RUNTIME?.demo){const stamp=nowISO();return {ok:true,mode:'preview_local_ack',serverRecordedAt:stamp,results:items.map(x=>({id:x.id,requestId:x.requestId,ok:true,serverRevision:Trip?.get?.(x.tripId)?.revision??null,serverRecordedAt:stamp}))};}const ack=await authoritativeFlush_();if(!ack?.ok)return {ok:false,mode:this.mode,error:ack?.error||'正式行程同步未取得伺服器確認',results:items.map(x=>({id:x.id,requestId:x.requestId,ok:false,error:ack?.error||'正式行程同步失敗'}))};const stamp=authoritativeLastAckAt||nowISO();return {ok:true,mode:this.mode,serverRecordedAt:stamp,results:items.map(x=>({id:x.id,requestId:x.requestId,ok:true,serverRevision:Trip?.get?.(x.tripId)?.revision??null,serverRecordedAt:stamp}))};}};
+const TripSyncAdapter={mode:'google_sheet_authoritative_ack',async syncBatch(items,context={}){const ack=await authoritativeFlush_();if(!ack?.ok)return {ok:false,mode:this.mode,error:ack?.error||'正式行程同步未取得伺服器確認',results:items.map(x=>({id:x.id,requestId:x.requestId,ok:false,error:ack?.error||'正式行程同步失敗'}))};const stamp=authoritativeLastAckAt||nowISO();return {ok:true,mode:this.mode,serverRecordedAt:stamp,results:items.map(x=>({id:x.id,requestId:x.requestId,ok:true,serverRevision:Trip?.get?.(x.tripId)?.revision??null,serverRecordedAt:stamp}))};}};
 const TripNavigationAdapter={routeProvider:null,trafficEtaProvider:null,configure({routeProvider=null,trafficEtaProvider=null}={}){this.routeProvider=routeProvider;this.trafficEtaProvider=trafficEtaProvider;},async enrich(ctx){const out={source:'fallback',polyline:null,deviationKm:null,etaAt:null,etaMinutes:null,provider:null,routeProvider:null,trafficProvider:null};if(this.routeProvider?.getRoute){try{const r=await this.routeProvider.getRoute(ctx);if(r){out.polyline=r.polyline||null;out.routeProvider=r.provider||'route_adapter';out.provider=out.routeProvider;out.source='route_adapter';if(Number.isFinite(Number(r.deviationKm)))out.deviationKm=Number(r.deviationKm);}}catch(e){}}if(this.trafficEtaProvider?.getEta){try{const e=await this.trafficEtaProvider.getEta(ctx);if(e){out.etaAt=e.etaAt||null;out.etaMinutes=Number.isFinite(Number(e.etaMinutes))?Number(e.etaMinutes):null;out.trafficProvider=e.provider||'traffic_adapter';out.provider=out.trafficProvider;out.source=out.routeProvider?'route+traffic_adapter':'traffic_adapter';}}catch(e){}}return out;}};
 let tripOutboxFlushTimer=null,tripOutboxSyncPromise=null,tripOutboxHydrated=false,tripOutboxHydratePromise=null;
 let tripInitializationPromise=null;
@@ -8290,9 +7677,9 @@ CloudIdentity=Object.freeze({
   async confirmPasswordReset({phone,otp,newPassword}){
     const result=await backendJsonPost(APP_CONFIG.identityConfirmPasswordResetUrl,{phone:String(phone||'').replace(/\D/g,''),otp:String(otp||'').replace(/\D/g,''),newPassword:String(newPassword||'')});return result?.data||{};
   },
-  async updateAccount({name,phone,newPassword=''}){
+  async updateAccount({name,phone,newPassword='',currentPassword=''}){
     const token=this.token();if(!token)throw backendApiError('登入工作階段已遺失，請重新登入','SESSION_REQUIRED');
-    const result=await backendJsonPost(APP_CONFIG.identityUpdateAccountUrl,{name:String(name||'').trim(),phone:String(phone||'').replace(/\D/g,''),newPassword:String(newPassword||'')},{Authorization:`Bearer ${token}`});
+    const result=await backendJsonPost(APP_CONFIG.identityUpdateAccountUrl,{name:String(name||'').trim(),phone:String(phone||'').replace(/\D/g,''),newPassword:String(newPassword||''),currentPassword:String(currentPassword||'')},{Authorization:`Bearer ${token}`});
     const data=result?.data||{};if(data.sessionToken)this.saveSessionToken(data.sessionToken);return data;
   }
 });
@@ -8301,15 +7688,7 @@ SocialAuth={
   config:oauthConfig,
   saveConfig:persistOauthConfig,
   async start(provider){
-    if(window.CARE_RIDE_RUNTIME?.demo){
-      const suffix=String(Date.now()).slice(-6);
-      return {
-        provider,
-        providerUserId:`report-demo-${provider}-${suffix}`,
-        name:`Demo ${SOCIAL_PROVIDER_LABELS[provider]||provider} 使用者`,
-        email:`demo.${provider}.${suffix}@example.com`
-      };
-    }
+    
     if(location.protocol==='file:')throw new Error('真實社群登入不能從 file:// 直接執行；請部署到 HTTPS 正式網站');
     if(provider==='google')return this.google();
     throw new Error('正式版目前先開放 Google 與手機密碼登入');
@@ -8750,7 +8129,7 @@ async function confirmSocialLogin(){
   const btn=$('confirmSocialLoginBtn');
   setButtonBusy(btn,true,'正在完成登入…');
   try{
-    if(pendingSocialIdentity.provider==='google'&&!window.CARE_RIDE_RUNTIME?.demo){
+    if(pendingSocialIdentity.provider==='google'){
       CloudIdentity.saveSessionToken(pendingSocialIdentity.backendSessionToken||'');
       const completed=await CloudIdentity.completeSocialProfile({name:$('socialNameInput').value,email:$('socialEmailInput').value,phone:$('socialPhoneInput').value});
       if(completed.user?.userId)pendingSocialIdentity.backendUserId=completed.user.userId;
@@ -8759,10 +8138,10 @@ async function confirmSocialLogin(){
     const result=Identity.completeSocialLogin({...pendingSocialIdentity,name:$('socialNameInput').value,email:$('socialEmailInput').value,phone:$('socialPhoneInput').value});
     if(!result.ok)throw new Error(result.error);
     pendingSocialIdentity=null;$('socialNameInput').readOnly=false;$('socialEmailInput').readOnly=false;closeModal('socialLoginModal');$('loginScreen').classList.add('hidden');$('appShell').classList.remove('hidden');setupApp();
-    if(!window.CARE_RIDE_RUNTIME?.previewSafe&&!window.CARE_RIDE_RUNTIME?.demo){
+    {
       setTimeout(async()=>{
         try{
-          const sync=await GoogleDatabase.syncAll({silent:true,strictProduction:true});
+          const sync=await GoogleDatabase.syncAll({silent:true});
           if(!sync?.ok){console.warn('[SocialLogin] Google Database background sync failed',sync?.error||sync);return;}
           if(Identity.currentUser()){applyIdentityContext();renderNav();render();updateSyncUI();}
         }catch(error){console.warn('[SocialLogin] Google Database background sync failed',error);}
@@ -8807,10 +8186,7 @@ async function confirmRegisterRequester(){
   setButtonBusy(btn,true,'正在建立帳號…');
   try{
     let result;
-    if(window.CARE_RIDE_RUNTIME?.demo){
-      result=Identity.registerRequester(payload);
-      if(!result.ok)throw new Error(result.error);
-    }else{
+    {
       assertIdentityServicesReady_();
       const cloud=await CloudIdentity.registerRequester(payload);
       result=Identity.startBackendSession({user:cloud.user,memberships:cloud.memberships||[cloud.membership],provider:'password'});
@@ -8818,7 +8194,7 @@ async function confirmRegisterRequester(){
     }
     closeModal('registerRequesterModal');$('registerPasswordInput').value='';
     $('loginScreen').classList.add('hidden');$('appShell').classList.remove('hidden');setupApp();
-    showToast(window.CARE_RIDE_RUNTIME?.demo?'Demo 需求者帳號已建立於本機':'需求者帳號已建立');
+    showToast('需求者帳號已建立');
   }catch(error){
     const message=String(error?.message||error||'建立帳號失敗');
     routeFieldError(message,[
@@ -8852,7 +8228,7 @@ function renderLoginSecurityState(){
   panel.classList.add('hidden');row.classList.add('hidden');msg.textContent='';$('loginCaptchaInput').value='';forgot.textContent='忘記密碼';
 }
 function openForgotPassword(){
-  $('forgotPhoneInput').value=$('loginPhone').value;$('resetOtpInput').value='';$('newPasswordInput').value='';$('resetOtpDemoHint').classList.add('hidden');openModal('forgotPasswordModal');
+  $('forgotPhoneInput').value=$('loginPhone').value;$('resetOtpInput').value='';$('newPasswordInput').value='';$('resetOtpHint').classList.add('hidden');openModal('forgotPasswordModal');
 }
 async function login(){
   const phone=$('loginPhone').value.trim(),
@@ -8876,20 +8252,7 @@ async function login(){
   try{
     let result;
 
-    if(window.CARE_RIDE_RUNTIME?.previewSafe||window.CARE_RIDE_RUNTIME?.demo){
-      result=Identity.login(phone,password);
-
-      if(!result.ok){
-        throw Object.assign(
-          new Error(result.error),
-          {
-            code:result.reason==='invalid_credentials'
-              ?'INVALID_CREDENTIALS'
-              :result.reason
-          }
-        );
-      }
-    }else{
+    {
       assertIdentityServicesReady_();
 
       const cloud=await CloudIdentity.passwordLogin({
@@ -8922,7 +8285,7 @@ async function login(){
 
     setupApp();
 
-    if(!window.CARE_RIDE_RUNTIME?.previewSafe&&!window.CARE_RIDE_RUNTIME?.demo){
+    {
       setTimeout(async()=>{
         try{
           const sync=await GoogleDatabase.syncAll({
@@ -9457,27 +8820,21 @@ function driverKpi(){ const k=Analytics.driverDaily(currentDriver()?.id,kpiDate)
 function systemReportAccountCard(){ return Identity.can('system_report.create')?`<section class="card"><div class="card-head"><div><h3>系統問題回報</h3><p>應用程式／後台操作問題會送給平台開發方</p></div></div><button class="btn outline block" id="openSystemReportBtn" type="button">回報系統問題</button></section>`:''; }
 function driverAccount(){ const u=Identity.currentUser(),d=currentDriver(),next=Trip.nextForDriver(d?.id,driverOperationalDate()),v=Organization.vehicle(next?.vehicleId); return `<div class="page-head"><div><h2>我的帳戶</h2><p>帳號身分與組織已分離；車輛依每趟行程派定</p></div></div><section class="card"><div class="account-card">${accountAvatar(u,'👨🏻‍✈️')}<div><h3>${escapeHTML(u?.name||'')}</h3><p>${formatPhone(u?.phone||'')}・下一趟 ${escapeHTML(v?.plate||'尚未派車')}</p></div></div></section>${profilePhotoSection(u,'👨🏻‍✈️')}${identityMembershipCard()}<section class="card"><div class="card-head"><h3>所屬組織</h3></div><div class="meta">${escapeHTML(currentOrg()?.name||'')}<br>角色：${ROLE_LABELS[role()]}<br>司機資料僅保存營運欄位，姓名／手機直接引用帳號資料。</div></section>${systemReportAccountCard()}${appVersionNote()}<button type="button" class="btn danger block account-logout-btn">登出目前帳號</button>`; }
 function superAdminAccountSettingsCard(u){
-  const demoCleanup=window.CARE_RIDE_RUNTIME?.demo?`<section class="card"><div class="card-head"><div><h3>測試資料清理</h3><p>僅供明確的測試模式使用。</p></div></div><button type="button" class="btn danger" id="clearDemoDataBtn">清空本機測試資料</button></section>`:'';
-  return `<section class="card"><div class="card-head"><div><h3>平台超級管理者帳號</h3><p>帳號資料由伺服器更新；密碼只寫入伺服器端雜湊憑證，不會進入 Google Sheet、AppState 或 GitHub。</p></div></div><div class="form-grid"><div class="form-field"><label for="superAdminNameInput">顯示名稱</label><input id="superAdminNameInput" value="${escapeHTML(u?.name||'')}" autocomplete="name" /></div><div class="form-field"><label for="superAdminPhoneInput">登入手機</label><input id="superAdminPhoneInput" value="${escapeHTML(u?.phone||'')}" inputmode="tel" autocomplete="username" /></div><div class="form-field"><label for="superAdminPasswordInput">新密碼</label><input id="superAdminPasswordInput" type="password" autocomplete="new-password" placeholder="至少 8 碼；留白則不變更" /></div></div><button type="button" class="btn primary" id="saveSuperAdminAccountBtn">更新超級管理者帳號</button></section>${demoCleanup}`;
+  return `<section class="card"><div class="card-head"><div><h3>平台超級管理者帳號</h3><p>帳號資料由伺服器更新；密碼只寫入伺服器端雜湊憑證，不會進入 Google Sheet、AppState 或 GitHub。</p></div></div><div class="form-grid"><div class="form-field"><label for="superAdminNameInput">顯示名稱</label><input id="superAdminNameInput" value="${escapeHTML(u?.name||'')}" autocomplete="name" /></div><div class="form-field"><label for="superAdminPhoneInput">登入手機</label><input id="superAdminPhoneInput" value="${escapeHTML(u?.phone||'')}" inputmode="tel" autocomplete="username" /></div><div class="form-field"><label for="superAdminPasswordInput">新密碼</label><input id="superAdminPasswordInput" type="password" autocomplete="new-password" placeholder="至少 8 碼；留白則不變更" /></div><div class="form-field"><label for="superAdminCurrentPasswordInput">目前密碼</label><input id="superAdminCurrentPasswordInput" type="password" autocomplete="current-password" placeholder="變更手機或密碼時必填" /></div></div><button type="button" class="btn primary" id="saveSuperAdminAccountBtn">更新超級管理者帳號</button></section>`;
 }
 async function updateCurrentSuperAdminAccount(){
   const current=Identity.currentUser();if(!Identity.isSuperAdmin()||!current){showToast('只有平台超級管理者可以更新此帳號');return;}
-  const name=String($('superAdminNameInput')?.value||'').trim(),phone=digitsOnly($('superAdminPhoneInput')?.value||''),password=String($('superAdminPasswordInput')?.value||''),btn=$('saveSuperAdminAccountBtn');
+  const name=String($('superAdminNameInput')?.value||'').trim(),phone=digitsOnly($('superAdminPhoneInput')?.value||''),password=String($('superAdminPasswordInput')?.value||''),currentPassword=String($('superAdminCurrentPasswordInput')?.value||''),btn=$('saveSuperAdminAccountBtn');
   if(!name){showToast('請輸入顯示名稱');return;}if(!/^09\d{8}$/.test(phone)){showToast('請輸入有效的 10 碼手機號碼');return;}if(password&&password.length<8){showToast('新密碼至少需要 8 碼');return;}
+  // 伺服器要求：變更密碼或登入手機時必須通過目前密碼驗證，避免單靠被竊取的 session 就能接管帳號。
+  const phoneChanged=digitsOnly(current.phone||'')!==phone;
+  if((password||phoneChanged)&&!currentPassword){showToast('變更密碼或手機號碼前，請輸入目前的密碼');$('superAdminCurrentPasswordInput')?.focus();return;}
   setButtonBusy(btn,true,'更新中…');
   try{
-    if(window.CARE_RIDE_RUNTIME?.previewSafe||window.CARE_RIDE_RUNTIME?.demo){store.mutate(db=>{const target=db.users.find(u=>u.id===current.id);target.name=name;target.phone=phone;if(password)target.password=password;target.updatedAt=nowISO();},{remote:false,reason:'preview_account_update'});}
-    else{const cloud=await CloudIdentity.updateAccount({name,phone,newPassword:password});store.mutate(db=>{const target=db.users.find(u=>u.id===current.id);if(target){target.name=cloud.user?.displayName||name;target.phone=cloud.user?.phone||phone;target.password='';delete target.passwordUpdatedAt;target.updatedAt=nowISO();}},{remote:false,reason:'backend_session'});}
-    LoginSecurity.clear(phone);$('superAdminPasswordInput').value='';render();showToast(password?'帳號與伺服器密碼已更新':'平台超級管理者帳號已更新');
+    {const cloud=await CloudIdentity.updateAccount({name,phone,newPassword:password,currentPassword});store.mutate(db=>{const target=db.users.find(u=>u.id===current.id);if(target){target.name=cloud.user?.displayName||name;target.phone=cloud.user?.phone||phone;target.password='';delete target.passwordUpdatedAt;target.updatedAt=nowISO();}},{remote:false,reason:'backend_session'});}
+    LoginSecurity.clear(phone);$('superAdminPasswordInput').value='';$('superAdminCurrentPasswordInput').value='';render();showToast(password?'帳號與伺服器密碼已更新':'平台超級管理者帳號已更新');
   }catch(error){showToast(error?.message||'帳號更新失敗');}
   finally{setButtonBusy(btn,false);}
-}
-function clearDemoDataKeepCurrentSuperAdmin(){
-  const current=Identity.currentUser();if(!Identity.isSuperAdmin()||!current){showToast('只有平台超級管理者可以清理資料');return;}
-  if(!confirm('確定清空目前瀏覽器內的所有 Demo 公司、成員、乘客、預約、行程、車輛與紀錄？此動作無法復原，只會保留目前的超級管理者。'))return;
-  const admin=deepClone(current),createdAt=nowISO();
-  store.mutate(db=>{Object.keys(db).forEach(key=>{if(Array.isArray(db[key]))db[key]=[];});db.users=[admin];db.organizations=[{id:APP_CONFIG.requesterOrganizationId,type:'requester_hub',name:'需求者組織',taxId:'',contactPhone:'',active:true,systemManaged:true,createdAt}];db.updatedAt=createdAt;db.integration={customerSheetCsv:APP_CONFIG.customerSheetCsv,googleSpreadsheetId:APP_CONFIG.googleSpreadsheetId,googleDatabaseLastSyncAt:null,lastSyncAt:null,lastSyncStatus:'Demo 展示資料尚未載入',lastSyncDetails:[]};});
-  Identity.setSuperAdminViewOrganization(APP_CONFIG.requesterOrganizationId);render();showToast('本機 Demo 資料已清空，超級管理者帳號已保留');
 }
 function genericAccount(){
   const u=Identity.currentUser(),m=Identity.currentMembership();
@@ -10107,23 +9464,20 @@ async function saveStaff(){
   if(!name){showToast('請輸入姓名');return;}if(!/^09\d{8}$/.test(phone)){showToast('請輸入 09 開頭共 10 位手機號碼');return;}if(password.length<8){showToast('新帳號初始密碼至少需要 8 碼');return;}
   const btn=$('saveStaffBtn');setButtonBusy(btn,true,'建立中…');
   try{
-    if(window.CARE_RIDE_RUNTIME?.previewSafe||window.CARE_RIDE_RUNTIME?.demo){
-      const result=Identity.createStaffMember({name,phone,password,role:staffRole,alsoRequester});if(!result.ok)throw new Error(result.error);
-    }else{
+    {
       const result=await CloudIdentity.createStaff({organizationId:orgId(),name,phone,password,role:staffRole,alsoRequester});
-      const sync=await GoogleDatabase.syncAll({silent:true,strictProduction:true});if(!sync.ok)throw new Error(`帳號已送出，但資料庫重新同步失敗：${sync.error}`);
+      const sync=await GoogleDatabase.syncAll({silent:true});if(!sync.ok)throw new Error(`帳號已送出，但資料庫重新同步失敗：${sync.error}`);
       if(!result.membership?.membershipId&&!result.membershipId)console.warn('[createStaff] backend response missing membership id',result);
     }
     $('staffInitialPasswordInput').value='';closeModal('addStaffModal');render();
-    showToast(window.CARE_RIDE_RUNTIME?.demo?`${ROLE_LABELS[staffRole]||staffRole}${alsoRequester?'＋需求者':''} Demo 帳號已建立於本機`:`${ROLE_LABELS[staffRole]||staffRole}${alsoRequester?'＋需求者':''} 帳號已建立`);
+    showToast(`${ROLE_LABELS[staffRole]||staffRole}${alsoRequester?'＋需求者':''} 帳號已建立`);
   }catch(error){showToast(error?.message||'建立帳號失敗');}
   finally{setButtonBusy(btn,false);}
 }
 async function requestResetOtp(){
   const phone=digitsOnly($('forgotPhoneInput').value),btn=$('requestResetOtpBtn');if(!/^09\d{8}$/.test(phone)){showToast('請輸入有效的 10 碼手機號碼');return;}setButtonBusy(btn,true,'發送中…');
   try{
-    if(window.CARE_RIDE_RUNTIME?.previewSafe||window.CARE_RIDE_RUNTIME?.demo){const result=Identity.requestPasswordResetOtp(phone);if(!result.ok)throw new Error(result.error);const hint=$('resetOtpDemoHint');hint.classList.remove('hidden');hint.innerHTML=`示範簡訊驗證碼：<strong style="font-size:20px">${result.code}</strong><br>5 分鐘內有效。`;}
-    else{await CloudIdentity.requestPasswordReset({phone});const hint=$('resetOtpDemoHint');hint.classList.remove('hidden');hint.textContent='若此手機為有效帳號，6 位數驗證碼已透過正式簡訊服務送出，5 分鐘內有效。';}
+    {await CloudIdentity.requestPasswordReset({phone});const hint=$('resetOtpHint');hint.classList.remove('hidden');hint.textContent='若此手機為有效帳號，6 位數驗證碼已透過正式簡訊服務送出，5 分鐘內有效。';}
   }catch(error){showToast(error?.message||'驗證碼發送失敗');}
   finally{setButtonBusy(btn,false);}
 }
@@ -10131,8 +9485,7 @@ async function confirmResetPassword(){
   const phone=digitsOnly($('forgotPhoneInput').value),otp=$('resetOtpInput').value.trim(),newPassword=$('newPasswordInput').value,btn=$('confirmResetPasswordBtn');if(newPassword.length<8){showToast('新密碼至少需要 8 碼');return;}setButtonBusy(btn,true,'更新中…');
   try{
     let userPhone=phone;
-    if(window.CARE_RIDE_RUNTIME?.previewSafe||window.CARE_RIDE_RUNTIME?.demo){const result=Identity.resetPasswordWithOtp({phone,otp,newPassword});if(!result.ok)throw new Error(result.error);userPhone=result.user.phone;}
-    else await CloudIdentity.confirmPasswordReset({phone,otp,newPassword});
+    await CloudIdentity.confirmPasswordReset({phone,otp,newPassword});
     LoginSecurity.clear(userPhone);CloudIdentity.clearSessionToken();closeModal('forgotPasswordModal');$('loginPhone').value=userPhone;$('loginPassword').value='';$('loginCaptchaInput').value='';renderLoginSecurityState();showToast('密碼已由伺服器更新，舊登入工作階段已失效；請使用新密碼重新登入');
   }catch(error){showToast(error?.message||'密碼重設失敗');}
   finally{setButtonBusy(btn,false);}
@@ -10448,7 +9801,7 @@ function bindViewEvents(){
     if(!result.ok){showToast(result.error);render();return;}
     const persisted=await store.flushAuthoritative();
     if(!persisted?.ok){render();showToast(`接案尚未完成後端確認：${persisted?.error||'請保持網路連線後重試'}`);return;}
-    const cloudRefresh=await GoogleDatabase.syncAll({silent:true,strictProduction:true});
+    const cloudRefresh=await GoogleDatabase.syncAll({silent:true});
     if(!cloudRefresh?.ok){render();showToast(`接案已寫入 Google Sheet，但完整履約資訊重新載入失敗：${cloudRefresh?.error||'請重新整理'}`);return;}
     render();showToast(`已由 ${result.organization.name} 接案，後端版本確認完成，完整履約資訊已解鎖`);
   }));
@@ -10526,7 +9879,6 @@ function bindViewEvents(){
   $('kpiDateInput')?.addEventListener('change',e=>{kpiDate=e.target.value||preferredOperationalDate();render();});
   document.querySelector('.account-logout-btn')?.addEventListener('click',logout);
   $('saveSuperAdminAccountBtn')?.addEventListener('click',updateCurrentSuperAdminAccount);
-  $('clearDemoDataBtn')?.addEventListener('click',clearDemoDataKeepCurrentSuperAdmin);
   $('profilePhotoInput')?.addEventListener('change',e=>saveProfilePhoto(e.target.files?.[0]));
   $('removeProfilePhotoBtn')?.addEventListener('click',removeProfilePhoto);
   document.querySelectorAll('.care-recipient-merge-btn').forEach(btn=>btn.addEventListener('click',()=>{
@@ -10691,21 +10043,9 @@ window.addEventListener('online',async()=>{const r=await Trip?.syncOfflineQueue?
 })();
 
 async function bootstrapApplication(){
-  document.getElementById('previewSafeBootNote')?.remove();
-  // Production boot is fail-closed for identity/data. Local file preview may use the retained embedded Sheet snapshot; deployed production never replaces live data with demo expansion.
-  const previewMode=!!window.CARE_RIDE_RUNTIME?.previewSafe||!!window.CARE_RIDE_RUNTIME?.demo;
-  if(window.CARE_RIDE_RUNTIME?.demo){
-    try{
-      prepareReportDemoData_({reset:true});
-    }catch(error){
-      console.warn('[Bootstrap] demo data initialization failed',error);
-    }
-    Identity.init();
-  }else if(window.CARE_RIDE_RUNTIME?.previewSafe){
-    // Local file preview keeps the embedded Google Sheet snapshot, but never expands/reset demo volume on every boot.
-    try{GoogleDatabase?.hydrateEmbedded?.({force:false});}catch(error){console.warn('[Bootstrap] local snapshot hydration warning',error);}
-    Identity.init();
-  }else{
+  // Production boot is fail-closed for identity and data: nothing is
+  // rendered from local state until the server has authenticated the session.
+  {
     Identity.init();
     if(Identity.currentUser()||CloudIdentity.token()){
       try{
@@ -10745,15 +10085,15 @@ async function bootstrapApplication(){
       if(typeof GoogleDatabase==='undefined'||typeof navigator==='undefined'||navigator.onLine===false||!Identity.currentUser())return;
       const lastSyncAt=store.state?.integration?.googleDatabaseLastSyncAt||store.state?.integration?.lastSyncAt||null;
       const lastSyncMs=lastSyncAt?Date.now()-new Date(lastSyncAt).getTime():Infinity;
-      if(!previewMode&&Number.isFinite(lastSyncMs)&&lastSyncMs>=0&&lastSyncMs<120000)return;
-      const result=await GoogleDatabase.syncAll({silent:true,strictProduction:!previewMode});
+      if(Number.isFinite(lastSyncMs)&&lastSyncMs>=0&&lastSyncMs<120000)return;
+      const result=await GoogleDatabase.syncAll({silent:true});
       if(!result?.ok){console.warn('[Bootstrap] authenticated Google database refresh failed',result?.error||result);return;}
       try{Benefit.migrate();}catch(error){console.warn('[Bootstrap] Benefit cloud normalization warning',error);}
       try{Trip.migrateRuntimeModel?.();Trip.migrateEventHistory?.();Trip.migratePassengerRuntimeHistory?.();Trip.migrateIssueStateModel?.();}catch(error){console.warn('[Bootstrap] Trip cloud normalization warning',error);}
       if(Identity.currentUser()){applyIdentityContext();renderNav();render();}
     }catch(error){console.warn('[Bootstrap] authenticated Google database refresh failed',error);}
   },650);
-  return {ok:true,benefitInit,benefitLatestInit,previewSafe:previewMode};
+  return {ok:true,benefitInit,benefitLatestInit};
 }
 document.addEventListener('input',e=>{const field=e.target.closest?.('.form-field.has-error');if(field){field.classList.remove('has-error');const input=e.target;if(input?.removeAttribute){input.removeAttribute('aria-invalid');input.removeAttribute('aria-describedby');}field.querySelector('.field-error-message')?.remove();}});
 document.addEventListener('change',e=>{const field=e.target.closest?.('.form-field.has-error');if(field){field.classList.remove('has-error');const input=e.target;if(input?.removeAttribute){input.removeAttribute('aria-invalid');input.removeAttribute('aria-describedby');}field.querySelector('.field-error-message')?.remove();}});
@@ -10798,18 +10138,6 @@ bootstrapApplication().catch(error=>{
       const btn=document.createElement('button');btn.type='button';btn.id='loginPasswordToggle';btn.className='password-toggle';btn.textContent='顯示';btn.setAttribute('aria-label','顯示密碼');
       btn.addEventListener('click',()=>{const show=password.type==='password';password.type=show?'text':'password';btn.textContent=show?'隱藏':'顯示';btn.setAttribute('aria-label',show?'隱藏密碼':'顯示密碼');password.focus();});
       field?.appendChild(btn);
-    }
-    const runtime=window.CARE_RIDE_RUNTIME||{};
-    const phone=q('#loginPhone');
-    if(runtime.demo){
-      if(phone&&!phone.value)phone.value='0999999999';
-      if(password&&!password.value)password.value='123456';
-      if(!q('#releaseDemoDetails')){
-        const details=document.createElement('details');details.id='releaseDemoDetails';details.className='login-demo-details';
-        const summary=document.createElement('summary');summary.textContent='Demo 測試帳號';
-        const body=document.createElement('div');body.className='login-note';body.innerHTML='超級管理者：<strong>0999999999</strong><br>調度員：<strong>0922001001</strong><br>司機：<strong>0933001001</strong><br>需求者：<strong>0911000001</strong><br>所有 Demo 密碼：<strong>123456</strong><br><span class="muted">展示資料已載入，可直接操作各角色功能。</span>';
-        details.append(summary,body);card.appendChild(details);
-      }
     }
   }
 

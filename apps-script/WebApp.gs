@@ -8,7 +8,7 @@ function doPost(e){
     var envelope=JSON.parse(e&&e.postData&&e.postData.contents?e.postData.contents:"{}");
     var expected=authConfig_("NETLIFY_GATEWAY_SECRET");
     if(!envelope.gatewaySecret||!authConstantTimeEqual_(String(envelope.gatewaySecret),expected))throw authError_("GATEWAY_UNAUTHORIZED","未授權的 API Gateway");
-    var req={path:String(envelope.path||""),body:envelope.body||{},query:envelope.query||{},params:envelope.params||{},requestId:String(envelope.requestId||requestId)};
+    var req={path:String(envelope.path||""),body:envelope.body||{},query:envelope.query||{},params:envelope.params||{},clientIp:String(envelope.clientIp||""),requestId:String(envelope.requestId||requestId)};
     var data=routeRequest_(String(envelope.method||"POST"),req);
     return webJson_({ok:true,data:data,requestId:req.requestId});
   }catch(error){

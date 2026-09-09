@@ -20,7 +20,7 @@ function requireEnv(name) {
   return value;
 }
 
-async function callAppsScript({ method = 'POST', path, body = {}, query = {} }) {
+async function callAppsScript({ method = 'POST', path, body = {}, query = {}, clientIp = '' }) {
   REQUIRED_ENV.forEach(requireEnv);
   const url = requireEnv('APPS_SCRIPT_WEB_APP_URL');
   if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec(?:\?.*)?$/.test(url)) {
@@ -40,6 +40,7 @@ async function callAppsScript({ method = 'POST', path, body = {}, query = {} }) 
         path,
         body,
         query,
+        clientIp: String(clientIp || '').slice(0, 64),
         requestId: `NET-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
       })
     });
@@ -63,6 +64,19 @@ async function callAppsScript({ method = 'POST', path, body = {}, query = {} }) 
   }
 }
 
+/**
+ * Source IP of the caller, for per-IP login throttling. Netlify sets
+ * x-nf-client-connection-ip; the x-forwarded-for fallback takes only the
+ * left-most entry, which is the one Netlify's edge actually observed.
+ */
+function clientIp(event) {
+  const headers = event?.headers || {};
+  const direct = headers['x-nf-client-connection-ip'] || headers['X-Nf-Client-Connection-Ip'];
+  if (direct) return String(direct).trim();
+  const forwarded = headers['x-forwarded-for'] || headers['X-Forwarded-For'] || '';
+  return String(forwarded).split(',')[0].trim();
+}
+
 function parseBody(event) {
   try { return event?.body ? JSON.parse(event.body) : {}; }
   catch (_) { throw Object.assign(new Error('JSON 請求格式錯誤'), { code: 'BAD_JSON' }); }
@@ -76,10 +90,12 @@ function handleError(error) {
     : code === 'BOOKING_CONFLICT' || code === 'TRIP_CONFLICT' ? 409
     : code === 'SESSION_INVALID' || code === 'SESSION_EXPIRED' || code === 'SESSION_REQUIRED' ? 401
     : code === 'VALIDATION_ERROR' || code === 'WEAK_PASSWORD' || code === 'ACCOUNT_EXISTS' || code === 'PHONE_EXISTS' || code === 'MEMBERSHIP_EXISTS' || code === 'OWNER_EXISTS' || code === 'RESET_CODE_INVALID' ? 400
+    : code === 'RESET_RATE_LIMITED' ? 429
+    : code === 'CURRENT_PASSWORD_REQUIRED' ? 400
     : code === 'RESET_PROVIDER_UNAVAILABLE' ? 503
     : code === 'CONFIG_MISSING' || code === 'CONFIG_INVALID' ? 503
     : 502;
   return json(userStatus, { ok: false, error: { code, message: error?.message || '服務暫時無法使用' } });
 }
 
-module.exports = { json, requireEnv, callAppsScript, parseBody, handleError };
+module.exports = { json, requireEnv, callAppsScript, parseBody, handleError, clientIp };
