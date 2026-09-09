@@ -7227,18 +7227,6 @@ function loadSession(){
 
 Identity = {
   init(){ return loadSession(); },
-  login(phone,password){
-    const cleanPhone=digitsOnly(phone),user=store.state.users.find(u=>digitsOnly(u.phone)===cleanPhone&&u.password===password&&u.active);
-    if(!user) return {ok:false,reason:'invalid_credentials',error:'帳號或密碼錯誤'};
-    if(isPlatformSuperAdmin(user)){
-      session={userId:user.id,platformRole:'super_admin',membershipId:null,organizationId:null,viewOrganizationId:firstActiveOrganizationId(),loginAt:nowISO(),loginProvider:'password'};persistSession();
-      Audit.log('identity.login_success',`平台超級管理者登入 ${user.name}`,{actorUserId:user.id});return {ok:true,user,membership:null,platformRole:'super_admin'};
-    }
-    const memberships=activeMembershipsForUser(user.id),membership=memberships.find(m=>m.organizationId===APP_CONFIG.defaultOrganizationId)||memberships[0];
-    if(!membership) return {ok:false,reason:'no_active_identity',error:'此帳號目前沒有有效身分'};
-    startMembershipSession(user,membership,'password');
-    Audit.log('identity.login_success',`登入 ${user.name}`,{actorUserId:user.id,organizationId:membership.organizationId,membershipId:membership.id});return {ok:true,user,membership};
-  },
   startBackendSession({user:backendUser,memberships:backendMemberships=[],provider='password'}){
     const backendUserId=String(backendUser?.userId||'').trim();if(!backendUserId)return {ok:false,error:'後端沒有回傳使用者識別碼'};
     const localUserId=window.gsUserId(backendUserId);let user=store.state.users.find(u=>u.id===localUserId);
@@ -7328,24 +7316,6 @@ Identity = {
     const membership=activeMembershipsForUser(user.id).find(m=>m.id===membershipId);if(!membership)return {ok:false,error:'找不到有效身分'};
     return this.switchOrganization(membership.organizationId);
   },
-  createStaffMember({name,phone,password='123456',role,alsoRequester=false}){
-    const isPlatform=this.can('platform.membership.manage'),isCompany=this.can('company.staff.manage');if(!isPlatform&&!isCompany)return {ok:false,error:'你沒有新增公司人員權限'};
-    const organizationId=this.scopeOrganizationId(),normalizedPhone=digitsOnly(phone);if(!organizationId)return {ok:false,error:'目前沒有組織 Context'};
-    if(!String(name||'').trim())return {ok:false,error:'請輸入姓名'};if(!validIdentityPhone(normalizedPhone))return {ok:false,error:'請輸入 09 開頭共 10 位手機號碼'};
-    const targetOrg=store.state.organizations.find(o=>o.id===organizationId);if(targetOrg?.id===APP_CONFIG.requesterOrganizationId||targetOrg?.type==='requester_hub')return {ok:false,error:'需求者組織不能由公司後台新增工作者'};
-    const allowed=isPlatform?['owner','driver','dispatcher']:['driver','dispatcher'];if(!allowed.includes(role))return {ok:false,error:isPlatform?'平台超級管理者可新增負責人、司機或調度員':'負責人只能新增司機或調度員'};
-    if(alsoRequester&&!isPlatform&&!isCompany)return {ok:false,error:'你沒有授予需求者身分的權限'};
-    if(role==='owner'&&store.state.memberships.some(m=>m.organizationId===organizationId&&m.role==='owner'&&membershipStatus(m)!=='revoked'))return {ok:false,error:'此組織已經有負責人；一個組織只能有一位負責人'};
-    let user=store.state.users.find(u=>digitsOnly(u.phone)===normalizedPhone);if(isPlatformSuperAdmin(user))return {ok:false,error:'平台超級管理者不能加入公司 Membership'};
-    if(user&&store.state.memberships.some(m=>m.userId===user.id&&m.organizationId===organizationId&&membershipStatus(m)!=='revoked'))return {ok:false,error:'此 User 在目前組織已有有效或暫停中的 Membership'};
-    let createdUser=false;
-    if(!user){user={id:uid('usr'),name:String(name).trim(),phone:normalizedPhone,password:String(password||'123456'),active:true,createdAt:nowISO()};createdUser=true;}
-    const membership={id:uid('mem'),userId:user.id,organizationId,role,status:'active',createdAt:nowISO(),updatedAt:nowISO(),activatedAt:nowISO()};
-    store.mutate(db=>{if(createdUser)db.users.push(user);db.memberships.push(membership);});recordMembershipEvent({membershipId:membership.id,eventType:'created',fromStatus:null,toStatus:'active',fromRole:null,toRole:role,actorUserId:this.currentUser()?.id,note:isPlatform?'平台超級管理者新增公司成員':'公司負責人新增公司成員'});if(role==='driver')Organization.ensureDriverProfileForUser(user.id,organizationId,this.currentUser()?.id);
-    let requesterResult=null;if(alsoRequester)requesterResult=this.setRequesterIdentity(user.id,true);
-    Audit.log('identity.staff_created',`建立 ${ROLE_LABELS[role]} 身分：${user.name}`,{actorUserId:this.currentUser()?.id,organizationId,membershipId:membership.id,targetUserId:user.id,role,reusedUser:!createdUser,alsoRequester:!!alsoRequester});
-    return {ok:true,user,membership,createdUser,reusedUser:!createdUser,requesterMembership:requesterResult?.membership||null};
-  },
   hasRequesterIdentity(userId){
     return store.state.memberships.some(m=>m.userId===userId&&m.organizationId===APP_CONFIG.requesterOrganizationId&&m.role==='requester'&&membershipStatus(m)==='active');
   },
@@ -7385,17 +7355,6 @@ Identity = {
     recordMembershipEvent({membershipId:live.id,eventType:'revoked',fromStatus:membershipStatus(live),toStatus:'revoked',fromRole:'requester',toRole:'requester',actorUserId:this.currentUser()?.id,note:'撤銷需求者身分'});
     Audit.log('identity.requester_identity_revoked',`撤銷需求者身分：${user.name}`,{actorUserId:this.currentUser()?.id,targetUserId:userId,organizationId:reqOrg.id,membershipId:live.id});
     return {ok:true,removed:true};
-  },
-  requestPasswordResetOtp(phone){
-    const normalizedPhone=digitsOnly(phone),user=store.state.users.find(u=>digitsOnly(u.phone)===normalizedPhone&&u.active);if(!user)return {ok:false,error:'找不到此手機的有效帳號'};
-    const challenge=createOtpChallenge('password_reset',normalizedPhone);Audit.log('identity.password_reset_code_requested','密碼重設驗證碼已建立',{targetUserId:user.id});return {ok:true,code:challenge.code,expiresInSeconds:300};
-  },
-  resetPasswordWithOtp({phone,otp,newPassword}){
-    const normalizedPhone=digitsOnly(phone);if(String(newPassword||'').length<8)return {ok:false,error:'新密碼至少需要 8 碼'};
-    const verified=verifyOtpChallenge('password_reset',normalizedPhone,otp);if(!verified.ok)return verified;
-    const user=store.state.users.find(u=>digitsOnly(u.phone)===normalizedPhone&&u.active);if(!user)return {ok:false,error:'找不到有效帳號'};
-    store.mutate(db=>{const target=db.users.find(u=>u.id===user.id);target.password=String(newPassword);target.passwordUpdatedAt=nowISO();});OTP_CHALLENGES.delete(`password_reset:${normalizedPhone}`);
-    Audit.log('identity.password_reset_completed','使用驗證碼完成密碼重設',{targetUserId:user.id});return {ok:true,user};
   },
   prepareSocialLogin({provider,providerUserId,name,email}){
     if(!['google','apple','facebook'].includes(provider)||!providerUserId)return {ok:false,error:'無效的社群登入識別'};
@@ -7444,26 +7403,6 @@ Identity = {
     const backendRequesterMembership=(Array.isArray(backendMemberships)?backendMemberships:[]).find(m=>String(m.role||'').toLowerCase()==='requester'&&String(m.status||'').toLowerCase()==='active');
     const req=ensureRequesterMembership(user.id,backendRequesterMembership?.membershipId||null);if(!req.ok)return req;startMembershipSession(store.state.users.find(u=>u.id===user.id),req.membership,provider);
     Audit.log('identity.social_login_success',`${provider} 登入 ${user.name}`,{actorUserId:user.id,organizationId:req.membership.organizationId,membershipId:req.membership.id,provider,createdUser,identityAdded:req.created});
-    return {ok:true,user:store.state.users.find(u=>u.id===user.id),membership:req.membership,createdUser,identityAdded:req.created};
-  },
-  registerRequester({name,email,phone,password,backendUserId=null,backendMembershipId=null}){
-    const cleanName=String(name||'').trim(),cleanEmail=normalizeIdentityEmail(email),cleanPhone=digitsOnly(phone),cleanPassword=String(password||'');
-    if(!cleanName)return {ok:false,error:'請輸入姓名'};if(!validIdentityEmail(cleanEmail))return {ok:false,error:'請輸入正確電子信箱'};if(!validIdentityPhone(cleanPhone))return {ok:false,error:'請輸入 09 開頭共 10 位手機號碼'};if(cleanPassword.length<8)return {ok:false,error:'密碼至少需要 8 碼'};
-    const resolved=resolveUserByEmailPhone(cleanEmail,cleanPhone);if(!resolved.ok)return resolved;let user=resolved.user,createdUser=false;
-    if(isPlatformSuperAdmin(user))return {ok:false,error:'平台超級管理者不能建立需求者 Membership'};
-    if(user){
-      if(!user.password)return {ok:false,error:'此使用者目前使用社群登入，請使用原本的谷歌／蘋果／臉書登入，即可在同一個使用者新增需求者身分'};
-      if(user.password!==cleanPassword)return {ok:false,error:'此手機或電子信箱已屬於既有 User；請輸入原本密碼以新增需求者身分'};
-    }else{
-      const preferredUserId=String(backendUserId||'').trim();
-      if(preferredUserId&&store.state.users.some(u=>u.id===preferredUserId))return {ok:false,error:'Google 資料庫回傳的使用者識別碼已存在'};
-      user={id:preferredUserId||uid('usr'),name:cleanName,email:cleanEmail,phone:cleanPhone,password:cleanPassword,active:true,createdAt:nowISO()};
-      createdUser=true;store.mutate(db=>db.users.push(user),{remote:false,reason:'backend_session'});
-    }
-    const req=ensureRequesterMembership(user.id,backendMembershipId);if(!req.ok)return req;
-    store.mutate(db=>{const u=db.users.find(x=>x.id===user.id);if(!u.email)u.email=cleanEmail;if(!u.name)u.name=cleanName;u.updatedAt=nowISO();});
-    startMembershipSession(store.state.users.find(u=>u.id===user.id),req.membership,'password');
-    Audit.log('identity.requester_registered',`${createdUser?'建立需求者 User':'既有使用者新增需求者身分'} ${user.name}`,{actorUserId:user.id,organizationId:req.membership.organizationId,membershipId:req.membership.id,createdUser});
     return {ok:true,user:store.state.users.find(u=>u.id===user.id),membership:req.membership,createdUser,identityAdded:req.created};
   },
   updateMemberProfile(membershipId,{name,phone}){

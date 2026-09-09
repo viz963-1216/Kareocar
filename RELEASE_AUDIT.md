@@ -1,5 +1,7 @@
 # 安心接送 V12.25.79｜Release Audit
 
+> **歷史文件。**這是 V12.25.79 當時的封版紀錄，未隨 V12.26.0 更新，其中的版本號、檔案雜湊與「byte-identical」等敘述已不適用於目前的程式碼。目前版本的說明請看 [SECURITY_HARDENING.md](SECURITY_HARDENING.md)。
+
 ## 判定
 
 **5 個本輪 production P0 已在程式層修正並通過自動化 regression。**

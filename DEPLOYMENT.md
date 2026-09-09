@@ -1,12 +1,14 @@
-# 安心接送 V12.25.79｜正式上線部署說明
+# 安心接送 V12.26.0｜正式上線部署說明
 
-> V12.25.79 針對封版 regression 發現的 5 個 production P0 修正：密碼資料隔離、正式忘記密碼、server ACK 成功判定、Trip 後端同步與 revision conflict、伺服器端登入防暴力破解。請整包部署，不要只替換 `index.html`。
+> V12.26.0 移除全部 demo 程式碼，並修正 7 項安全問題（詳見 [SECURITY_HARDENING.md](SECURITY_HARDENING.md)）。
+>
+> **本輪改了前後端契約，必須整包部署**：`/identity/update-account` 新增 `currentPassword`、gateway envelope 新增 `clientIp`。只替換 `index.html` 會導致帳號更新失敗。
 
 ## 1. Apps Script：整包更新
 
 同一個 Apps Script 專案中更新下列檔案：
 
-- `AuthCore.gs`
+- `AuthCore.gs`（根目錄原本重複的那份已刪除，唯一來源是 `apps-script/AuthCore.gs`）
 - `IdentityApi.gs`
 - `GoogleAuth.gs`
 - `DatabaseApi.gs`
@@ -26,6 +28,10 @@
 - `NETLIFY_GATEWAY_SECRET`：至少 32 個隨機字元
 - `SPREADSHEET_ID`（若目前專案使用此名稱指定正式 Sheet）
 
+選用（V12.26.0 新增）：
+
+- `AUTH_PBKDF2_ITERATIONS`：密碼雜湊迭代次數，預設 6000。部署後執行一次 `authBenchmarkPbkdf2_()`，把單次驗證調到 200–500ms。調高不會讓既有帳號失效。
+
 正式啟用忘記密碼時另需：
 
 - `PASSWORD_RESET_SMS_WEBHOOK_URL`：HTTPS SMS webhook
@@ -40,10 +46,12 @@
 若尚未初始化，可在 Apps Script 編輯器手動執行：
 
 ```javascript
-bootstrapSuperAdminPassword_v12_25_77("你的09手機", "至少12碼的強密碼")
+authBootstrapSuperAdminPassword_("你的09手機", "至少12碼的強密碼")
 ```
 
-函式名稱為相容既有部署而保留；V12.25.79 仍可使用。
+或設定 `BOOTSTRAP_SUPERADMIN_PHONE` / `BOOTSTRAP_SUPERADMIN_PASSWORD` 兩個 Script Property 後執行 `authBootstrapSuperAdminFromProperties_()`，執行完屬性會自動刪除。
+
+舊名稱 `bootstrapSuperAdminPassword_v12_25_77` 與 `bootstrapSuperAdminFromProperties_v12_25_79` 保留為別名。
 
 ### 重新部署 Apps Script Web App
 

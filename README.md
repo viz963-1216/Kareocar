@@ -1,32 +1,66 @@
 # 安心接送
 
-這是版本 `12.25.63` 的商用準備展示版。Netlify 提供前端、GitHub 保存私有原始碼，Google Sheets／Drive 保存受控資料結構。
+長照接送媒合平台。Netlify 提供前端與 API gateway，Google Apps Script 負責身分驗證與資料授權，Google Sheets 保存資料。
 
-## 專案連結
-
+- 目前版本：`12.26.0`
 - 展示網站：https://care-ride-commercial-readiness.netlify.app
 - 私有原始碼：https://github.com/viz963-1216/care-ride-commercial-readiness
-- 私有資料結構：https://docs.google.com/spreadsheets/d/1sMu_yIuGiJzyq18Iiy4F55En8C1TtfHce-8L9Py1qkI/edit
 
-## 版本與迭代
+## 架構
 
-- 目前介面版本：`12.25.63`
-- 累計部署迭代：第 `2` 次
-- 第 1 次：建立 Google Sheets 資料結構、安全標頭、停用搜尋索引，完成 GitHub 與 Netlify 部署。
-- 第 2 次：停用原始 Demo 資料自動生成、加入超級管理者自助更新與 Demo 資料清理功能、建立 Google Drive 合成測試資料。
+```
+瀏覽器 (index.html)
+   │  只走 /api/*，帶 Bearer session token
+   ▼
+Netlify Functions              ← APPS_SCRIPT_GATEWAY_SECRET
+   │  轉送並附上來源 IP
+   ▼
+Apps Script Web App            ← NETLIFY_GATEWAY_SECRET 驗證
+   │  驗證 session、套用 row-level 授權
+   ▼
+Google Sheets
+```
 
-## 目前可做什麼
+瀏覽器沒有任何 Google Sheets 的直接讀取權限，也沒有內建資料快照；未登入時讀不到任何資料。
 
-- 展示登入、預約、派車、行程、車隊與稽核介面。
-- 每位訪客的資料只存在各自瀏覽器；不會形成多人共用的正式資料庫。
-- 已加入展示版警語、安全回應標頭與搜尋引擎暫停索引。
+## 開發
 
-## 正式商用前必須完成
+```bash
+npm test          # 後端回歸測試（不需部署，Node 直接跑 .gs）
+node tools/check-inline-js.js    # index.html 內嵌 JS 語法檢查
+node tools/check-dom-refs.js     # DOM id 交叉檢查
+bash tools/checksums.sh          # 重新產生 SHA256SUMS.txt
+```
 
-1. 使用 Firebase Auth 或等級相當的身分服務，移除瀏覽器內的明文密碼與測試 OTP。
-2. 建立受控 HTTPS 後端，由後端驗證 token、套用 RBAC，再讀寫 Google Sheets／Drive。
-3. 禁止瀏覽器直接存取公開試算表；服務證明照片須放在受限 Drive 資料夾並設定保存期限。
-4. 完成個資告知、服務條款、資料保存／刪除流程、備份、日誌與資安測試。
-5. 將示範帳號與預設密碼移出正式版本。
+`tests/` 用一個小型的 Apps Script 模擬層（`tests/shim.js`、`tests/sheets.js`）在 Node 上執行 `.gs` 檔，因此授權與密碼邏輯可以在部署前就驗證。
 
-Google Antigravity 可作為後續開發與除錯工具，但不承擔正式網站託管、身分驗證或資料庫安全。
+## 部署
+
+見 [DEPLOYMENT.md](DEPLOYMENT.md)。Apps Script 與 Netlify 必須整包一起更新，只換 `index.html` 會造成前後端契約不一致。
+
+## 版本紀錄
+
+### 12.26.0 — 商用化強化
+
+移除全部 demo 程式碼，並修正 7 項安全問題。詳見 [SECURITY_HARDENING.md](SECURITY_HARDENING.md)。
+
+- AppState 的寫入授權改為以伺服器端既有狀態判斷，不再採信請求內容宣稱的擁有者
+- 密碼改用迭代雜湊（可調整成本），舊憑證於下次登入自動升級
+- 忘記密碼的驗證碼改用密碼學安全亂數，並加上索取節流
+- 變更密碼或登入手機需通過目前密碼驗證
+- 登入鎖定改為會自動解除的軟鎖，並加入來源 IP 維度
+- 移除內建 demo 帳密、90KB 假資料快照、瀏覽器直讀公開試算表的備援路徑
+
+### 12.25.x
+
+歷史版本紀錄見 `RELEASE_AUDIT.md` 與 `P0_VALIDATION.md`（皆為當時的封版紀錄，未隨 12.26.0 更新）。
+
+## 正式對外前仍待處理
+
+以下項目不在 12.26.0 的範圍內，上線前應逐項確認，詳細說明見 SECURITY_HARDENING.md 的「尚未處理」章節。
+
+1. Apps Script 專案中有 6 支函式尚未納入版本控制，repo 目前無法完整重建後端。
+2. `index.html` 仍是單一檔案且 CSP 帶 `'unsafe-inline'`；session token 存在 `sessionStorage`。
+3. 批次寫入與多表同步的效能結構問題（資料量成長後會逾時）。
+4. 「從已發布試算表匯入預約」功能仍由瀏覽器直接讀取公開試算表。
+5. 個資告知、服務條款、資料保存與刪除流程、備份與資安測試。
