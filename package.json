@@ -1,0 +1,12 @@
+{
+  "name": "care-ride-v12-25-74-google-integrations",
+  "private": true,
+  "version": "12.25.75",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "google-auth-library": "11.0.2"
+  }
+}

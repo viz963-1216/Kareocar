@@ -1,0 +1,68 @@
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+[[redirects]]
+  from = "/api/runtime-config"
+  to = "/.netlify/functions/runtime-config"
+  status = 200
+
+[[redirects]]
+  from = "/api/google-auth"
+  to = "/.netlify/functions/google-auth"
+  status = 200
+
+[[redirects]]
+  from = "/api/google-db"
+  to = "/.netlify/functions/google-db"
+  status = 200
+
+[[redirects]]
+  from = "/api/identity/register-requester"
+  to = "/.netlify/functions/identity-register-requester"
+  status = 200
+
+[[redirects]]
+  from = "/api/identity/password-login"
+  to = "/.netlify/functions/identity-password-login"
+  status = 200
+
+[[redirects]]
+  from = "/api/identity/create-staff"
+  to = "/.netlify/functions/identity-create-staff"
+  status = 200
+
+[[redirects]]
+  from = "/api/identity/complete-social-profile"
+  to = "/.netlify/functions/identity-complete-social-profile"
+  status = 200
+
+[[redirects]]
+  from = "/api/health"
+  to = "/.netlify/functions/health"
+  status = 200
+
+[[redirects]]
+  from = "/api/identity/session"
+  to = "/.netlify/functions/identity-session"
+  status = 200
+
+[[redirects]]
+  from = "/api/state-mutate"
+  to = "/.netlify/functions/state-mutate"
+  status = 200
+
+[[redirects]]
+  from = "/api/identity/request-password-reset"
+  to = "/.netlify/functions/identity-request-password-reset"
+  status = 200
+
+[[redirects]]
+  from = "/api/identity/confirm-password-reset"
+  to = "/.netlify/functions/identity-confirm-password-reset"
+  status = 200
+
+[[redirects]]
+  from = "/api/identity/update-account"
+  to = "/.netlify/functions/identity-update-account"
+  status = 200
