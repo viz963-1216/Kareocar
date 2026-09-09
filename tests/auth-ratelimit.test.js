@@ -1,4 +1,4 @@
-require('./shim.js');
+require('./shim.js'); require('./sheets.js');
 const fs=require('fs');
 eval(fs.readFileSync(require('path').join(__dirname,'..','apps-script','AuthCore.gs'),'utf8'));
 const P=global.__props;

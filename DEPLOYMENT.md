@@ -1,6 +1,8 @@
-# 安心接送 V12.26.0｜正式上線部署說明
+# 安心接送 V12.26.1｜正式上線部署說明
 
 > V12.26.0 移除全部 demo 程式碼，並修正 7 項安全問題（詳見 [SECURITY_HARDENING.md](SECURITY_HARDENING.md)）。
+>
+> V12.26.1 另外改了資料存放位置（密碼憑證改存工作表、暫時狀態改用 CacheService），部署步驟見 [MIGRATION_12_26_1.md](MIGRATION_12_26_1.md)。
 >
 > **本輪改了前後端契約，必須整包部署**：`/identity/update-account` 新增 `currentPassword`、gateway envelope 新增 `clientIp`。只替換 `index.html` 會導致帳號更新失敗。
 

@@ -1,7 +1,7 @@
 {
   "name": "care-ride-v12-25-74-google-integrations",
   "private": true,
-  "version": "12.26.0",
+  "version": "12.26.1",
   "engines": {
     "node": ">=20"
   },

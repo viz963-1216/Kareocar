@@ -2415,7 +2415,7 @@ body.driver-mode .route-row.active{border-color:#9AC5F5;background:var(--cr-blue
 
 const APP_CONFIG = Object.freeze({
   appName: '安心接送',
-  version: '12.26.0',
+  version: '12.26.1',
   schemaVersion: 44,
   storageKey: 'careRideV122579ReportDemoDB',
   sessionKey: 'careRideV122579ReportDemoSession',
@@ -2850,7 +2850,7 @@ function repairCareRecipientReferencesInDb(db,{source='load'}={}){
   db.dataRepairLog=Array.isArray(db.dataRepairLog)?db.dataRepairLog:[];
   const changed=Object.entries(stats).some(([k,v])=>k!=='unresolved'&&Number(v)>0);
   if(changed||stats.unresolved.length){
-    db.dataRepairLog.unshift({id:uid('repair'),module:'care_recipient',version:'12.26.0',source,stats:deepClone(stats),createdAt:nowISO()});
+    db.dataRepairLog.unshift({id:uid('repair'),module:'care_recipient',version:'12.26.1',source,stats:deepClone(stats),createdAt:nowISO()});
     if(db.dataRepairLog.length>30)db.dataRepairLog.length=30;
   }
   return stats;

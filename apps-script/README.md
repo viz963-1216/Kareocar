@@ -38,6 +38,16 @@
 | `DatabaseApi.gs` | 讀取 API 與 row-level 授權 |
 | `AppStateApi.gs` | 操作狀態的權威寫入與授權 |
 
+## 密碼憑證的存放位置
+
+自 V12.26.1 起，密碼憑證存在**「密碼憑證」工作表**（預設隱藏），不再放 Script Properties。
+
+原因是 Script Properties 有 500KB 硬上限，實測約 885 位使用者就會寫不進去；而且 pepper 也在同一個儲存體裡，等於失去了 pepper 的意義。現在雜湊在工作表、pepper 在 Script Properties，**請分開備份**。
+
+這張表不在 `DATABASE_READABLE_SHEETS_` 也不在 `APP_STATE_COLLECTIONS_` 內，因此無法經由任何 API 讀寫。
+
+速率限制、密碼重設驗證碼等暫時狀態改用 **CacheService**（有 TTL、會自己過期），不再永久累積在 Properties。
+
 ## Script Properties
 
 必要：
@@ -87,13 +97,26 @@ authBootstrapSuperAdminFromProperties_()
 
 執行完屬性會自動刪除（即使失敗也會刪）。舊的函式名稱 `bootstrapSuperAdminPassword_v12_25_77` 與 `bootstrapSuperAdminFromProperties_v12_25_79` 保留為別名。
 
-### 3. 確認健康檢查
+### 3. 遷移既有密碼憑證
+
+```javascript
+authMigrateCredentialsToSheet_()
+```
+
+把還留在 Script Properties 的憑證整批搬到工作表。不執行也可以——每位使用者下次登入時會自動遷移；手動執行只是讓它一次做完。**使用者不需要重設密碼。**
+
+用 `authPropertiesUsage_()` 確認用量，遷移後 `percentUsed` 應該掉到個位數。
+
+詳見 [MIGRATION_12_26_1.md](../MIGRATION_12_26_1.md)。
+
+### 4. 確認健康檢查
 
 `GET /api/health` 應該回報：
 
 - `authConfigured: true`
 - `rowAuthorizationVersion`
 - `passwordResetProviderConfigured: true`（若啟用忘記密碼）
+- `auditWriteFailures.count: 0`（稽核寫入失敗計數；持續增加代表稽核鏈斷了）
 
 ## 本機測試
 

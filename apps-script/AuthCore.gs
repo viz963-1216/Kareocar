@@ -170,6 +170,153 @@ function authBenchmarkPbkdf2_() {
 
 function authCredentialKey_(userId) { return AUTH_CREDENTIAL_PREFIX_ + String(userId || ""); }
 
+/* ================================================================
+ * 密碼憑證儲存
+ *
+ * 憑證原本存在 Script Properties，那有兩個問題：
+ *
+ *  1. Script Properties 有 500KB 的硬上限。實測每位使用者（憑證 + session
+ *     版本 + 速率狀態）約佔 578 bytes，換算約 885 位使用者就會寫不進去，
+ *     症狀是新帳號註冊失敗、既有帳號改不了密碼。
+ *  2. pepper 也存在同一個 Script Properties。pepper 的價值來自「與雜湊分開
+ *     存放」，放在一起等於沒有 pepper。
+ *
+ * 改存專用工作表後：沒有筆數上限、有 Google Sheet 的版本歷史可回溯、可以
+ * 納入備份，而 pepper 留在 Script Properties——兩者分屬不同儲存體，單一邊
+ * 外洩都不足以離線破解。
+ *
+ * 這張表沒有列在 DATABASE_READABLE_SHEETS_ 或 APP_STATE_COLLECTIONS_ 裡，
+ * 因此無法經由任何 API 讀取或寫入。
+ * ================================================================ */
+
+var AUTH_CREDENTIAL_SHEET_ = "密碼憑證";
+var AUTH_CREDENTIAL_HEADERS_ = Object.freeze(
+  ["使用者ID", "版本", "演算法", "迭代次數", "Salt", "雜湊", "更新時間"]);
+
+function authEnsureCredentialSheet_() {
+  var ss = getSpreadsheet_();
+  var sheet = ss.getSheetByName(AUTH_CREDENTIAL_SHEET_);
+  if (!sheet) {
+    if (typeof ss.insertSheet !== "function") throw new Error("Spreadsheet 不支援建立密碼憑證工作表");
+    sheet = ss.insertSheet(AUTH_CREDENTIAL_SHEET_);
+    sheet.getRange(1, 1, 1, AUTH_CREDENTIAL_HEADERS_.length).setValues([AUTH_CREDENTIAL_HEADERS_.slice()]);
+    try { sheet.setFrozenRows(1); } catch (_) {}
+    try { sheet.hideSheet(); } catch (_) {}
+  } else if (sheet.getLastColumn() < AUTH_CREDENTIAL_HEADERS_.length) {
+    sheet.getRange(1, 1, 1, AUTH_CREDENTIAL_HEADERS_.length).setValues([AUTH_CREDENTIAL_HEADERS_.slice()]);
+  }
+  return sheet;
+}
+
+/**
+ * 只讀第一欄找出列號，而不是整表讀取——登入是最高頻的操作，即使憑證表
+ * 長到數萬列，這裡的成本仍然只有一欄。
+ */
+function authCredentialRowIndex_(sheet, userId) {
+  var last = sheet.getLastRow();
+  if (last < 2) return -1;
+  var ids = sheet.getRange(2, 1, last - 1, 1).getValues();
+  var target = String(userId);
+  for (var i = 0; i < ids.length; i++) {
+    if (String(ids[i][0]) === target) return i + 2;
+  }
+  return -1;
+}
+
+function authReadCredentialRow_(userId) {
+  var sheet = authEnsureCredentialSheet_();
+  var r = authCredentialRowIndex_(sheet, userId);
+  if (r < 0) return null;
+  var v = sheet.getRange(r, 1, 1, AUTH_CREDENTIAL_HEADERS_.length).getValues()[0];
+  return {
+    v: Number(v[1] || 2) || 2,
+    alg: String(v[2] || ""),
+    iterations: Number(v[3] || 0),
+    salt: String(v[4] || ""),
+    hash: String(v[5] || "")
+  };
+}
+
+function authWriteCredentialRow_(userId, cred) {
+  var sheet = authEnsureCredentialSheet_();
+  var r = authCredentialRowIndex_(sheet, userId);
+  var row = [String(userId), cred.v, cred.alg, cred.iterations, cred.salt, cred.hash, cred.updatedAt];
+  if (r < 0) sheet.appendRow(row);
+  else sheet.getRange(r, 1, 1, row.length).setValues([row]);
+}
+
+function authDeleteCredentialRow_(userId) {
+  var sheet = authEnsureCredentialSheet_();
+  var r = authCredentialRowIndex_(sheet, userId);
+  if (r > 0) sheet.deleteRow(r);
+}
+
+/** 先讀工作表，再回退到舊的 Script Properties（尚未遷移的帳號）。 */
+function authLoadCredential_(userId) {
+  var fromSheet = null;
+  try { fromSheet = authReadCredentialRow_(userId); } catch (_) { fromSheet = null; }
+  if (fromSheet && fromSheet.hash) {
+    return { source: "sheet", v: fromSheet.v, iterations: fromSheet.iterations,
+             salt: fromSheet.salt, hash: fromSheet.hash };
+  }
+  var raw = PropertiesService.getScriptProperties().getProperty(authCredentialKey_(userId));
+  if (!raw) return null;
+  try {
+    var c = JSON.parse(raw);
+    return { source: "properties", v: Number(c.v || 1) || 1,
+             iterations: Number(c.iterations || 0), salt: String(c.salt || ""), hash: String(c.hash || "") };
+  } catch (_) { return null; }
+}
+
+/**
+ * 把還留在 Script Properties 的憑證整批搬到工作表。
+ * 在編輯器手動執行一次即可；沒執行也沒關係——每位使用者下次成功登入時
+ * 會自動遷移，這支只是讓遷移一次做完，好把 500KB 的壓力立刻釋放掉。
+ */
+function authMigrateCredentialsToSheet_() {
+  var props = PropertiesService.getScriptProperties();
+  var keys = props.getKeys().filter(function (k) { return k.indexOf(AUTH_CREDENTIAL_PREFIX_) === 0; });
+  var moved = 0, skipped = 0;
+  keys.forEach(function (key) {
+    var userId = key.substring(AUTH_CREDENTIAL_PREFIX_.length);
+    if (!userId) { skipped++; return; }
+    var raw = props.getProperty(key);
+    var c = null;
+    try { c = JSON.parse(raw); } catch (_) { c = null; }
+    if (!c || !c.hash || !c.salt) { skipped++; return; }
+    authWriteCredentialRow_(userId, {
+      v: Number(c.v || 1) || 1,
+      alg: String(c.alg || (Number(c.v || 1) >= 2 ? "iterated-hmac-sha256-peppered" : "hmac-sha256-single-round")),
+      iterations: Number(c.iterations || 0),
+      salt: String(c.salt),
+      hash: String(c.hash),
+      updatedAt: String(c.updatedAt || new Date().toISOString())
+    });
+    props.deleteProperty(key);
+    moved++;
+  });
+  return { moved: moved, skipped: skipped, remainingKeys: props.getKeys().length };
+}
+
+/** 目前 Script Properties 的用量，用來監看 500KB 上限還剩多少。 */
+function authPropertiesUsage_() {
+  var props = PropertiesService.getScriptProperties();
+  var all = props.getProperties(), bytes = 0, counts = {};
+  Object.keys(all).forEach(function (k) {
+    bytes += k.length + String(all[k] || "").length;
+    var prefix = k.replace(/[^A-Z_].*$/, "") || k;
+    counts[prefix] = (counts[prefix] || 0) + 1;
+  });
+  var LIMIT = 500 * 1024;
+  return {
+    approxBytes: bytes,
+    limitBytes: LIMIT,
+    percentUsed: Math.round((bytes / LIMIT) * 1000) / 10,
+    keyCount: Object.keys(all).length
+  };
+}
+
+
 function authSetPasswordCredential_(userId, password) {
   password = String(password || "");
   if (password.length < 8) throw authError_("WEAK_PASSWORD", "密碼至少需要 8 碼");
@@ -177,19 +324,20 @@ function authSetPasswordCredential_(userId, password) {
   var salt = authRandomHex_(16);
   var iterations = authPbkdf2Iterations_();
   var hash = authPbkdf2Hex_(password, salt, iterations, authConfig_("AUTH_PASSWORD_PEPPER"));
-  PropertiesService.getScriptProperties().setProperty(
-    authCredentialKey_(userId),
-    JSON.stringify({
-      v: 2,
-      alg: "iterated-hmac-sha256-peppered",
-      iterations: iterations,
-      salt: salt,
-      hash: hash,
-      updatedAt: new Date().toISOString()
-    }));
+  authWriteCredentialRow_(userId, {
+    v: 2,
+    alg: "iterated-hmac-sha256-peppered",
+    iterations: iterations,
+    salt: salt,
+    hash: hash,
+    updatedAt: new Date().toISOString()
+  });
+  // 舊儲存位置若還有殘留就一併清掉，避免兩邊不同步。
+  PropertiesService.getScriptProperties().deleteProperty(authCredentialKey_(userId));
 }
 
 function authDeletePasswordCredential_(userId) {
+  try { authDeleteCredentialRow_(userId); } catch (_) {}
   PropertiesService.getScriptProperties().deleteProperty(authCredentialKey_(userId));
 }
 
@@ -203,14 +351,12 @@ function authDeletePasswordCredential_(userId) {
  */
 function authVerifyPasswordCredential_(userId, password) {
   var pepper = authConfig_("AUTH_PASSWORD_PEPPER");
-  var raw = PropertiesService.getScriptProperties().getProperty(authCredentialKey_(userId));
-  if (!raw) {
+  var credential = authLoadCredential_(userId);
+  if (!credential) {
     authPbkdf2Hex_(String(password || ""), "absent-account-timing-equalizer",
       authPbkdf2Iterations_(), pepper);
     return false;
   }
-  var credential;
-  try { credential = JSON.parse(raw); } catch (_) { return false; }
 
   var salt = String(credential.salt || "");
   var stored = String(credential.hash || "");
@@ -230,8 +376,10 @@ function authVerifyPasswordCredential_(userId, password) {
 
   if (!matched) return false;
 
+  // 舊演算法、成本被調高、或憑證還留在 Script Properties，都在這次登入順手升級。
   var wantsUpgrade = version < 2 ||
-    Number(credential.iterations || 0) < authPbkdf2Iterations_();
+    Number(credential.iterations || 0) < authPbkdf2Iterations_() ||
+    credential.source === "properties";
   if (wantsUpgrade) {
     try { authSetPasswordCredential_(userId, String(password || "")); } catch (_) { /* non-fatal */ }
   }
@@ -239,7 +387,7 @@ function authVerifyPasswordCredential_(userId, password) {
 }
 
 function authHasPasswordCredential_(userId) {
-  return !!PropertiesService.getScriptProperties().getProperty(authCredentialKey_(userId));
+  return !!authLoadCredential_(userId);
 }
 
 /* -------------------------------------------------------------- session token */
@@ -321,19 +469,37 @@ function authWithShortLock_(fn) {
   try { return fn(); } finally { if (lock) { try { lock.releaseLock(); } catch (_) {} } }
 }
 
-function authReadJsonProperty_(key) {
-  var raw = PropertiesService.getScriptProperties().getProperty(key);
-  if (!raw) return null;
-  try { return JSON.parse(raw); } catch (_) { return null; }
+/* 速率限制與重設驗證碼都是短命資料：登入鎖定最長 60 分鐘、驗證碼 5 分鐘、
+ * 索取節流 1 小時。原本全部寫進 Script Properties，但那裡沒有 TTL——每個曾經
+ * 登入失敗的手機、每個來源 IP 都會永久留下一筆，把 500KB 額度慢慢吃光，最後
+ * 連新使用者註冊都會失敗。
+ *
+ * 改用 CacheService：本來就是為這種資料設計的，會自己過期，也不佔 Properties
+ * 額度。代價是快取可能提早被清除，等同計數提早歸零；這在防護上可以接受——
+ * 真正的成本防線是迭代雜湊本身與 IP 維度，而 Properties 被撐爆會讓整個平台
+ * 寫不進資料，那嚴重得多。 */
+function authCacheGetJson_(key) {
+  try {
+    var raw = CacheService.getScriptCache().get(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) { return null; }
 }
-function authWriteJsonProperty_(key, value) {
-  PropertiesService.getScriptProperties().setProperty(key, JSON.stringify(value));
+
+function authCachePutJson_(key, value, ttlSeconds) {
+  try {
+    CacheService.getScriptCache().put(key, JSON.stringify(value),
+      Math.max(1, Math.min(21600, Math.floor(Number(ttlSeconds) || 3600))));
+  } catch (_) {}
+}
+
+function authCacheRemove_(key) {
+  try { CacheService.getScriptCache().remove(key); } catch (_) {}
 }
 
 function authLoginRateState_(phone) {
   var now = Math.floor(Date.now() / 1000);
   var key = authLoginRateKey_(phone);
-  var state = authReadJsonProperty_(key) || { failures: 0, windowStartedAt: now, lockedUntil: 0 };
+  var state = authCacheGetJson_(key) || { failures: 0, windowStartedAt: now, lockedUntil: 0 };
   /* A finished lock plus an elapsed window resets the counter. Nothing is
    * permanent, so a third party cannot lock an account out indefinitely. */
   if (Number(state.lockedUntil || 0) <= now &&
@@ -346,7 +512,7 @@ function authLoginRateState_(phone) {
 function authLoginIpState_(ip) {
   var now = Math.floor(Date.now() / 1000);
   var key = authLoginIpRateKey_(ip);
-  var state = authReadJsonProperty_(key) || { failures: 0, windowStartedAt: now, lockedUntil: 0 };
+  var state = authCacheGetJson_(key) || { failures: 0, windowStartedAt: now, lockedUntil: 0 };
   if (Number(state.lockedUntil || 0) <= now &&
       now - Number(state.windowStartedAt || 0) > AUTH_LOGIN_IP_WINDOW_SECONDS_) {
     state = { failures: 0, windowStartedAt: now, lockedUntil: 0 };
@@ -392,7 +558,7 @@ function authRecordLoginFailureUnlocked_(phone, sourceIp) {
   state.lastFailureAt = x.now;
   var lockSeconds = authLockSecondsForFailures_(state.failures);
   if (lockSeconds > 0) state.lockedUntil = x.now + lockSeconds;
-  authWriteJsonProperty_(x.key, state);
+  authCachePutJson_(x.key, state, AUTH_LOGIN_WINDOW_SECONDS_ + AUTH_LOGIN_MAX_LOCK_SECONDS_);
 
   if (sourceIp) {
     var ipCtx = authLoginIpState_(sourceIp), ipState = ipCtx.state;
@@ -403,13 +569,13 @@ function authRecordLoginFailureUnlocked_(phone, sourceIp) {
       ipState.failures = 0;
       ipState.windowStartedAt = ipCtx.now;
     }
-    authWriteJsonProperty_(ipCtx.key, ipState);
+    authCachePutJson_(ipCtx.key, ipState, AUTH_LOGIN_IP_WINDOW_SECONDS_ + AUTH_LOGIN_IP_LOCK_SECONDS_);
   }
   return state;
 }
 
 function authClearLoginRate_(phone) {
-  PropertiesService.getScriptProperties().deleteProperty(authLoginRateKey_(phone));
+  authCacheRemove_(authLoginRateKey_(phone));
 }
 
 /* ------------------------------------------------------------- password reset */
@@ -425,7 +591,7 @@ function authResetRateKey_(phone) { return AUTH_RESET_RATE_PREFIX_ + authOpaqueP
 function authAssertResetRequestAllowed_(phone) {
   var now = Math.floor(Date.now() / 1000);
   var key = authResetRateKey_(phone);
-  var state = authReadJsonProperty_(key) || { count: 0, windowStartedAt: now, lastSentAt: 0 };
+  var state = authCacheGetJson_(key) || { count: 0, windowStartedAt: now, lastSentAt: 0 };
   if (now - Number(state.windowStartedAt || 0) > AUTH_RESET_WINDOW_SECONDS_) {
     state = { count: 0, windowStartedAt: now, lastSentAt: Number(state.lastSentAt || 0) };
   }
@@ -447,12 +613,12 @@ function authRecordResetRequestSent_(rateCtx) {
   var state = rateCtx.state;
   state.count = Math.max(0, Number(state.count) || 0) + 1;
   state.lastSentAt = rateCtx.now;
-  authWriteJsonProperty_(rateCtx.key, state);
+  authCachePutJson_(rateCtx.key, state, AUTH_RESET_WINDOW_SECONDS_);
 }
 
 /** Returns the live challenge for this phone, or null when none is valid. */
 function authActiveResetChallenge_(phone) {
-  var state = authReadJsonProperty_(authResetChallengeKey_(phone));
+  var state = authCacheGetJson_(authResetChallengeKey_(phone));
   if (!state) return null;
   var now = Math.floor(Date.now() / 1000);
   if (Number(state.expiresAt || 0) <= now) return null;
@@ -508,11 +674,11 @@ function authCreatePasswordResetChallenge_(userId, phone) {
     attempts: 0,
     createdAt: now
   };
-  authWriteJsonProperty_(authResetChallengeKey_(phone), state);
+  authCachePutJson_(authResetChallengeKey_(phone), state, AUTH_RESET_TTL_SECONDS_);
   try {
     authSendPasswordResetSms_(phone, code);
   } catch (e) {
-    PropertiesService.getScriptProperties().deleteProperty(authResetChallengeKey_(phone));
+    authCacheRemove_(authResetChallengeKey_(phone));
     throw e;
   }
   authWithShortLock_(function () { authRecordResetRequestSent_(rateCtx); });
@@ -521,16 +687,16 @@ function authCreatePasswordResetChallenge_(userId, phone) {
 
 function authVerifyPasswordResetChallenge_(phone, code) {
   var key = authResetChallengeKey_(phone);
-  var state = authReadJsonProperty_(key);
+  var state = authCacheGetJson_(key);
   var now = Math.floor(Date.now() / 1000);
   if (!state) throw authError_("RESET_CODE_INVALID", "驗證碼無效或已失效");
   if (Number(state.expiresAt || 0) <= now) {
-    PropertiesService.getScriptProperties().deleteProperty(key);
+    authCacheRemove_(key);
     throw authError_("RESET_CODE_INVALID", "驗證碼已過期，請重新取得");
   }
   state.attempts = Math.max(0, Number(state.attempts) || 0) + 1;
   if (state.attempts > AUTH_RESET_MAX_ATTEMPTS_) {
-    PropertiesService.getScriptProperties().deleteProperty(key);
+    authCacheRemove_(key);
     throw authError_("RESET_CODE_INVALID", "驗證碼錯誤次數過多，請重新取得");
   }
   var pepper = authConfig_("AUTH_PASSWORD_PEPPER");
@@ -539,7 +705,7 @@ function authVerifyPasswordResetChallenge_(phone, code) {
         Math.max(1, Number(state.iterations || AUTH_PBKDF2_MIN_ITERATIONS_)), pepper)
     : authHmacHex_(String(state.salt || "") + "|" + String(code || ""), pepper);
   if (!authConstantTimeEqual_(expected, String(state.hash || ""))) {
-    authWriteJsonProperty_(key, state);
+    authCachePutJson_(key, state, Math.max(1, Number(state.expiresAt || 0) - now));
     throw authError_("RESET_CODE_INVALID", "驗證碼錯誤");
   }
   return { key: key, state: state };

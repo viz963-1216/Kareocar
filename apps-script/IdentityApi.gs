@@ -127,7 +127,7 @@ function confirmPasswordResetFromWeb_(body,req){
   try{
     var user=readTable_("使用者").find(function(u){return normalizeTaiwanPhoneForIdentity_(u["手機號碼(E.164)"])===phone&&authIsEnabled_(u["啟用狀態"]);});if(!user)throw authError_("RESET_CODE_INVALID","驗證碼無效或已失效");
     var verified=authVerifyPasswordResetChallenge_(phone,code);if(String(verified.state.userId)!==String(user["使用者ID"]))throw authError_("RESET_CODE_INVALID","驗證碼無效或已失效");
-    var userId=String(user["使用者ID"]);authSetPasswordCredential_(userId,newPassword);authBumpSessionVersion_(userId);authClearLoginRate_(phone);PropertiesService.getScriptProperties().deleteProperty(verified.key);
+    var userId=String(user["使用者ID"]);authSetPasswordCredential_(userId,newPassword);authBumpSessionVersion_(userId);authClearLoginRate_(phone);authCacheRemove_(verified.key);
     authUpdateObjectRowByKey_("使用者","使用者ID",userId,{"更新時間":new Date().toISOString()});
     try{writeAudit_({eventType:"auth.password.reset_completed",actorUserId:userId,organizationId:"",entityType:"user",entityId:userId,reasonCode:"PASSWORD_RESET_OTP",details:{requestId:req&&req.requestId?req.requestId:""}});}catch(auditError){authRecordAuditFailure_("auth.password.reset_completed",auditError);}
     return {reset:true,user:authPublicUser_(user)};

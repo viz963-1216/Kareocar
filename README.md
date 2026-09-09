@@ -2,7 +2,7 @@
 
 長照接送媒合平台。Netlify 提供前端與 API gateway，Google Apps Script 負責身分驗證與資料授權，Google Sheets 保存資料。
 
-- 目前版本：`12.26.0`
+- 目前版本：`12.26.1`
 - 展示網站：https://care-ride-commercial-readiness.netlify.app
 - 私有原始碼：https://github.com/viz963-1216/care-ride-commercial-readiness
 
@@ -51,6 +51,15 @@ bash tools/checksums.sh          # 重新產生 SHA256SUMS.txt
 - 登入鎖定改為會自動解除的軟鎖，並加入來源 IP 維度
 - 移除內建 demo 帳密、90KB 假資料快照、瀏覽器直讀公開試算表的備援路徑
 
+### 12.26.1 — 容量與併發
+
+- 密碼憑證改存專用工作表（原本在 Script Properties，約 885 人就會撞到 500KB 上限）
+- 速率限制等暫時狀態改用 CacheService，不再永久累積
+- AppState 批次寫入改為單次讀入／單次寫回：50 筆變更的全表讀取從 132 次降到 4 次
+- 批次寫入具備原子性，中途失敗不會留下寫到一半的資料
+- 登入與簡訊發送不再抓全域鎖
+- 稽核寫入失敗不再靜默，`/api/health` 會回報 `auditWriteFailures`
+
 ### 12.25.x
 
 歷史版本紀錄見 `RELEASE_AUDIT.md` 與 `P0_VALIDATION.md`（皆為當時的封版紀錄，未隨 12.26.0 更新）。
@@ -61,6 +70,7 @@ bash tools/checksums.sh          # 重新產生 SHA256SUMS.txt
 
 1. Apps Script 專案中有 6 支函式尚未納入版本控制，repo 目前無法完整重建後端。
 2. `index.html` 仍是單一檔案且 CSP 帶 `'unsafe-inline'`；session token 存在 `sessionStorage`。
-3. 批次寫入與多表同步的效能結構問題（資料量成長後會逾時）。
+3. 一次資料同步仍是 23 個獨立請求，各自重算一次權限範圍（批次寫入已優化，讀取路徑尚未）。
 4. 「從已發布試算表匯入預約」功能仍由瀏覽器直接讀取公開試算表。
-5. 個資告知、服務條款、資料保存與刪除流程、備份與資安測試。
+5. 沒有監控與告警：Apps Script 開始出錯時不會有人知道。
+6. 個資告知、服務條款、資料保存與刪除流程、備份與資安測試。
