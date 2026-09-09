@@ -5,6 +5,12 @@
  */
 var REQUESTER_ORGANIZATION_ID_="ORG-REQ-001";
 
+/** Source IP forwarded by the Netlify gateway; "" when unavailable. */
+function identityRequestSourceIp_(req){
+  var ip=req&&req.clientIp?String(req.clientIp):"";
+  return ip.trim().substring(0,64);
+}
+
 function registerRequesterFromWeb_(body,req){
   body=body||{};
   var name=String(body.name||"").trim(),email=String(body.email||"").trim().toLowerCase(),phoneLocal=String(body.phone||"").replace(/\D/g,""),password=String(body.password||"");
@@ -35,13 +41,14 @@ function passwordLogin_(body,req){
   if(!/^09\d{8}$/.test(phone)||!password)throw authError_("INVALID_CREDENTIALS","帳號或密碼錯誤");
   var lock=LockService.getScriptLock();lock.waitLock(10000);
   try{
-    authAssertLoginAllowed_(phone);
+    var sourceIp=identityRequestSourceIp_(req);
+    authAssertLoginAllowed_(phone,sourceIp);
     var user=readTable_("使用者").find(function(u){return normalizeTaiwanPhoneForIdentity_(u["手機號碼(E.164)"])===phone;});
     var valid=!!user&&authIsEnabled_(user["啟用狀態"])&&authVerifyPasswordCredential_(String(user["使用者ID"]),password);
     if(!valid){
-      var rate=authRecordLoginFailure_(phone);
-      if(rate.resetRequired)throw authError_("PASSWORD_RESET_REQUIRED","登入失敗次數過多，請先使用忘記密碼重設密碼");
-      if(Number(rate.lockedUntil||0)>Math.floor(Date.now()/1000))throw authError_("LOGIN_RATE_LIMITED","登入失敗次數過多，已暫停密碼登入 3 分鐘");
+      var rate=authRecordLoginFailure_(phone,sourceIp);
+      var nowSec=Math.floor(Date.now()/1000),lockedUntil=Number(rate.lockedUntil||0);
+      if(lockedUntil>nowSec){var locked=authError_("LOGIN_RATE_LIMITED","登入失敗次數過多，請稍後再試");locked.retryAfterSeconds=lockedUntil-nowSec;throw locked;}
       throw authError_("INVALID_CREDENTIALS","帳號或密碼錯誤");
     }
     authClearLoginRate_(phone);
@@ -73,7 +80,7 @@ function createStaffFromWeb_(body,req){
     var org=readTable_("組織").find(function(o){return String(o["組織ID"])===organizationId&&authIsEnabled_(o["啟用狀態"]);});if(!org)throw authError_("ORG_NOT_FOUND","找不到有效組織");
     var memberships=readTable_("成員資格");if(role==="owner"&&memberships.some(function(m){return String(m["組織ID"])===organizationId&&String(m["角色"])==="owner"&&String(m["狀態"]||"").toLowerCase()==="active";}))throw authError_("OWNER_EXISTS","此組織已經有有效負責人");
     var users=readTable_("使用者"),user=users.find(function(u){return normalizeTaiwanPhoneForIdentity_(u["手機號碼(E.164)"])===phone;}),createdUser=false;
-    if(user&&String(user["平台角色"]||"").trim().toLowerCase()==="super_admin")throw authError_("FORBIDDEN","平台超級管理者不能加入公司 Membership");
+    if(user&&String(user["平台角色"]||"").trim().toLowerCase()==="super_admin")throw authError_("FORBIDDEN","平台超級管理者不可加入公司 Membership");
     if(user&&memberships.some(function(m){return String(m["使用者ID"])===String(user["使用者ID"])&&String(m["組織ID"])===organizationId&&String(m["狀態"]||"").toLowerCase()==="active";}))throw authError_("MEMBERSHIP_EXISTS","此使用者在目前組織已有有效身分");
     var now=new Date().toISOString(),userId=user?String(user["使用者ID"]):identityNewId_("USR-PW"),membershipId=identityNewId_("MEM-STAFF"),credentialCreated=false;
     if(!user){
@@ -132,8 +139,20 @@ function updateCurrentIdentityAccountFromWeb_(body,req){
   try{
     var users=readTable_("使用者"),user=users.find(function(u){return String(u["使用者ID"])===userId;});if(!user||!authIsEnabled_(user["啟用狀態"]))throw authError_("SESSION_INVALID","使用者已停用或不存在");
     var collision=users.find(function(u){return String(u["使用者ID"])!==userId&&normalizeTaiwanPhoneForIdentity_(u["手機號碼(E.164)"])===phone;});if(collision)throw authError_("PHONE_EXISTS","此手機號碼已被其他帳號使用");
-    var oldPhone=normalizeTaiwanPhoneForIdentity_(user["手機號碼(E.164)"]),updates={"顯示名稱":name,"手機號碼(E.164)":"+886"+phone.substring(1),"更新時間":new Date().toISOString()};authUpdateObjectRowByKey_("使用者","使用者ID",userId,updates);user["顯示名稱"]=name;user["手機號碼(E.164)"]=updates["手機號碼(E.164)"];
-    if(newPassword){authSetPasswordCredential_(userId,newPassword);authBumpSessionVersion_(userId);}authClearLoginRate_(oldPhone);authClearLoginRate_(phone);
+    var oldPhone=normalizeTaiwanPhoneForIdentity_(user["手機號碼(E.164)"]),phoneChanged=oldPhone!==phone;
+    // A stolen session token must not be enough to take an account over: both the
+    // password and the phone number (which is the login identifier) require the
+    // current password. Social-login accounts have no password credential, so for
+    // them the session token remains the only available proof.
+    if((newPassword||phoneChanged)&&authHasPasswordCredential_(userId)){
+      var currentPassword=String(body.currentPassword||"");
+      if(!currentPassword)throw authError_("CURRENT_PASSWORD_REQUIRED","變更密碼或手機號碼前，請先輸入目前的密碼");
+      if(!authVerifyPasswordCredential_(userId,currentPassword))throw authError_("INVALID_CREDENTIALS","目前密碼不正確");
+    }
+    var updates={"顯示名稱":name,"手機號碼(E.164)":"+886"+phone.substring(1),"更新時間":new Date().toISOString()};authUpdateObjectRowByKey_("使用者","使用者ID",userId,updates);user["顯示名稱"]=name;user["手機號碼(E.164)"]=updates["手機號碼(E.164)"];
+    if(newPassword)authSetPasswordCredential_(userId,newPassword);
+    if(newPassword||phoneChanged)authBumpSessionVersion_(userId);
+    authClearLoginRate_(oldPhone);authClearLoginRate_(phone);
     try{writeAudit_({eventType:"identity.account_updated",actorUserId:userId,organizationId:"",entityType:"user",entityId:userId,reasonCode:newPassword?"PROFILE_AND_PASSWORD_UPDATE":"PROFILE_UPDATE",details:{requestId:req&&req.requestId?req.requestId:"",phoneChanged:oldPhone!==phone,passwordChanged:!!newPassword}});}catch(_){}
     return {user:authPublicUser_(user),memberships:authMembershipsForUser_(userId).map(authPublicMembership_),sessionToken:authIssueSessionToken_(userId),passwordChanged:!!newPassword};
   }finally{lock.releaseLock();}
