@@ -34,15 +34,134 @@ function appStateSanitizeRecord_(collection,record){
   }
   return out;
 }
-function appStateExistingRows_(){ensureAppStateSheet_();return readTable_(APP_STATE_SHEET_);}
-function appStateFindRow_(collection,id){return appStateExistingRows_().find(function(r){return appStateText_(r["實體類型"])===collection&&appStateText_(r["實體ID"])===id;})||null;}
-function appStateFindEntity_(collection,id){var row=appStateFindRow_(collection,id);if(row&&String(row["已刪除"]).toLowerCase()!=="true")return appStateParseJson_(row["資料JSON"]);return null;}
+/* ================================================================
+ * 每次執行的快取與批次寫回
+ *
+ * 一次 /state/mutate 最多帶 200 筆變更。原本每一筆變更都會重讀整張
+ * 「應用狀態」工作表（授權時一次、寫入時再一次），授權過程還會各自重讀
+ * 「預約」「行程」「司機」「成員資格」等表。實測每張表 2000 列時，50 筆
+ * 變更會產生 132 次全表讀取、掃過 8 萬多列——而這整段期間都抓著全域鎖，
+ * 平台上其他人的登入會一起卡住。
+ *
+ * 這裡改成：整個請求只讀一次，所有變更套用在記憶體快照上，最後一次寫回。
+ * 因為全程持有 script lock，快照在請求期間不會被其他執行緒改動。
+ * ================================================================ */
+
+var APP_STATE_SNAPSHOT_ = null;
+var APP_STATE_TABLE_CACHE_ = null;
+
+/** 清掉快取。取得鎖之後呼叫，確保快照讀到的是最新資料。 */
+function appStateBeginRequest_() {
+  APP_STATE_SNAPSHOT_ = null;
+  APP_STATE_TABLE_CACHE_ = {};
+}
+
+/** 正規化工作表的每次執行快取。 */
+function appStateTable_(name) {
+  if (!APP_STATE_TABLE_CACHE_) APP_STATE_TABLE_CACHE_ = {};
+  if (!APP_STATE_TABLE_CACHE_[name]) APP_STATE_TABLE_CACHE_[name] = readTable_(name);
+  return APP_STATE_TABLE_CACHE_[name];
+}
+
+/** 走快取的有效成員資格查詢，避免每筆變更都重讀「成員資格」。 */
+function appStateMembershipsForUser_(userId) {
+  var target = appStateText_(userId);
+  return appStateTable_("成員資格").filter(function (m) {
+    return appStateText_(m["使用者ID"]) === target &&
+      String(m["狀態"] || "").toLowerCase() === "active";
+  });
+}
+
+function appStateSnapshotKey_(collection, id) {
+  return appStateText_(collection) + "|" + appStateText_(id);
+}
+
+/** 整張「應用狀態」讀進記憶體，並建立 (實體類型|實體ID) -> 列索引 對照。 */
+function appStateSnapshot_() {
+  if (APP_STATE_SNAPSHOT_) return APP_STATE_SNAPSHOT_;
+  var sheet = ensureAppStateSheet_();
+  var values = sheet.getDataRange().getValues();
+  var headers = (values[0] || []).map(appStateText_);
+  var typeIx = headers.indexOf("實體類型"), idIx = headers.indexOf("實體ID");
+  var index = {};
+  for (var r = 1; r < values.length; r++) {
+    index[appStateSnapshotKey_(values[r][typeIx], values[r][idIx])] = r;
+  }
+  APP_STATE_SNAPSHOT_ = {
+    sheet: sheet,
+    headers: headers,
+    values: values,
+    index: index,
+    originalRowCount: values.length,
+    dirtyMin: -1,
+    dirtyMax: -1
+  };
+  return APP_STATE_SNAPSHOT_;
+}
+
+function appStateRowObject_(snap, r) {
+  var o = {};
+  for (var i = 0; i < snap.headers.length; i++) o[snap.headers[i]] = snap.values[r][i];
+  return o;
+}
+
+function appStateExistingRows_() {
+  var snap = appStateSnapshot_(), out = [];
+  for (var r = 1; r < snap.values.length; r++) out.push(appStateRowObject_(snap, r));
+  return out;
+}
+
+function appStateFindRow_(collection, id) {
+  var snap = appStateSnapshot_();
+  var r = snap.index[appStateSnapshotKey_(collection, id)];
+  return r === undefined ? null : appStateRowObject_(snap, r);
+}
+
+function appStateFindEntity_(collection, id) {
+  var row = appStateFindRow_(collection, id);
+  if (row && String(row["已刪除"]).toLowerCase() !== "true") return appStateParseJson_(row["資料JSON"]);
+  return null;
+}
+
+/**
+ * 把整批變更寫回工作表：已存在的列以一次 setValues 覆寫其涵蓋範圍，
+ * 新增的列以一次 setValues 接在尾端。無論批次多大都只有兩次寫入呼叫。
+ */
+function appStateFlush_() {
+  var snap = APP_STATE_SNAPSHOT_;
+  if (!snap) return { updatedRows: 0, appendedRows: 0, writeCalls: 0 };
+  var cols = snap.headers.length, writeCalls = 0, updatedRows = 0;
+
+  var appendedRows = snap.values.length - snap.originalRowCount;
+  if (appendedRows > 0) {
+    var newRows = [];
+    for (var a = snap.originalRowCount; a < snap.values.length; a++) {
+      newRows.push(snap.values[a].slice(0, cols));
+    }
+    snap.sheet.getRange(snap.originalRowCount + 1, 1, appendedRows, cols).setValues(newRows);
+    writeCalls++;
+  }
+
+  if (snap.dirtyMin >= 0) {
+    updatedRows = snap.dirtyMax - snap.dirtyMin + 1;
+    var block = [];
+    for (var r = snap.dirtyMin; r <= snap.dirtyMax; r++) block.push(snap.values[r].slice(0, cols));
+    snap.sheet.getRange(snap.dirtyMin + 1, 1, updatedRows, cols).setValues(block);
+    writeCalls++;
+  }
+
+  snap.dirtyMin = -1;
+  snap.dirtyMax = -1;
+  snap.originalRowCount = snap.values.length;
+  return { updatedRows: updatedRows, appendedRows: appendedRows, writeCalls: writeCalls };
+}
+
 function appStateNormalizedTrip_(tripId){
-  var t=readTable_("行程").find(function(r){return appStateText_(r["行程ID"])===appStateText_(tripId);});if(!t)return null;
+  var t=appStateTable_("行程").find(function(r){return appStateText_(r["行程ID"])===appStateText_(tripId);});if(!t)return null;
   return {id:appStateText_(t["行程ID"]),organizationId:appStateText_(t["組織ID"]),driverId:appStateText_(t["司機ID"])};
 }
 function appStateNormalizedBooking_(bookingId){
-  var b=readTable_("預約").find(function(r){return appStateText_(r["預約ID"])===appStateText_(bookingId);});if(!b)return null;
+  var b=appStateTable_("預約").find(function(r){return appStateText_(r["預約ID"])===appStateText_(bookingId);});if(!b)return null;
   return {id:appStateText_(b["預約ID"]),organizationId:appStateText_(b["組織ID"]),requestedByUserId:appStateText_(b["預約者使用者ID"]),recipientId:appStateText_(b["服務對象ID"])};
 }
 function appStateTripForRecord_(record){var tid=appStateText_(record&&(record.tripId||record.relatedTripId));return tid?(appStateFindEntity_("trips",tid)||appStateNormalizedTrip_(tid)):null;}
@@ -82,7 +201,7 @@ function appStateNormalizedScope_(collection, id) {
   var meta = APP_STATE_NORMALIZED_SOURCE_[collection];
   if (!meta || !id) return null;
   if (!getSpreadsheet_().getSheetByName(meta.sheet)) return null;
-  var row = readTable_(meta.sheet).find(function (r) {
+  var row = appStateTable_(meta.sheet).find(function (r) {
     return appStateText_(r[meta.idHeader]) === id;
   });
   if (!row) return null;
@@ -173,7 +292,7 @@ function appStateDriverOwnsTrip_(ctx, scope) {
   if (!trip && scope.tripId) trip = appStateFindEntity_("trips", scope.tripId) || appStateNormalizedTrip_(scope.tripId);
   if (!trip) return false;
   var ownDriverIds = {};
-  readTable_("司機").forEach(function (d) {
+  appStateTable_("司機").forEach(function (d) {
     if (appStateText_(d["使用者ID"]) === ctx.userId) ownDriverIds[appStateText_(d["司機ID"])] = true;
   });
   return !!ownDriverIds[appStateText_(trip.driverId)];
@@ -187,7 +306,7 @@ function appStateDriverOwnsTrip_(ctx, scope) {
 function appStateRequesterOwnsRecipient_(ctx, recipientId) {
   var rid = appStateText_(recipientId);
   if (!rid) return false;
-  var relation = readTable_("服務對象聯絡人").find(function (r) {
+  var relation = appStateTable_("服務對象聯絡人").find(function (r) {
     return appStateText_(r["使用者ID"]) === ctx.userId &&
       appStateText_(r["服務對象ID"]) === rid &&
       String(r["狀態"] || "active").toLowerCase() !== "revoked";
@@ -235,7 +354,7 @@ function appStateAuthorizeMutation_(ctx, collection, id, record, existing, delet
   if (collection === "users") {
     var targetUserId = appStateText_(id);
     if (targetUserId === ctx.userId) ok = !deleted;
-    else ok = authMembershipsForUser_(targetUserId).some(function (m) {
+    else ok = appStateMembershipsForUser_(targetUserId).some(function (m) {
       return appStateText_(m["組織ID"]) && appStateRoleInOrg_(ctx, m["組織ID"], ["owner"]);
     });
 
@@ -324,7 +443,7 @@ function appStateResolveWriteScope_(collection,id,record,ctx,authorizedScope){
   return out;
 }
 
-function appStateNormalizedBookingRow_(bookingId){return readTable_("預約").find(function(r){return appStateText_(r["預約ID"])===appStateText_(bookingId);})||null;}
+function appStateNormalizedBookingRow_(bookingId){return appStateTable_("預約").find(function(r){return appStateText_(r["預約ID"])===appStateText_(bookingId);})||null;}
 function appStateValidateBookingVersion_(id,record,existing){
   if(!record||typeof record!=="object")return;
   var current=null;
@@ -359,8 +478,9 @@ function appStateValidateTripRevision_(id,record,existing,expectedRevision){
   return {duplicate:false,currentRevision:currentRevision};
 }
 function appStateUpsertRow_(collection,id,record,deleted,ctx,authorizedScope){
-  var sheet=ensureAppStateSheet_(),values=sheet.getDataRange().getValues(),headers=values[0].map(function(v){return appStateText_(v);}),typeIx=headers.indexOf("實體類型"),idIx=headers.indexOf("實體ID"),rowIndex=-1,existing=null;
-  for(var r=1;r<values.length;r++){if(appStateText_(values[r][typeIx])===collection&&appStateText_(values[r][idIx])===id){rowIndex=r+1;existing={};headers.forEach(function(h,i){existing[h]=values[r][i];});break;}}
+  var snap=appStateSnapshot_(),headers=snap.headers;
+  var key=appStateSnapshotKey_(collection,id),rowIndex=snap.index[key];
+  var existing=rowIndex===undefined?null:appStateRowObject_(snap,rowIndex);
   var scope=appStateResolveWriteScope_(collection,id,record,ctx,authorizedScope),version=Math.max(1,Number(existing&&existing["版本"]||0)+1),now=new Date().toISOString(),payloadRecord=appStateSanitizeRecord_(collection,record||{});
   if(collection==="bookings"&&record&&record.publicSanitized&&existing&&String(existing["已刪除"]).toLowerCase()!=="true"){
     var prior=appStateParseJson_(existing["資料JSON"]),safeKeys=["state","version","revisionNo","stateChangedAt","updatedAt","organizationId","claimStatus","claimedByUserId","claimedAt","status","tripId","marketExpiresAt","activeLegId","legs","cancellation","commercialSnapshots","activeCommercialSnapshotId"];
@@ -369,7 +489,16 @@ function appStateUpsertRow_(collection,id,record,deleted,ctx,authorizedScope){
   payloadRecord=appStateSanitizeRecord_(collection,payloadRecord);
   var obj={"實體類型":collection,"實體ID":id,"組織ID":scope.organizationId,"擁有者使用者ID":scope.ownerUserId,"關聯行程ID":scope.tripId,"關聯預約ID":scope.bookingId,"資料JSON":deleted?"":JSON.stringify(payloadRecord),"已刪除":!!deleted,"版本":version,"更新時間":now,"更新者使用者ID":ctx.userId};
   var row=headers.map(function(h){return obj[h]!==undefined?obj[h]:"";});
-  if(rowIndex>0)sheet.getRange(rowIndex,1,1,headers.length).setValues([row]);else sheet.appendRow(row);
+  if(rowIndex===undefined){
+    // 新列先放進快照尾端，flush 時整批一次接到工作表後面。
+    snap.values.push(row);snap.index[key]=snap.values.length-1;
+  }else{
+    snap.values[rowIndex]=row;
+    if(rowIndex<snap.originalRowCount){
+      if(snap.dirtyMin<0||rowIndex<snap.dirtyMin)snap.dirtyMin=rowIndex;
+      if(rowIndex>snap.dirtyMax)snap.dirtyMax=rowIndex;
+    }
+  }
   return obj;
 }
 function mutateAppState_(body,req){
@@ -377,7 +506,13 @@ function mutateAppState_(body,req){
   if(!changes.length)throw authError_("VALIDATION_ERROR","沒有可儲存的資料異動");if(changes.length>200)throw authError_("VALIDATION_ERROR","單次異動最多 200 筆");
   var lock=LockService.getScriptLock();lock.waitLock(20000);
   try{
-    var results=[],prepared=[];
+    // 取得鎖之後才建立快照，確保讀到的是最新資料。
+    appStateBeginRequest_();
+    var results=[];
+    // 驗證、授權與套用在同一個迴圈完成：同一批次中對同一筆資料的第二次變更
+    // 因此看得到第一次的結果（舊版分兩段跑，版本檢查會被同批次的前一筆繞過）。
+    // 所有變更只寫進記憶體快照，全部成功後才一次寫回工作表——任何一筆丟出
+    // 例外就整批不落地，不會留下寫到一半的資料。
     changes.forEach(function(change){
       var collection=appStateText_(change.collection),rawRecord=change.record&&typeof change.record==="object"?change.record:{},record=appStateSanitizeRecord_(collection,rawRecord),id=appStateText_(change.id||appStateRecordId_(record)),deleted=change.deleted===true;
       if(APP_STATE_COLLECTIONS_.indexOf(collection)<0)throw authError_("COLLECTION_FORBIDDEN","不允許寫入此資料集合："+collection);
@@ -385,14 +520,19 @@ function mutateAppState_(body,req){
       var existing=appStateFindRow_(collection,id),tripGuard={duplicate:false};
       if(collection==="bookings"&&!deleted)appStateValidateBookingVersion_(id,record,existing);
       if(collection==="trips"&&!deleted)tripGuard=appStateValidateTripRevision_(id,record,existing,change.expectedRevision);
-      var authorizedScope=appStateAuthorizeMutation_(ctx,collection,id,record,existing,deleted);
-      prepared.push({collection:collection,id:id,record:record,deleted:deleted,duplicate:tripGuard.duplicate===true,existing:existing,scope:authorizedScope});
+      var scope=appStateAuthorizeMutation_(ctx,collection,id,record,existing,deleted);
+      if(tripGuard.duplicate===true){
+        results.push({collection:collection,id:id,deleted:false,duplicate:true,version:Number(existing&&existing["版本"]||0),updatedAt:existing&&existing["更新時間"]||""});
+        return;
+      }
+      var saved=appStateUpsertRow_(collection,id,record,deleted,ctx,scope);
+      results.push({collection:collection,id:id,deleted:deleted,version:saved["版本"],updatedAt:saved["更新時間"]});
     });
-    prepared.forEach(function(change){
-      if(change.duplicate){results.push({collection:change.collection,id:change.id,deleted:false,duplicate:true,version:Number(change.existing&&change.existing["版本"]||0),updatedAt:change.existing&&change.existing["更新時間"]||""});return;}
-      var saved=appStateUpsertRow_(change.collection,change.id,change.record,change.deleted,ctx,change.scope);results.push({collection:change.collection,id:change.id,deleted:change.deleted,version:saved["版本"],updatedAt:saved["更新時間"]});
-    });
-    try{writeAudit_({eventType:"state.batch_mutated",actorUserId:ctx.userId,organizationId:"",entityType:"app_state",entityId:"batch",reasonCode:"AUTHORITATIVE_WRITE",details:{requestId:req&&req.requestId||"",count:results.length}});}catch(_){}
+    var flushed=appStateFlush_();
+    try{writeAudit_({eventType:"state.batch_mutated",actorUserId:ctx.userId,organizationId:"",entityType:"app_state",entityId:"batch",reasonCode:"AUTHORITATIVE_WRITE",details:{requestId:req&&req.requestId||"",count:results.length,writeCalls:flushed.writeCalls}});}catch(auditError){authRecordAuditFailure_("state.batch_mutated",auditError);}
     return {ok:true,results:results,count:results.length};
-  }finally{lock.releaseLock();}
+  }finally{
+    lock.releaseLock();
+    appStateBeginRequest_();
+  }
 }

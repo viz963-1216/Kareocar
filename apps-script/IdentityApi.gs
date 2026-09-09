@@ -29,7 +29,7 @@ function registerRequesterFromWeb_(body,req){
       authSetPasswordCredential_(userId,password);credentialCreated=true;
       identityAppendObjectRow_("成員資格",{"成員資格ID":membershipId,"使用者ID":userId,"組織ID":REQUESTER_ORGANIZATION_ID_,"角色":"requester","狀態":"active","建立時間":now,"更新時間":now,"撤銷時間":"","撤銷者使用者ID":""});
     }catch(e){if(credentialCreated)authDeletePasswordCredential_(userId);if(userCreated)identityDeleteRowByKey_("使用者","使用者ID",userId);throw e;}
-    try{writeAudit_({eventType:"identity.requester_registered",actorUserId:userId,organizationId:REQUESTER_ORGANIZATION_ID_,entityType:"user",entityId:userId,reasonCode:"SELF_REGISTRATION",details:{requestId:req&&req.requestId?req.requestId:"",membershipId:membershipId,email:email}});}catch(_){}
+    try{writeAudit_({eventType:"identity.requester_registered",actorUserId:userId,organizationId:REQUESTER_ORGANIZATION_ID_,entityType:"user",entityId:userId,reasonCode:"SELF_REGISTRATION",details:{requestId:req&&req.requestId?req.requestId:"",membershipId:membershipId,email:email}});}catch(auditError){authRecordAuditFailure_("identity.requester_registered",auditError);}
     var user={"使用者ID":userId,"顯示名稱":name,"手機號碼(E.164)":phoneE164,"電子郵件":email,"平台角色":"none"};
     var membership={"成員資格ID":membershipId,"使用者ID":userId,"組織ID":REQUESTER_ORGANIZATION_ID_,"角色":"requester","狀態":"active"};
     return {user:authPublicUser_(user),membership:authPublicMembership_(membership),memberships:[authPublicMembership_(membership)],sessionToken:authIssueSessionToken_(userId)};
@@ -39,8 +39,9 @@ function registerRequesterFromWeb_(body,req){
 function passwordLogin_(body,req){
   body=body||{};var phone=String(body.phone||"").replace(/\D/g,""),password=String(body.password||"");
   if(!/^09\d{8}$/.test(phone)||!password)throw authError_("INVALID_CREDENTIALS","帳號或密碼錯誤");
-  var lock=LockService.getScriptLock();lock.waitLock(10000);
-  try{
+  // 密碼驗證是刻意設計成慢的（迭代雜湊）。這裡不再抓全域鎖，否則每一次登入
+  // 都會讓平台上所有其他寫入排隊等待；速率狀態改由 AuthCore 內部的短鎖保護。
+  {
     var sourceIp=identityRequestSourceIp_(req);
     authAssertLoginAllowed_(phone,sourceIp);
     var user=readTable_("使用者").find(function(u){return normalizeTaiwanPhoneForIdentity_(u["手機號碼(E.164)"])===phone;});
@@ -54,9 +55,9 @@ function passwordLogin_(body,req){
     authClearLoginRate_(phone);
     var userId=String(user["使用者ID"]),memberships=authMembershipsForUser_(userId);
     if(String(user["平台角色"]||"").trim().toLowerCase()!=="super_admin"&&!memberships.length)throw authError_("NO_ACTIVE_IDENTITY","此帳號目前沒有有效身分，請聯絡平台管理者");
-    try{writeAudit_({eventType:"auth.password.login",actorUserId:userId,organizationId:memberships.length?memberships[0]["組織ID"]:"",entityType:"user",entityId:userId,reasonCode:"PASSWORD_LOGIN",details:{requestId:req&&req.requestId?req.requestId:""}});}catch(_){}
+    try{writeAudit_({eventType:"auth.password.login",actorUserId:userId,organizationId:memberships.length?memberships[0]["組織ID"]:"",entityType:"user",entityId:userId,reasonCode:"PASSWORD_LOGIN",details:{requestId:req&&req.requestId?req.requestId:""}});}catch(auditError){authRecordAuditFailure_("auth.password.login",auditError);}
     return {user:authPublicUser_(user),memberships:memberships.map(authPublicMembership_),sessionToken:authIssueSessionToken_(userId)};
-  }finally{lock.releaseLock();}
+  }
 }
 
 function completeSocialProfileFromWeb_(body,req){
@@ -97,7 +98,7 @@ function createStaffFromWeb_(body,req){
         identityAppendObjectRow_("成員資格",{"成員資格ID":identityNewId_("MEM-REQ"),"使用者ID":userId,"組織ID":REQUESTER_ORGANIZATION_ID_,"角色":"requester","狀態":"active","建立時間":now,"更新時間":now,"撤銷時間":"","撤銷者使用者ID":""});
       }
     }catch(e){identityDeleteRowByKey_("成員資格","成員資格ID",membershipId);if(createdUser){if(credentialCreated)authDeletePasswordCredential_(userId);identityDeleteRowByKey_("使用者","使用者ID",userId);}throw e;}
-    try{writeAudit_({eventType:"identity.staff_created",actorUserId:auth.actorId,organizationId:organizationId,entityType:"membership",entityId:membershipId,reasonCode:"STAFF_CREATE",details:{requestId:req&&req.requestId?req.requestId:"",targetUserId:userId,role:role,createdUser:createdUser,alsoRequester:alsoRequester}});}catch(_){}
+    try{writeAudit_({eventType:"identity.staff_created",actorUserId:auth.actorId,organizationId:organizationId,entityType:"membership",entityId:membershipId,reasonCode:"STAFF_CREATE",details:{requestId:req&&req.requestId?req.requestId:"",targetUserId:userId,role:role,createdUser:createdUser,alsoRequester:alsoRequester}});}catch(auditError){authRecordAuditFailure_("identity.staff_created",auditError);}
     var membership={"成員資格ID":membershipId,"使用者ID":userId,"組織ID":organizationId,"角色":role,"狀態":"active"};
     return {user:authPublicUser_(user),membership:authPublicMembership_(membership),createdUser:createdUser,reusedUser:!createdUser};
   }finally{lock.releaseLock();}
@@ -109,12 +110,13 @@ function requestPasswordResetFromWeb_(body,req){
   var user=readTable_("使用者").find(function(u){return normalizeTaiwanPhoneForIdentity_(u["手機號碼(E.164)"])===phone&&authIsEnabled_(u["啟用狀態"]);});
   // Avoid account enumeration: unknown phones receive the same generic response without creating a challenge.
   if(!user)return {requested:true,expiresInSeconds:AUTH_RESET_TTL_SECONDS_};
-  var lock=LockService.getScriptLock();lock.waitLock(10000);
-  try{
+  // 這支會呼叫外部簡訊服務，可能耗時數秒；不抓全域鎖，避免簡訊商變慢時
+  // 整個平台的登入與寫入一起被卡住。節流狀態在 AuthCore 內以短鎖保護。
+  {
     var challenge=authCreatePasswordResetChallenge_(String(user["使用者ID"]),phone);
-    try{writeAudit_({eventType:"auth.password.reset_requested",actorUserId:String(user["使用者ID"]),organizationId:"",entityType:"user",entityId:String(user["使用者ID"]),reasonCode:"PASSWORD_RESET_REQUEST",details:{requestId:req&&req.requestId?req.requestId:""}});}catch(_){}
+    try{writeAudit_({eventType:"auth.password.reset_requested",actorUserId:String(user["使用者ID"]),organizationId:"",entityType:"user",entityId:String(user["使用者ID"]),reasonCode:"PASSWORD_RESET_REQUEST",details:{requestId:req&&req.requestId?req.requestId:""}});}catch(auditError){authRecordAuditFailure_("auth.password.reset_requested",auditError);}
     return {requested:true,expiresInSeconds:challenge.expiresInSeconds};
-  }finally{lock.releaseLock();}
+  }
 }
 
 function confirmPasswordResetFromWeb_(body,req){
@@ -127,7 +129,7 @@ function confirmPasswordResetFromWeb_(body,req){
     var verified=authVerifyPasswordResetChallenge_(phone,code);if(String(verified.state.userId)!==String(user["使用者ID"]))throw authError_("RESET_CODE_INVALID","驗證碼無效或已失效");
     var userId=String(user["使用者ID"]);authSetPasswordCredential_(userId,newPassword);authBumpSessionVersion_(userId);authClearLoginRate_(phone);PropertiesService.getScriptProperties().deleteProperty(verified.key);
     authUpdateObjectRowByKey_("使用者","使用者ID",userId,{"更新時間":new Date().toISOString()});
-    try{writeAudit_({eventType:"auth.password.reset_completed",actorUserId:userId,organizationId:"",entityType:"user",entityId:userId,reasonCode:"PASSWORD_RESET_OTP",details:{requestId:req&&req.requestId?req.requestId:""}});}catch(_){}
+    try{writeAudit_({eventType:"auth.password.reset_completed",actorUserId:userId,organizationId:"",entityType:"user",entityId:userId,reasonCode:"PASSWORD_RESET_OTP",details:{requestId:req&&req.requestId?req.requestId:""}});}catch(auditError){authRecordAuditFailure_("auth.password.reset_completed",auditError);}
     return {reset:true,user:authPublicUser_(user)};
   }finally{lock.releaseLock();}
 }
@@ -153,7 +155,7 @@ function updateCurrentIdentityAccountFromWeb_(body,req){
     if(newPassword)authSetPasswordCredential_(userId,newPassword);
     if(newPassword||phoneChanged)authBumpSessionVersion_(userId);
     authClearLoginRate_(oldPhone);authClearLoginRate_(phone);
-    try{writeAudit_({eventType:"identity.account_updated",actorUserId:userId,organizationId:"",entityType:"user",entityId:userId,reasonCode:newPassword?"PROFILE_AND_PASSWORD_UPDATE":"PROFILE_UPDATE",details:{requestId:req&&req.requestId?req.requestId:"",phoneChanged:oldPhone!==phone,passwordChanged:!!newPassword}});}catch(_){}
+    try{writeAudit_({eventType:"identity.account_updated",actorUserId:userId,organizationId:"",entityType:"user",entityId:userId,reasonCode:newPassword?"PROFILE_AND_PASSWORD_UPDATE":"PROFILE_UPDATE",details:{requestId:req&&req.requestId?req.requestId:"",phoneChanged:oldPhone!==phone,passwordChanged:!!newPassword}});}catch(auditError){authRecordAuditFailure_("identity.account_updated",auditError);}
     return {user:authPublicUser_(user),memberships:authMembershipsForUser_(userId).map(authPublicMembership_),sessionToken:authIssueSessionToken_(userId),passwordChanged:!!newPassword};
   }finally{lock.releaseLock();}
 }

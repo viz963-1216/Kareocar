@@ -307,6 +307,20 @@ function authOpaqueIpKey_(ip) { return authOpaqueKey_("ip:" + String(ip || ""));
 function authLoginRateKey_(phone) { return AUTH_LOGIN_RATE_PREFIX_ + authOpaquePhoneKey_(phone); }
 function authLoginIpRateKey_(ip) { return AUTH_LOGIN_IP_RATE_PREFIX_ + authOpaqueIpKey_(ip); }
 
+/**
+ * 只用來包住 read-modify-write 那幾毫秒的短鎖。
+ *
+ * Apps Script 的 LockService 只有 script / document / user 三種鎖，沒有辦法
+ * 依組織分割，所以能做的是把鎖的「持有時間」壓到最短，而不是把鎖切細。
+ * 取不到鎖時仍然執行：寧可偶爾少算一次失敗次數，也不要因為鎖競爭就拒絕
+ * 服務——真正的防線是後面的 IP 維度限制。
+ */
+function authWithShortLock_(fn) {
+  var lock = null;
+  try { lock = LockService.getScriptLock(); lock.waitLock(3000); } catch (_) { lock = null; }
+  try { return fn(); } finally { if (lock) { try { lock.releaseLock(); } catch (_) {} } }
+}
+
 function authReadJsonProperty_(key) {
   var raw = PropertiesService.getScriptProperties().getProperty(key);
   if (!raw) return null;
@@ -369,6 +383,10 @@ function authLockSecondsForFailures_(failures) {
 }
 
 function authRecordLoginFailure_(phone, sourceIp) {
+  return authWithShortLock_(function () { return authRecordLoginFailureUnlocked_(phone, sourceIp); });
+}
+
+function authRecordLoginFailureUnlocked_(phone, sourceIp) {
   var x = authLoginRateState_(phone), state = x.state;
   state.failures = Math.max(0, Number(state.failures) || 0) + 1;
   state.lastFailureAt = x.now;
@@ -463,6 +481,8 @@ function authSendPasswordResetSms_(phone, code) {
 }
 
 function authCreatePasswordResetChallenge_(userId, phone) {
+  // 節流狀態的 read-modify-write 用短鎖保護；實際的簡訊發送（UrlFetch，可能
+  // 要好幾秒）刻意留在鎖外面，避免簡訊商變慢時把整個平台一起卡住。
   /* An unexpired challenge is reused rather than re-sent, so repeated taps on
    * "resend" cost neither an SMS nor an error message — the user is simply
    * told how long the code they already have is still valid. Checked before
@@ -472,7 +492,7 @@ function authCreatePasswordResetChallenge_(userId, phone) {
     return { expiresInSeconds: active.expiresInSeconds, resent: false };
   }
 
-  var rateCtx = authAssertResetRequestAllowed_(phone);
+  var rateCtx = authWithShortLock_(function () { return authAssertResetRequestAllowed_(phone); });
   var code = authSecureOtpCode_();
   var now = Math.floor(Date.now() / 1000);
   var salt = authRandomHex_(16);
@@ -495,7 +515,7 @@ function authCreatePasswordResetChallenge_(userId, phone) {
     PropertiesService.getScriptProperties().deleteProperty(authResetChallengeKey_(phone));
     throw e;
   }
-  authRecordResetRequestSent_(rateCtx);
+  authWithShortLock_(function () { authRecordResetRequestSent_(rateCtx); });
   return { expiresInSeconds: AUTH_RESET_TTL_SECONDS_, resent: true };
 }
 
@@ -523,6 +543,47 @@ function authVerifyPasswordResetChallenge_(phone, code) {
     throw authError_("RESET_CODE_INVALID", "驗證碼錯誤");
   }
   return { key: key, state: state };
+}
+
+/* ------------------------------------------------------------ 稽核可靠度 */
+
+var AUTH_AUDIT_FAILURE_KEY_ = "AUDIT_WRITE_FAILURES";
+
+/**
+ * 稽核寫入刻意不擋主流程，但也不該無聲無息地壞掉——長照平台事後查不到
+ * 「誰在什麼時候存取了誰的資料」在法遵上是站不住的。這裡累計失敗次數並
+ * 寫入 Logger，healthCheck_ 會把數字暴露出來，讓稽核斷線可被監控發現。
+ */
+function authRecordAuditFailure_(context, error) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var state = null;
+    try { state = JSON.parse(props.getProperty(AUTH_AUDIT_FAILURE_KEY_) || "null"); } catch (_) { state = null; }
+    if (!state) state = { count: 0, firstAt: "", lastAt: "", lastContext: "" };
+    state.count = Number(state.count || 0) + 1;
+    var now = new Date().toISOString();
+    if (!state.firstAt) state.firstAt = now;
+    state.lastAt = now;
+    state.lastContext = String(context || "").substring(0, 80);
+    props.setProperty(AUTH_AUDIT_FAILURE_KEY_, JSON.stringify(state));
+  } catch (_) { /* 連記錄失敗都失敗時就不再往外丟 */ }
+  try {
+    Logger.log("[audit-failure] %s: %s", String(context || ""),
+      String(error && error.message || error));
+  } catch (_) {}
+}
+
+function authAuditFailureState_() {
+  try {
+    var raw = PropertiesService.getScriptProperties().getProperty(AUTH_AUDIT_FAILURE_KEY_);
+    return raw ? (JSON.parse(raw) || { count: 0 }) : { count: 0 };
+  } catch (_) { return { count: 0 }; }
+}
+
+/** 稽核恢復正常後，在編輯器手動執行以清除計數。 */
+function authClearAuditFailures_() {
+  PropertiesService.getScriptProperties().deleteProperty(AUTH_AUDIT_FAILURE_KEY_);
+  return { cleared: true };
 }
 
 /* ------------------------------------------------------------------ identities */

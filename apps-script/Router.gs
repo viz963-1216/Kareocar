@@ -24,5 +24,5 @@ function routeRequest_(method,req){
 }
 function healthCheck_(){
   var ss=getSpreadsheet_(),appStateReady=false;try{appStateReady=!!ensureAppStateSheet_();}catch(_){}
-  return {status:"ok",time:new Date().toISOString(),spreadsheetReady:!!ss,appStateReady:appStateReady,rowAuthorizationVersion:"12.25.79",passwordResetProviderConfigured:!!PropertiesService.getScriptProperties().getProperty("PASSWORD_RESET_SMS_WEBHOOK_URL")&&!!PropertiesService.getScriptProperties().getProperty("PASSWORD_RESET_SMS_WEBHOOK_SECRET"),authConfigured:!!PropertiesService.getScriptProperties().getProperty("AUTH_SESSION_SECRET")&&!!PropertiesService.getScriptProperties().getProperty("AUTH_PASSWORD_PEPPER")};
+  return {status:"ok",time:new Date().toISOString(),spreadsheetReady:!!ss,appStateReady:appStateReady,rowAuthorizationVersion:"12.25.79",passwordResetProviderConfigured:!!PropertiesService.getScriptProperties().getProperty("PASSWORD_RESET_SMS_WEBHOOK_URL")&&!!PropertiesService.getScriptProperties().getProperty("PASSWORD_RESET_SMS_WEBHOOK_SECRET"),authConfigured:!!PropertiesService.getScriptProperties().getProperty("AUTH_SESSION_SECRET")&&!!PropertiesService.getScriptProperties().getProperty("AUTH_PASSWORD_PEPPER"),auditWriteFailures:authAuditFailureState_()};
 }
