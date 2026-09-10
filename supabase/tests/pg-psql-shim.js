@@ -90,12 +90,18 @@ class PsqlClient {
   async query(sql, params) {
     await this.ready;
     const text = inlineParams(String(sql).trim().replace(/;\s*$/, ''), params);
-    const returnsRows = /^\s*(select|with|insert[\s\S]*returning|update[\s\S]*returning|delete[\s\S]*returning)\b/i.test(text);
-    if (!returnsRows) {
+    const isRead = /^\s*(select|with)\b/i.test(text);
+    // INSERT / UPDATE / DELETE ... RETURNING 不能塞進 FROM 的子查詢裡（Postgres 不允許
+    // 資料異動語句出現在那個位置），必須用 CTE 包起來。之前一律用子查詢，所以
+    // 任何帶 RETURNING 的寫入在測試裡都會變成 syntax error，看起來像是 SQL 寫錯。
+    const isWriteReturning = /^\s*(insert|update|delete)\b/i.test(text) && /\breturning\b/i.test(text);
+    if (!isRead && !isWriteReturning) {
       await this._send(`${text};`);
       return { rows: [], rowCount: 0 };
     }
-    const out = await this._send(`select coalesce(json_agg(__t), '[]'::json)::text from (${text}) __t;`);
+    const out = await this._send(isWriteReturning
+      ? `with __w as (${text}) select coalesce(json_agg(__t), '[]'::json)::text from __w __t;`
+      : `select coalesce(json_agg(__t), '[]'::json)::text from (${text}) __t;`);
     let rows = [];
     try { rows = JSON.parse(out || '[]'); } catch (_) { rows = []; }
     return { rows, rowCount: rows.length };

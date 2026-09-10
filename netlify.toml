@@ -111,3 +111,8 @@
   from = "/api/v2/update-account"
   to = "/.netlify/functions/v2-update-account"
   status = 200
+
+[[redirects]]
+  from = "/api/v2/state-mutate"
+  to = "/.netlify/functions/v2-state-mutate"
+  status = 200
