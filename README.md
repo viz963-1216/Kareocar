@@ -34,6 +34,14 @@ bash tools/checksums.sh          # 重新產生 SHA256SUMS.txt
 
 `tests/` 用一個小型的 Apps Script 模擬層（`tests/shim.js`、`tests/sheets.js`）在 Node 上執行 `.gs` 檔，因此授權與密碼邏輯可以在部署前就驗證。
 
+## 資料庫遷移（進行中）
+
+`supabase/` 下是 Postgres 版的 schema 與 RLS 政策，已通過 31 項驗證測試（含攻擊模擬）。
+目前**尚未接線**——執行中的系統仍走 Apps Script + Google Sheets。
+
+套用步驟與注意事項見 [supabase/README.md](supabase/README.md)。最重要的一點：
+Netlify Function 必須用 `care_ride_app` 角色連線，用 `postgres` 會繞過全部 RLS 政策。
+
 ## 部署
 
 見 [DEPLOYMENT.md](DEPLOYMENT.md)。Apps Script 與 Netlify 必須整包一起更新，只換 `index.html` 會造成前後端契約不一致。

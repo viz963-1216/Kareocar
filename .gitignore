@@ -6,3 +6,8 @@ node_modules/
 .DS_Store
 Thumbs.db
 *.log
+
+# 資料庫連線字串與本機測試資料
+.env.local
+supabase/.temp/
+*.pgpass
