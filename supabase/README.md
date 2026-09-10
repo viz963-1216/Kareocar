@@ -34,13 +34,28 @@ alter role care_ride_app with password '換成你自己產生的長密碼';
 
 **2. 連線字串要用這個角色**
 
-到 Supabase 的 Connect 頁面拿連線字串，然後**把使用者名稱從 `postgres` 換成 `care_ride_app`**，密碼換成上面設的：
+在 Supabase 主控台上方點 **Connect**，選 **Transaction pooler**（port 6543，適合
+Netlify Function 這種短生命週期的連線）。它給你的字串長這樣：
 
 ```
-postgresql://care_ride_app:<密碼>@<你的專案>.pooler.supabase.com:6543/postgres
+postgresql://postgres.abcdefghijklmnop:[YOUR-PASSWORD]@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres
+                     ~~~~~~~~~~~~~~~~
+                     這串是你的 project ref
 ```
+
+⚠️ **pooler 的使用者名稱是「角色.專案ref」的形式**，所以要換的是前半段：
+
+```
+postgresql://care_ride_app.abcdefghijklmnop:<你設的密碼>@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres
+             ~~~~~~~~~~~~~ 只換這裡        ~~~~~~~~~~~~ 專案 ref 保持原樣
+```
+
+密碼裡若含 `@ : / ?` 等字元要做 URL encode，否則字串會被解析錯。
 
 放進 Netlify 的環境變數 `DATABASE_URL`。不要寫進任何檔案，不要進 git。
+
+`_db.js` 啟動時會檢查角色名稱，`postgres` 與 `supabase_admin`（含帶 project ref 的
+形式）都會被拒絕。
 
 ## ⚠️ 為什麼一定要換掉 postgres
 
