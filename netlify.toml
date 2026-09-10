@@ -81,3 +81,8 @@
   from = "/api/v2/bootstrap-admin"
   to = "/.netlify/functions/v2-bootstrap-admin"
   status = 200
+
+[[redirects]]
+  from = "/api/v2/session"
+  to = "/.netlify/functions/v2-session"
+  status = 200
