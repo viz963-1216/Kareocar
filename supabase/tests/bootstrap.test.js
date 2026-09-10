@@ -7,8 +7,11 @@ Module._resolveFilename = function (request, ...rest) {
   return origResolve.call(this, request, ...rest);
 };
 
-const FN = path.join(__dirname, '..', 'fn');
-process.env.DATABASE_URL = 'postgresql://care_ride_app@%2Ftmp%2Fpgv%2Frun:5455/careride';
+const FN = path.join(__dirname, '..', '..', 'netlify', 'functions');
+const PGHOST = process.env.PGHOST || '/tmp/pgrun';
+const PGPORT = process.env.PGPORT || '5433';
+const PGDATABASE = process.env.PGDATABASE || 'careride';
+process.env.DATABASE_URL = `postgresql://care_ride_app@${encodeURIComponent(PGHOST)}:${PGPORT}/${PGDATABASE}`;
 process.env.AUTH_SESSION_SECRET = 'test-session-secret-0123456789abcdef';
 process.env.AUTH_PASSWORD_PEPPER = 'test-pepper-0123456789abcdefghijkl';
 process.env.AUTH_PBKDF2_ITERATIONS = '1000';
@@ -25,7 +28,7 @@ const call = (mod, body) => mod.handler({ httpMethod: 'POST', body: JSON.stringi
 const parse = (res) => ({ status: res.statusCode, ...JSON.parse(res.body) });
 
 const TOKEN = 'one-time-bootstrap-token-abc123';
-const PHONE = '0912345678';
+const PHONE = '0912000009';
 const PW = 'SuperAdminPass2026!';
 
 (async () => {
@@ -68,7 +71,7 @@ const PW = 'SuperAdminPass2026!';
   console.log('--- 正常初始化 ---');
   await t('成功設定超級管理者密碼', async () => {
     const r = parse(await call(boot, { token: TOKEN, phone: PHONE, password: PW }));
-    return r.ok === true && r.data.userId === 'USR-ROOT-0001';
+    return r.ok === true && r.data.userId === 'USR-ROOT';
   });
   await t('回應不含密碼相關欄位', async () => {
     const res = await call(boot, { token: TOKEN, phone: PHONE, password: PW });

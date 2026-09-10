@@ -17,7 +17,10 @@ Module._resolveFilename = function (request, ...rest) {
 };
 
 const FN = path.join(__dirname, '..', '..', 'netlify', 'functions');
-process.env.DATABASE_URL = 'postgresql://care_ride_app@%2Ftmp%2Fpgrun:5433/careride';
+const PGHOST = process.env.PGHOST || '/tmp/pgrun';
+const PGPORT = process.env.PGPORT || '5433';
+const PGDATABASE = process.env.PGDATABASE || 'careride';
+process.env.DATABASE_URL = `postgresql://care_ride_app@${encodeURIComponent(PGHOST)}:${PGPORT}/${PGDATABASE}`;
 process.env.AUTH_SESSION_SECRET = 'test-session-secret-0123456789abcdef';
 process.env.AUTH_PASSWORD_PEPPER = 'test-pepper-0123456789abcdefghijkl';
 process.env.AUTH_PBKDF2_ITERATIONS = '1000';
@@ -101,12 +104,10 @@ const parse = (res) => ({ status: res.statusCode, ...JSON.parse(res.body) });
     return true;
   });
   await t('速率限制表裡沒有明文手機號碼（以 owner 身分檢查）', () => {
-    const out = execFileSync('psql', ['-h', '/tmp/pgrun', '-p', '5433', '-U', 'postgres',
-      '-d', 'careride', '-tAc',
+    const out = execFileSync('psql', ['-h', PGHOST, '-p', PGPORT, '-U', 'postgres', '-d', PGDATABASE, '-tAc',
       "select count(*) from auth_rate_limits where key like '%0912000005%' or state::text like '%0912000005%'"
     ]).toString().trim();
-    const total = execFileSync('psql', ['-h', '/tmp/pgrun', '-p', '5433', '-U', 'postgres',
-      '-d', 'careride', '-tAc', 'select count(*) from auth_rate_limits']).toString().trim();
+    const total = execFileSync('psql', ['-h', PGHOST, '-p', PGPORT, '-U', 'postgres', '-d', PGDATABASE, '-tAc', 'select count(*) from auth_rate_limits']).toString().trim();
     return out === '0' && Number(total) > 0;
   });
 

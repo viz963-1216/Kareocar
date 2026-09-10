@@ -86,3 +86,28 @@
   from = "/api/v2/session"
   to = "/.netlify/functions/v2-session"
   status = 200
+
+[[redirects]]
+  from = "/api/v2/register-requester"
+  to = "/.netlify/functions/v2-register-requester"
+  status = 200
+
+[[redirects]]
+  from = "/api/v2/request-password-reset"
+  to = "/.netlify/functions/v2-request-password-reset"
+  status = 200
+
+[[redirects]]
+  from = "/api/v2/confirm-password-reset"
+  to = "/.netlify/functions/v2-confirm-password-reset"
+  status = 200
+
+[[redirects]]
+  from = "/api/v2/create-staff"
+  to = "/.netlify/functions/v2-create-staff"
+  status = 200
+
+[[redirects]]
+  from = "/api/v2/update-account"
+  to = "/.netlify/functions/v2-update-account"
+  status = 200

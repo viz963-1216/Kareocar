@@ -94,6 +94,11 @@ function handleError(error) {
     : code === 'CURRENT_PASSWORD_REQUIRED' ? 400
     : code === 'RESET_PROVIDER_UNAVAILABLE' ? 503
     : code === 'CONFIG_MISSING' || code === 'CONFIG_INVALID' ? 503
+    // 「找不到」與「沒有權限」不是伺服器故障。漏掉這幾個會掉進最後的 502，
+    // 前端就會顯示「後端服務錯誤」，而實際上只是這個人看不到那個組織。
+    : code === 'ORG_NOT_FOUND' || code === 'USER_NOT_FOUND' || code === 'NOT_FOUND' ? 404
+    : code === 'NO_ACTIVE_IDENTITY' ? 403
+    : code === 'IDENTITY_CONFLICT' ? 409
     : 502;
   return json(userStatus, { ok: false, error: { code, message: error?.message || '服務暫時無法使用' } });
 }

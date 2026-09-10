@@ -7,8 +7,11 @@ Module._resolveFilename = function (request, ...rest) {
   return origResolve.call(this, request, ...rest);
 };
 
-const FN = path.join(__dirname, '..', 'fn');
-process.env.DATABASE_URL = 'postgresql://care_ride_app@%2Ftmp%2Fpgv%2Frun:5455/careride';
+const FN = path.join(__dirname, '..', '..', 'netlify', 'functions');
+const PGHOST = process.env.PGHOST || '/tmp/pgrun';
+const PGPORT = process.env.PGPORT || '5433';
+const PGDATABASE = process.env.PGDATABASE || 'careride';
+process.env.DATABASE_URL = `postgresql://care_ride_app@${encodeURIComponent(PGHOST)}:${PGPORT}/${PGDATABASE}`;
 process.env.AUTH_SESSION_SECRET = 'test-session-secret-0123456789abcdef';
 process.env.AUTH_PASSWORD_PEPPER = 'test-pepper-0123456789abcdefghijkl';
 process.env.AUTH_PBKDF2_ITERATIONS = '1000';
@@ -29,8 +32,8 @@ const doLogin = async (phone, password, ip) => parse(await login.handler({ httpM
 const resume = (body, headers) => session.handler({ httpMethod: 'POST',
   body: JSON.stringify(body || {}), headers: headers || {} });
 
-const ADMIN_PHONE = '0912345678', ADMIN_PW = 'SuperAdminPass2026!';
-const DISP_PHONE = '0922333444', DISP_PW = 'DispatcherPass2026!';
+const ADMIN_PHONE = '0912000009', ADMIN_PW = 'SuperAdminPass2026!';
+const DISP_PHONE = '0912000003', DISP_PW = 'DispatcherPass2026!';
 
 (async () => {
   await withoutUser((c) => auth.setPasswordCredential(c, 'USR-DISP1', DISP_PW));
@@ -46,7 +49,7 @@ const DISP_PHONE = '0922333444', DISP_PW = 'DispatcherPass2026!';
   });
   await t('resume 回傳同一個身分', async () => {
     const r = parse(await resume({ sessionToken: adminToken }));
-    return r.ok === true && r.data.user.userId === 'USR-ROOT-0001'
+    return r.ok === true && r.data.user.userId === 'USR-ROOT'
       && r.data.user.platformRole === 'super_admin';
   });
   await t('手機號碼回成 09 格式（與登入端點一致）', async () => {
@@ -63,7 +66,7 @@ const DISP_PHONE = '0922333444', DISP_PW = 'DispatcherPass2026!';
   });
   await t('也接受 Authorization: Bearer', async () => {
     const r = parse(await resume({}, { authorization: `Bearer ${adminToken}` }));
-    return r.ok === true && r.data.user.userId === 'USR-ROOT-0001';
+    return r.ok === true && r.data.user.userId === 'USR-ROOT';
   });
 
   console.log('--- 調度員（有組織身分） ---');
@@ -86,7 +89,7 @@ const DISP_PHONE = '0922333444', DISP_PW = 'DispatcherPass2026!';
     return r.status === 401 && r.error.code === 'SESSION_INVALID';
   });
   await t('竄改 payload（改成別人的 userId）被拒', async () => {
-    const body = Buffer.from(JSON.stringify({ v: 2, userId: 'USR-ROOT-0001', sv: 1,
+    const body = Buffer.from(JSON.stringify({ v: 2, userId: 'USR-ROOT', sv: 1,
       iat: Math.floor(Date.now() / 1e3), exp: Math.floor(Date.now() / 1e3) + 3600, nonce: 'x' })).toString('base64url');
     const forged = `${body}.${'0'.repeat(64)}`;
     const r = parse(await resume({ sessionToken: forged }));
@@ -111,11 +114,9 @@ const DISP_PHONE = '0922333444', DISP_PW = 'DispatcherPass2026!';
     const { execFileSync } = require('child_process');
     const fresh = await doLogin(DISP_PHONE, DISP_PW, '203.0.113.12');
     const tok = fresh.data.sessionToken;
-    execFileSync('psql', ['-h', '/tmp/pgv/run', '-p', '5455', '-U', 'postgres', '-d', 'careride',
-      '-tAc', "update users set active = false where id = 'USR-DISP1'"]);
+    execFileSync('psql', ['-h', PGHOST, '-p', PGPORT, '-U', 'postgres', '-d', PGDATABASE, '-tAc', "update users set active = false where id = 'USR-DISP1'"]);
     const r = parse(await resume({ sessionToken: tok }));
-    execFileSync('psql', ['-h', '/tmp/pgv/run', '-p', '5455', '-U', 'postgres', '-d', 'careride',
-      '-tAc', "update users set active = true where id = 'USR-DISP1'"]);
+    execFileSync('psql', ['-h', PGHOST, '-p', PGPORT, '-U', 'postgres', '-d', PGDATABASE, '-tAc', "update users set active = true where id = 'USR-DISP1'"]);
     return r.status === 401 && r.error.code === 'SESSION_INVALID';
   });
 

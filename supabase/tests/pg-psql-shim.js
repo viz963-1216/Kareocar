@@ -39,7 +39,12 @@ class PsqlClient {
   constructor(opts) {
     this.proc = spawn('psql', [
       '-h', opts.host, '-p', String(opts.port), '-U', opts.user, '-d', opts.database,
-      '-q', '-A', '-t', '--no-psqlrc', '-v', 'ON_ERROR_STOP=0'
+      '-q', '-A', '-t', '--no-psqlrc', '-v', 'ON_ERROR_STOP=0',
+      // VERBOSITY=verbose 讓 psql 把 SQLSTATE 印出來。沒有它的話，
+      // raise ... using errcode = '23505' 這種自訂錯誤在替身這邊會退化成
+      // 「用訊息猜代碼」，測出來的錯誤碼跟正式環境的 pg 驅動不一致——
+      // 之前就因此誤判過一次「重複註冊沒有回 ACCOUNT_EXISTS」。
+      '-v', 'VERBOSITY=verbose'
     ], { stdio: ['pipe', 'pipe', 'pipe'] });
     this.buffer = '';
     this.errBuffer = '';
@@ -58,8 +63,10 @@ class PsqlClient {
     const err = this.errBuffer; this.errBuffer = '';
     const { resolve, reject } = this.pending; this.pending = null;
     if (/^ERROR:/m.test(err)) {
-      const message = (err.match(/^ERROR:\s*(.*)$/m) || [, err])[1].trim();
-      const code = (err.match(/^ERROR:.*\n?.*SQLSTATE:\s*(\w+)/m) || [])[1];
+      const message = (err.match(/^ERROR:\s*(?:[0-9A-Z]{5}:\s*)?(.*)$/m) || [, err])[1].trim();
+      // verbose 模式的格式是 "ERROR:  23505: 訊息"，另外也留著舊的 SQLSTATE: 形式
+      const code = (err.match(/^ERROR:\s*([0-9A-Z]{5}):/m) || [])[1]
+        || (err.match(/SQLSTATE:\s*(\w+)/m) || [])[1];
       return reject(Object.assign(new Error(message), { code: code || this._codeFromMessage(err) }));
     }
     resolve(raw.trim());
