@@ -66,3 +66,13 @@
   from = "/api/identity/update-account"
   to = "/.netlify/functions/identity-update-account"
   status = 200
+
+[[redirects]]
+  from = "/api/v2/password-login"
+  to = "/.netlify/functions/v2-password-login"
+  status = 200
+
+[[redirects]]
+  from = "/api/v2/bookings"
+  to = "/.netlify/functions/v2-bookings"
+  status = 200

@@ -70,7 +70,7 @@ Netlify Function 必須用 `care_ride_app` 角色連線，用 `postgres` 會繞�
 
 ### 12.25.x
 
-歷史版本紀錄見 `RELEASE_AUDIT.md` 與 `P0_VALIDATION.md`（皆為當時的封版紀錄，未隨 12.26.0 更新）。
+早期版本開發紀錄，歷史細節請參閱 git commit log。
 
 ## 正式對外前仍待處理
 

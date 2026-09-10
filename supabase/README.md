@@ -2,7 +2,7 @@
 
 原本 Google Sheet 的 22 張工作表在 Postgres 的對應版本，加上取代手寫授權的 Row Level Security 政策。
 
-**目前狀態**：schema 與 RLS 完成並通過 31 項測試。應用程式**還沒有**接上——Netlify Function 目前仍打 Apps Script。接線是下一步。
+**目前狀態**：schema 與 RLS 完成（31 項測試），「登入 + 讀預約」已接線並通過 18 項端到端測試。其餘路徑仍走 Apps Script，兩套並存，前端可逐條切換。
 
 ## 檔案
 
@@ -12,8 +12,11 @@
 | `migrations/0002_rls.sql` | 輔助函式、55 條 RLS 政策、公開需求池 view、`care_ride_app` 角色 |
 | `migrations/0003_credentials_api.sql` | 密碼憑證的受控存取函式、`claim_booking` 交易函式 |
 | `migrations/0004_bootstrap.sql` | 需求者集散組織；超級管理者的建立步驟（手動） |
+| `migrations/0005_app_runtime.sql` | session 版本欄位、速率限制表（有 TTL）、登入流程用的受控函式 |
 | `tests/seed.sql` | 測試資料 |
 | `tests/rls.test.sh` | 31 項 RLS 驗證，含攻擊模擬 |
+| `tests/wiring.test.js` | 18 項端到端測試：Function 實際程式碼跑在真實 Postgres 上 |
+| `tests/pg-psql-shim.js` | 測試用的 pg 替身（以 psql 當傳輸層）；正式環境不使用 |
 
 ## 套用到你的 Supabase
 
@@ -97,9 +100,22 @@ PGHOST=/tmp/pgrun PGPORT=5433 bash supabase/tests/rls.test.sh
 
 **承接改用 `app.claim_booking()`。** `SELECT ... FOR UPDATE` 讓資料庫處理競爭，取代原本的「版本號比對 + 全域鎖」。兩個調度員同搶一張單時，後到的一定會收到「已被其他服務單位接走」。
 
+## 已接線的路徑
+
+| 路由 | Function | 取代 |
+|---|---|---|
+| `POST /api/v2/password-login` | `v2-password-login.js` | Apps Script 的 `passwordLogin_` |
+| `GET /api/v2/bookings` | `v2-bookings.js` | `databaseFilterRows_` 對 bookings 的那一段 |
+
+`?pool=1` 讀公開需求池。舊的 `/api/*` 路由完全沒動，兩套可以並存。
+
+需要的 Netlify 環境變數：`DATABASE_URL`、`AUTH_SESSION_SECRET`、`AUTH_PASSWORD_PEPPER`、
+選用的 `AUTH_PBKDF2_ITERATIONS`。
+
 ## 已知還沒處理
 
-- **應用程式尚未接線**：Netlify Function 還在打 Apps Script
+- **前端還沒改**：仍呼叫舊的 `/api/*`；v2 路由已可用但沒有人打
+- **其餘路徑未接線**：註冊、忘記密碼、寫入預約與行程都還在 Apps Script
 - **沒有資料遷移腳本**：這次是乾淨開始，沒有搬舊資料
 - **`kpi_daily` 的主鍵包含 `driver_id`**，因此組織層級（沒有司機）的彙總列需要一個代表「全組織」的 driver_id，接線時要決定怎麼處理
 - **稽核紀錄目前允許任何登入者新增**（`audit_insert with check (true)`），因為寫入者就是應用程式本身；若之後要更嚴格，可改為只允許 security definer 函式寫入

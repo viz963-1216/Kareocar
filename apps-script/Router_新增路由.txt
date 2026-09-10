@@ -1,8 +1,0 @@
-在 Router.gs 的 routeRequest_(method, req) 內，放在其他 POST 路由之前新增：
-
-if (method === "POST" && req.path === "/identity/register-requester") {
-  return registerRequesterFromWeb_(req.body || {}, req);
-}
-
-這個端點不要加入 Code.gs 的免 API_KEY 名單。
-Netlify Function 會用 CARE_RIDE_API_KEY 從伺服器端帶入既有 API_KEY。
