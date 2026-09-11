@@ -1999,7 +1999,7 @@ body.driver-mode .route-row.active{border-color:#9AC5F5;background:var(--cr-blue
 
 <div class="modal" id="registerRequesterModal"><div class="modal-panel small">
   <div class="modal-head"><h3>新增需求者身分</h3><button class="icon-btn" data-close="registerRequesterModal" type="button" aria-label="關閉視窗">×</button></div>
-  <p class="small muted">新增需求者帳號會先寫入 Google 資料庫的「使用者」與「成員資格」，成功後才建立本機登入狀態；若電子信箱或手機已存在，系統會阻擋重複建帳。</p>
+  <p class="small muted">新增需求者帳號會先寫入正式資料庫的「使用者」與「成員資格」，成功後才建立本機登入狀態；若電子信箱或手機已存在，系統會阻擋重複建帳。</p>
   <div class="form-grid">
     <div class="form-field"><label for="registerNameInput">姓名</label><input id="registerNameInput" autocomplete="name" placeholder="例如：王小明" /></div>
     <div class="form-field"><label for="registerEmailInput">電子信箱</label><input id="registerEmailInput" type="email" autocomplete="email" placeholder="請輸入電子信箱" /></div>
@@ -2007,7 +2007,7 @@ body.driver-mode .route-row.active{border-color:#9AC5F5;background:var(--cr-blue
     <div class="form-field"><label for="registerPasswordInput">設定密碼</label><input id="registerPasswordInput" type="password" autocomplete="new-password" placeholder="至少 8 碼" /></div>
     <button class="btn primary block" id="confirmRegisterBtn" type="button">建立需求者身分</button>
   </div>
-  <div class="privacy-minimal">姓名、電子信箱與手機會寫入 Google 資料庫；密碼目前仍由既有登入模組處理，不會以明文寫入 Google Sheet。</div>
+  <div class="privacy-minimal">姓名、電子信箱與手機會寫入正式資料庫；密碼只以加鹽雜湊保存，不會存明文。</div>
 </div></div>
 
 <div class="modal" id="addStaffModal"><div class="modal-panel small">
@@ -2083,7 +2083,7 @@ body.driver-mode .route-row.active{border-color:#9AC5F5;background:var(--cr-blue
   <div class="modal-head"><h3>回報系統問題</h3><button class="icon-btn" data-close="systemReportModal" type="button" aria-label="關閉視窗">×</button></div>
   <p class="small muted">此處回報 應用程式／後台系統問題，會送到平台超級管理者；行程現場異常仍使用司機端「異常回報」。</p>
   <div class="form-grid">
-    <div class="form-field"><label for="systemReportCategory">問題類型</label><select id="systemReportCategory"><option>登入／帳號</option><option>預約／派車</option><option>司機端</option><option>Google 資料庫同步</option><option>介面／操作</option><option>其他</option></select></div>
+    <div class="form-field"><label for="systemReportCategory">問題類型</label><select id="systemReportCategory"><option>登入／帳號</option><option>預約／派車</option><option>司機端</option><option>資料同步</option><option>介面／操作</option><option>其他</option></select></div>
     <div class="form-field"><label for="systemReportTitle">問題標題</label><input id="systemReportTitle" placeholder="簡短描述發生什麼問題" /></div>
     <div class="form-field"><label for="systemReportDetail">詳細說明</label><textarea id="systemReportDetail" placeholder="請描述操作步驟、畫面狀況或希望改善的地方"></textarea></div>
   </div>
@@ -2903,9 +2903,9 @@ function authoritativeSuccessToast_(message){const text=String(message||'');retu
 function updateAuthoritativeWriteUI_(){
   const el=document.getElementById('backendWriteHealthBanner');if(!el)return;
   if(!authoritativeProduction_()){el.classList.add('hidden');return;}
-  if(authoritativeLastError){el.classList.remove('hidden');el.style.background='#fff0f0';el.style.borderColor='#efb7bc';el.style.color='#9c2430';el.textContent=`正式資料尚未完成後端確認：${authoritativeLastError}。畫面變更已保存在待同步佇列，請保持網路連線；重新整理後會以 Google Sheet 已確認資料為準。`;return;}
+  if(authoritativeLastError){el.classList.remove('hidden');el.style.background='#fff0f0';el.style.borderColor='#efb7bc';el.style.color='#9c2430';el.textContent=`正式資料尚未完成後端確認：${authoritativeLastError}。畫面變更已保存在待同步佇列，請保持網路連線；重新整理後會以伺服器已確認的資料為準。`;return;}
   const actor=authoritativeCurrentActor_(),pending=[...authoritativeQueue.values()].filter(x=>!x.actorUserId||x.actorUserId===actor).length;
-  if(pending){el.classList.remove('hidden');el.style.background='#fff7e8';el.style.borderColor='#efc27d';el.style.color='#7b520d';el.textContent=`正在將 ${pending} 筆操作寫入 Google Sheet 正式資料庫；完成前請不要關閉頁面。`;return;}
+  if(pending){el.classList.remove('hidden');el.style.background='#fff7e8';el.style.borderColor='#efc27d';el.style.color='#7b520d';el.textContent=`正在將 ${pending} 筆操作寫入正式資料庫；完成前請不要關閉頁面。`;return;}
   el.classList.add('hidden');el.textContent='';
 }
 async function authoritativeFlush_(){
@@ -3311,10 +3311,8 @@ function normalizeTimeText(value){ const m=String(value||'').trim().match(/(\d{1
 
 
 // ============================================================================
-// GOOGLE SHEET DATABASE ADAPTER — V12.25.65
-// Live-first read adapter for the commercial Google Sheet. If Google is
-// unavailable, the last cached V63 state remains usable. Cloud-backed collections
-// are merged selectively so Trip event/offline and versioned Benefit models survive.
+// 資料載入層 — 權威資料在 Postgres，由 AppStateDatabase.loadAll 取得。
+// 過濾在資料庫的 RLS 完成，所以每個身分拿到的就是他看得到的那些列。
 // ============================================================================
 // Google 試算表讀取層已整段移除（原本約 240 行：GOOGLE_DB_SHEETS、gs* 欄位轉換、
 // fetchGoogleSheetBackend、readGoogleDatabaseSheet、buildGoogleDatabaseSnapshot、
@@ -3450,7 +3448,7 @@ const BOOKING_TRANSITIONS = Object.freeze({
   [BOOKING_STATE.EXPIRED]:Object.freeze({})
 });
 const BOOKING_EVENT_LABELS = Object.freeze({
-  migrated:'歷史資料建立基準',created:'建立預約',claimed:'公開需求已接案',released:'承接單位退回公開池',leg_scheduled:'行程 Leg 已排車',leg_organization_assigned:'行程 Leg 承接組織已指定',scheduled:'已建立行程',rejected:'不受理',cancelled:'預約取消',source_updated:'Google Sheet 更新',source_conflict:'Google Sheet 來源衝突',amended:'預約內容已修改',commercial_snapshot_captured:'報價／補助快照已建立',duplicate_detected:'偵測到疑似重複預約',claim_invalidated_by_amendment:'重大修改解除原承接',expired:'公開接案期限已到'
+  migrated:'歷史資料建立基準',created:'建立預約',claimed:'公開需求已接案',released:'承接單位退回公開池',leg_scheduled:'行程 Leg 已排車',leg_organization_assigned:'行程 Leg 承接組織已指定',scheduled:'已建立行程',rejected:'不受理',cancelled:'預約取消',source_updated:'來源資料更新',source_conflict:'來源資料衝突',amended:'預約內容已修改',commercial_snapshot_captured:'報價／補助快照已建立',duplicate_detected:'偵測到疑似重複預約',claim_invalidated_by_amendment:'重大修改解除原承接',expired:'公開接案期限已到'
 });
 const BOOKING_ACTION_EVENT = Object.freeze({claim:'claimed',release:'released',reject:'rejected',cancel:'cancelled',expire:'expired'});
 const BOOKING_ACTION_REASON_REQUIRED = new Set(['release','reject','cancel']);
@@ -3477,7 +3475,7 @@ function bookingPermissionError(permission){
     [BOOKING_PERMISSION.MARKET_READ]:'你沒有查看公開需求池的權限',[BOOKING_PERMISSION.MARKET_CLAIM]:'你沒有接案權限',
     [BOOKING_PERMISSION.READ_CLAIMED]:'你沒有查看承接預約的權限',[BOOKING_PERMISSION.SCHEDULE]:'你沒有建立預約行程的權限',[BOOKING_PERMISSION.LEG_ASSIGN_ORG]:'你沒有跨組織指定 Booking Leg 的權限',
     [BOOKING_PERMISSION.RELEASE]:'你沒有退回公開池的權限',[BOOKING_PERMISSION.REJECT]:'你沒有不受理預約的權限',
-    [BOOKING_PERMISSION.SYNC_GOOGLE]:'你沒有Google 資料庫同步權限',[BOOKING_PERMISSION.CREATE_OWN]:'你沒有建立預約權限',
+    [BOOKING_PERMISSION.SYNC_GOOGLE]:'你沒有資料同步權限',[BOOKING_PERMISSION.CREATE_OWN]:'你沒有建立預約權限',
     [BOOKING_PERMISSION.EDIT_OWN]:'你沒有修改自己的預約權限',[BOOKING_PERMISSION.CANCEL_OWN]:'你沒有取消自己的預約權限',[BOOKING_PERMISSION.AUDIT_READ]:'你沒有查看 Booking 異動歷史的權限'
   };
   return labels[permission]||'你沒有執行此 Booking 操作的權限';
@@ -7497,7 +7495,7 @@ function showToastRaw_(message){ const el=$('toast'); if(!el)return; el.textCont
 function showToast(message){
   if(authoritativeProduction_?.()&&authoritativeSuccessToast_?.(message)&&authoritativePendingForCurrentActor_?.().length){
     if(typeof navigator!=='undefined'&&navigator.onLine===false){showToastRaw_('目前離線：操作只暫存在此裝置，尚未寫入正式資料庫');return;}
-    showToastRaw_('正在寫入 Google Sheet 正式資料庫…');
+    showToastRaw_('正在寫入正式資料庫…');
     Promise.resolve(authoritativeFlush_()).then(r=>{if(r?.ok)showToastRaw_(message);else showToastRaw_(`操作未完成：${r?.error||'正式資料庫未確認'}`);}).catch(error=>showToastRaw_(`操作未完成：${error?.message||error}`));
     return;
   }
@@ -8312,7 +8310,7 @@ function driverKpi(){ const k=Analytics.driverDaily(currentDriver()?.id,kpiDate)
 function systemReportAccountCard(){ return Identity.can('system_report.create')?`<section class="card"><div class="card-head"><div><h3>系統問題回報</h3><p>應用程式／後台操作問題會送給平台開發方</p></div></div><button class="btn outline block" id="openSystemReportBtn" type="button">回報系統問題</button></section>`:''; }
 function driverAccount(){ const u=Identity.currentUser(),d=currentDriver(),next=Trip.nextForDriver(d?.id,driverOperationalDate()),v=Organization.vehicle(next?.vehicleId); return `<div class="page-head"><div><h2>我的帳戶</h2><p>帳號身分與組織已分離；車輛依每趟行程派定</p></div></div><section class="card"><div class="account-card">${accountAvatar(u,'👨🏻‍✈️')}<div><h3>${escapeHTML(u?.name||'')}</h3><p>${formatPhone(u?.phone||'')}・下一趟 ${escapeHTML(v?.plate||'尚未派車')}</p></div></div></section>${profilePhotoSection(u,'👨🏻‍✈️')}${identityMembershipCard()}<section class="card"><div class="card-head"><h3>所屬組織</h3></div><div class="meta">${escapeHTML(currentOrg()?.name||'')}<br>角色：${ROLE_LABELS[role()]}<br>司機資料僅保存營運欄位，姓名／手機直接引用帳號資料。</div></section>${systemReportAccountCard()}${appVersionNote()}<button type="button" class="btn danger block account-logout-btn">登出目前帳號</button>`; }
 function superAdminAccountSettingsCard(u){
-  return `<section class="card"><div class="card-head"><div><h3>平台超級管理者帳號</h3><p>帳號資料由伺服器更新；密碼只寫入伺服器端雜湊憑證，不會進入 Google Sheet、AppState 或 GitHub。</p></div></div><div class="form-grid"><div class="form-field"><label for="superAdminNameInput">顯示名稱</label><input id="superAdminNameInput" value="${escapeHTML(u?.name||'')}" autocomplete="name" /></div><div class="form-field"><label for="superAdminPhoneInput">登入手機</label><input id="superAdminPhoneInput" value="${escapeHTML(u?.phone||'')}" inputmode="tel" autocomplete="username" /></div><div class="form-field"><label for="superAdminPasswordInput">新密碼</label><input id="superAdminPasswordInput" type="password" autocomplete="new-password" placeholder="至少 8 碼；留白則不變更" /></div><div class="form-field"><label for="superAdminCurrentPasswordInput">目前密碼</label><input id="superAdminCurrentPasswordInput" type="password" autocomplete="current-password" placeholder="變更手機或密碼時必填" /></div></div><button type="button" class="btn primary" id="saveSuperAdminAccountBtn">更新超級管理者帳號</button></section>`;
+  return `<section class="card"><div class="card-head"><div><h3>平台超級管理者帳號</h3><p>帳號資料由伺服器更新；密碼只寫入伺服器端雜湊憑證，不會進入應用狀態資料或 GitHub。</p></div></div><div class="form-grid"><div class="form-field"><label for="superAdminNameInput">顯示名稱</label><input id="superAdminNameInput" value="${escapeHTML(u?.name||'')}" autocomplete="name" /></div><div class="form-field"><label for="superAdminPhoneInput">登入手機</label><input id="superAdminPhoneInput" value="${escapeHTML(u?.phone||'')}" inputmode="tel" autocomplete="username" /></div><div class="form-field"><label for="superAdminPasswordInput">新密碼</label><input id="superAdminPasswordInput" type="password" autocomplete="new-password" placeholder="至少 8 碼；留白則不變更" /></div><div class="form-field"><label for="superAdminCurrentPasswordInput">目前密碼</label><input id="superAdminCurrentPasswordInput" type="password" autocomplete="current-password" placeholder="變更手機或密碼時必填" /></div></div><button type="button" class="btn primary" id="saveSuperAdminAccountBtn">更新超級管理者帳號</button></section>`;
 }
 async function updateCurrentSuperAdminAccount(){
   const current=Identity.currentUser();if(!Identity.isSuperAdmin()||!current){showToast('只有平台超級管理者可以更新此帳號');return;}
@@ -8888,7 +8886,7 @@ function runBenefitRegression(){const r=Benefit.runRegressionTests({actorUserId:
 const VIEW_RENDERERS={'requester-home':requesterHome,'requester-new':requesterNew,'requester-bookings':requesterBookings,'benefits':benefitDashboard,'care-recipients':careRecipientsView,'demand-market':demandMarket,'driver-home':driverHome,'driver-trips':driverTrips,'driver-kpi':driverKpi,'dispatch-home':dispatchHome,'dispatch-trips':dispatchTrips,'dispatch-issues':dispatchIssues,'owner-home':ownerHome,'owner-users':ownerUsers,'owner-vehicles':ownerVehicles,'platform-home':platformHome,'platform-organizations':platformOrganizations,'platform-members':platformMembers,'platform-reports':platformReports,'account':accountView};
 
 async function syncBookings(event){
-  if(!Identity.can('booking.sync_google')){showToast('你沒有 Google 資料庫同步權限');return;}
+  if(!Identity.can('booking.sync_google')){showToast('你沒有資料同步權限');return;}
   const btn=event?.currentTarget||$('syncCustomerBookingsBtn'),oldText=btn?.textContent||'重新同步資料';
   if(btn){btn.disabled=true;btn.setAttribute('aria-busy','true');btn.textContent='同步資料中…';}
   showToast('正在同步最新正式資料…');
@@ -8945,7 +8943,7 @@ function openAddStaff(){
   $('staffNameInput').value='';$('staffPhoneInput').value='';if($('staffInitialPasswordInput'))$('staffInitialPasswordInput').value='';$('staffAlsoRequesterInput').checked=false;
   $('staffRequesterField').classList.remove('hidden');
   $('addStaffModalTitle').textContent=isPlatform?'新增組織成員':'新增人員';
-  $('addStaffModalDescription').textContent=isPlatform?'平台超級管理者可替目前公司建立負責人、司機或調度員。新使用者的初始密碼由伺服器保存雜湊；既有使用者只新增組織身分。':'負責人可新增司機或調度員；新使用者需設定初始密碼，帳號會直接寫入 Google 資料庫。';
+  $('addStaffModalDescription').textContent=isPlatform?'平台超級管理者可替目前公司建立負責人、司機或調度員。新使用者的初始密碼由伺服器保存雜湊；既有使用者只新增組織身分。':'負責人可新增司機或調度員；新使用者需設定初始密碼，帳號會直接寫入正式資料庫。';
   const hasOwner=store.state.memberships.some(m=>m.organizationId===orgId()&&m.role==='owner'&&Identity.membershipStatus(m)!=='revoked');
   $('staffRoleInput').innerHTML=isPlatform?`${hasOwner?'':'<option value="owner">負責人</option>'}<option value="driver">司機</option><option value="dispatcher">調度人員</option>`:'<option value="driver">司機</option><option value="dispatcher">調度人員</option>';
   openModal('addStaffModal');
@@ -9294,7 +9292,7 @@ function bindViewEvents(){
     const persisted=await store.flushAuthoritative();
     if(!persisted?.ok){render();showToast(`接案尚未完成後端確認：${persisted?.error||'請保持網路連線後重試'}`);return;}
     const cloudRefresh=await AppStateDatabase.loadAll({silent:true});
-    if(!cloudRefresh?.ok){render();showToast(`接案已寫入 Google Sheet，但完整履約資訊重新載入失敗：${cloudRefresh?.error||'請重新整理'}`);return;}
+    if(!cloudRefresh?.ok){render();showToast(`接案已寫入正式資料庫，但完整履約資訊重新載入失敗：${cloudRefresh?.error||'請重新整理'}`);return;}
     render();showToast(`已由 ${result.organization.name} 接案，後端版本確認完成，完整履約資訊已解鎖`);
   }));
   $('requesterResumeDraftBtn')?.addEventListener('click',()=>{const d=loadRequesterDraft();editingRequesterBookingId='';requesterWizardStep=Math.max(1,Math.min(4,Number(d?.step)||1));requesterDraftDirty=false;currentView='requester-new';renderNav();render();});
