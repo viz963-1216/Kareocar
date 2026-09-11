@@ -2438,7 +2438,6 @@ const APP_CONFIG = Object.freeze({
   identityRequestPasswordResetUrl: '/api/v2/request-password-reset',
   identityConfirmPasswordResetUrl: '/api/v2/confirm-password-reset',
   identityUpdateAccountUrl: '/api/v2/update-account',
-  customerSheetCsv: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQO8uq2wJw1JrvLY9e-1Qnz6Asy3h6pA1apzCQZTSeNzDk7R-XWKWWaqoSm6-cYofvx0bfvxhVGCDZN/pub?output=csv'
 });
 
 window.CARE_RIDE_RUNTIME = Object.freeze({
@@ -2742,7 +2741,7 @@ function seedDB(){
     users:[],
     fleets:[],drivers:[],externalIdentities:[],membershipEvents:[],
     vehicleAssignments:[],vehicles:[],careRecipients:[],careRecipientRelations:[],careRecipientEvents:[],careRecipientMergeEvents:[],bookings:[],bookingEvents:[],bookingRevisions:[],dispatchPlans:[],trips:[],tripEvents:[],tripOfflineQueue:[],issues:[],systemReports:[],events:[],notifications:[],serviceProofs:[],kpiDaily:[],quoteSnapshots:[],cancellations:[],telemetryEvents:[],benefitRulesets:[],benefitRulesetEvents:[],benefitAssessments:[],benefitAssessmentEvents:[],benefitLatestInfo:null,benefitLatestEstimateRuns:[],
-    integration:{customerSheetCsv:APP_CONFIG.customerSheetCsv,googleSpreadsheetId:APP_CONFIG.googleSpreadsheetId,googleDatabaseLastSyncAt:null,lastSyncAt:null,lastSyncStatus:'尚未完成正式資料同步',lastSyncDetails:[]}
+    integration:{googleSpreadsheetId:APP_CONFIG.googleSpreadsheetId,googleDatabaseLastSyncAt:null,lastSyncAt:null,lastSyncStatus:'尚未完成正式資料同步',lastSyncDetails:[]}
   };
 }
 
@@ -3508,7 +3507,7 @@ function commitGoogleDatabaseSnapshot(tables,{details=[],mode='embedded_fallback
     const assessmentIds=new Set((snapshot.benefitAssessments||[]).map(a=>a.id));
     db.benefitAssessmentEvents=priorBenefitAssessmentEvents.filter(e=>!e?.assessmentId||assessmentIds.has(e.assessmentId));
     db.schemaVersion=APP_CONFIG.schemaVersion;db.version=APP_CONFIG.version;
-    db.integration={...(db.integration||{}),customerSheetCsv:APP_CONFIG.customerSheetCsv,googleSpreadsheetId:APP_CONFIG.googleSpreadsheetId,lastSyncAt:syncAt,googleDatabaseLastSyncAt:syncAt,lastSyncStatus:`正式資料庫同步成功｜預約 ${snapshot.bookings.length}・行程 ${snapshot.trips.length}・使用者 ${snapshot.users.length}`,lastSyncDetails:details};
+    db.integration={...(db.integration||{}),googleSpreadsheetId:APP_CONFIG.googleSpreadsheetId,lastSyncAt:syncAt,googleDatabaseLastSyncAt:syncAt,lastSyncStatus:`正式資料庫同步成功｜預約 ${snapshot.bookings.length}・行程 ${snapshot.trips.length}・使用者 ${snapshot.users.length}`,lastSyncDetails:details};
     db.googleDatabase={spreadsheetId:APP_CONFIG.googleSpreadsheetId,syncedAt:syncAt,mode};
   },{remote:false,reason:'google_database_hydration'});
   return {ok:true,message:store.state.integration.lastSyncStatus,details,counts:{organizations:snapshot.organizations.length,users:snapshot.users.length,memberships:snapshot.memberships.length,careRecipients:snapshot.careRecipients.length,bookings:snapshot.bookings.length,trips:snapshot.trips.length}};
@@ -4443,120 +4442,11 @@ Booking = {
     }
     return {ok:true,booking:this.get(id),cancelledTripIds,repairedTripIds};
   },
-  async syncFromPublishedSheet(organizationId,{silent=false,actorUserId=null}={}){
-    if(!bookingActorCan(actorUserId,BOOKING_PERMISSION.SYNC_GOOGLE,organizationId))return {ok:false,error:bookingPermissionError(BOOKING_PERMISSION.SYNC_GOOGLE)};
-    const url=store.state.integration.customerSheetCsv;
-    try{
-      const response=await fetch(`${url}${url.includes('?')?'&':'?'}t=${Date.now()}`,{cache:'no-store'});
-      if(!response.ok) throw new Error(`HTTP ${response.status}`);
-      const text=await response.text();
-      const rows=parseCSV(text);
-      if(!rows.length) throw new Error('試算表沒有欄位');
-      const headers=rows[0].map(h=>String(h).trim()),syncAt=nowISO();
-      const oldGoogleRows=store.state.bookings.filter(b=>b.organizationId===organizationId&&(b.source==='google_sheet'||(!b.source&&!b.requestedByUserId)));
-      const oldByExternalId=new Map(oldGoogleRows.filter(b=>b.externalBookingId).map(b=>[String(b.externalBookingId),b]));
-      const submittedGroups=new Map();
-      oldGoogleRows.forEach(b=>{const key=canonicalExternalBookingId(b.submittedAt);if(!key)return;const list=submittedGroups.get(key)||[];list.push(b);submittedGroups.set(key,list);});
-      const uniqueOldBySubmittedAt=new Map([...submittedGroups.entries()].filter(([,list])=>list.length===1).map(([key,list])=>[key,list[0]]));
-      const incoming=[],errors=[],warnings=[],conflicts=[],syncEventRows=[],syncRevisionRows=[];
-      const seenExternalIds=new Set();
-      const businessFields=['name','phone','pickupDate','pickupTime','pickupAddress','pickupAccessNote','destination','destinationAccessNote','tripType','returnDate','returnTime','aidNeed','companions','specialNeed','note','consent','poolingConsent'];
-      const externalIdCounts=new Map();
-      rows.slice(1).forEach(row=>{const obj={};headers.forEach((h,i)=>obj[h]=row[i]??'');const submittedAt=pickField(obj,['時間戳記','提交時間','Timestamp']);const ext=googleSheetExternalBookingId(obj,{submittedAt});if(ext)externalIdCounts.set(ext,(externalIdCounts.get(ext)||0)+1);});
-      rows.slice(1).forEach((row,index)=>{
-        const rowNumber=index+2,obj={}; headers.forEach((h,i)=>obj[h]=row[i]??'');
-        const raw={
-          submittedAt:pickField(obj,['時間戳記','提交時間','Timestamp']),
-          name:pickField(obj,['姓名','乘客姓名','預約人姓名']),
-          phone:pickField(obj,['聯絡電話','電話','手機','乘客電話']),
-          pickupDate:normalizeDateText(pickField(obj,['接送日期','預約日期','日期'])),
-          pickupTime:normalizeTimeText(pickField(obj,['希望接送時間','接送時間','預約時間'])),
-          pickupAddress:pickField(obj,['上車地址','接送地址','出發地址']),
-          pickupAccessNote:pickField(obj,['上車注意事項','上車備註','接送入口']),
-          destination:pickField(obj,['目的地','下車地址','送達地址']),
-          destinationAccessNote:pickField(obj,['目的地注意事項','下車注意事項','送達入口']),
-          tripType:pickField(obj,['單程／來回','單程/來回','行程類型']),
-          returnDate:normalizeDateText(pickField(obj,['回程日期','返程日期'])),
-          returnTime:normalizeTimeText(pickField(obj,['回程時間','返程時間'])),
-          aidNeed:pickField(obj,['輪椅／輔具需求','輪椅/輔具需求','輔具需求']),
-          companions:pickField(obj,['陪同人數','陪同']),
-          specialNeed:pickField(obj,['特殊需求']),
-          note:pickField(obj,['備註']),
-          consent:pickField(obj,['個資／服務條款同意','個資/服務條款同意','服務條款同意'])
-        };
-        if(!raw.name&&!raw.phone&&!raw.pickupDate&&!raw.pickupAddress)return;
-        const externalBookingId=googleSheetExternalBookingId(obj,raw);
-        if(!externalBookingId){errors.push(`第 ${rowNumber} 列：缺少「預約編號／Booking ID」且沒有提交時間，為避免 Stable ID 漂移已略過`);return;}
-        if((externalIdCounts.get(externalBookingId)||0)>1){errors.push(`第 ${rowNumber} 列：外部預約 ID「${externalBookingId}」在來源中不唯一；為避免錯誤合併，本列已略過，請補永久預約編號`);return;}
-        if(seenExternalIds.has(externalBookingId)){errors.push(`第 ${rowNumber} 列：重複的外部預約 ID「${externalBookingId}」`);return;}
-        seenExternalIds.add(externalBookingId);
-        const validation=validateBookingPayload(raw,{requireIdentity:true,requireFuture:false});
-        if(!validation.ok){errors.push(`第 ${rowNumber} 列：${validation.errors.join('、')}`);return;}
-        validation.warnings.forEach(w=>warnings.push(`第 ${rowNumber} 列：${w}`));
-        const submittedKey=canonicalExternalBookingId(raw.submittedAt);
-        const old=oldByExternalId.get(externalBookingId)||(submittedKey?uniqueOldBySubmittedAt.get(submittedKey):null)||null;
-        let b={...validation.value,submittedAt:raw.submittedAt||old?.submittedAt||syncAt};
-        const sourceChanged=!!old&&businessFields.some(key=>String(old?.[key]??'')!==String(b?.[key]??''));
-        const oldState=old?bookingStateOf(old):BOOKING_STATE.CLAIMED;
-        const locked=[BOOKING_STATE.PARTIALLY_SCHEDULED,BOOKING_STATE.SCHEDULED,BOOKING_STATE.REJECTED,BOOKING_STATE.CANCELLED,BOOKING_STATE.EXPIRED].includes(oldState);
-        if(old&&sourceChanged&&locked){
-          conflicts.push(`第 ${rowNumber} 列：${old.id} 已是 ${oldState}，來源內容有修改；為避免破壞既有 Trip／歷史，本次未覆蓋業務欄位`);
-          if(!old.sourceSyncConflictAt) syncEventRows.push({bookingId:old.id,eventType:'source_conflict',fromState:oldState,toState:oldState,organizationId:old.organizationId||organizationId,bookingVersion:old.version||1,metadata:{rowNumber,externalBookingId}});
-          incoming.push({...old,externalBookingId,source:'google_sheet',sourceLastSeenAt:syncAt,sourceSyncConflictAt:syncAt});
-          return;
-        }
-        b.id=old?.id||googleSheetInternalBookingId(organizationId,externalBookingId);
-        if(!old) syncEventRows.push({bookingId:b.id,eventType:'created',fromState:null,toState:oldState,organizationId,bookingVersion:1,metadata:{rowNumber,externalBookingId}});
-        else if(sourceChanged) syncEventRows.push({bookingId:b.id,eventType:'source_updated',fromState:oldState,toState:oldState,organizationId:old.organizationId||organizationId,bookingVersion:Math.max(1,Number(old.version)||1)+1,metadata:{rowNumber,externalBookingId}});
-        b.externalBookingId=externalBookingId;
-        b.organizationId=organizationId;b.source='google_sheet';b.requestedByUserId=null;b.sourceLastSeenAt=syncAt;b.sourceSyncConflictAt=null;
-        b.state=oldState;
-        b.version=old?Math.max(1,Number(old.version)||1)+(sourceChanged?1:0):1;
-        b.revisionNo=old?Math.max(0,Number(old.revisionNo)||0)+(sourceChanged?1:0):0;
-        b.commercialSnapshots=deepClone(old?.commercialSnapshots||[]);b.activeCommercialSnapshotId=old?.activeCommercialSnapshotId||null;
-        b._captureCommercialSnapshot=!old||sourceChanged;
-        if(old&&sourceChanged){const changedFields=businessFields.filter(key=>String(old?.[key]??'')!==String(b?.[key]??''));syncRevisionRows.push({id:uid('brev'),schemaVersion:BOOKING_REVISION_SCHEMA_VERSION,bookingId:b.id,revisionNo:b.revisionNo,actorUserId,reasonText:'Google Sheet 來源更新',changedFields,snapshot:bookingRevisionSnapshot(old),createdAt:syncAt});}
-        b.stateChangedAt=old?.stateChangedAt||old?.updatedAt||old?.submittedAt||b.submittedAt||syncAt;
-        b.updatedAt=sourceChanged?syncAt:(old?.updatedAt||b.stateChangedAt);
-        b.status=old?.status||(oldState===BOOKING_STATE.EXPIRED?'expired':'pending');b.tripId=old?.tripId||null;b.claimStatus=old?.claimStatus||(oldState===BOOKING_STATE.EXPIRED?'expired':'claimed');b.claimedByUserId=old?.claimedByUserId||null;b.claimedAt=old?.claimedAt||b.submittedAt||syncAt;b.recipientId=old?.recipientId||null;
-        b.scheduledAt=old?.scheduledAt||null;b.rejectedAt=old?.rejectedAt||null;b.rejectedByUserId=old?.rejectedByUserId||null;b.cancelledAt=old?.cancelledAt||null;b.cancelledByUserId=old?.cancelledByUserId||null;
-        syncBookingLegacyLifecycleFields(b);
-        const recipient=CareRecipient.resolveForBooking(b,{organizationId,userId:null});
-        if(!recipient){errors.push(`第 ${rowNumber} 列：無法建立或解析服務對象主檔`);return;}
-        b.recipientId=recipient.id;
-        applyServiceJurisdictionSnapshot(b,recipient,{explicit:old?.serviceJurisdiction||null,source:'google_sheet_residence'});
-        if(old?.serviceJurisdictionCapturedAt)b.serviceJurisdictionCapturedAt=old.serviceJurisdictionCapturedAt;
-        b.serviceNeeds=old?.serviceNeeds?{...old.serviceNeeds,bookingOverrides:bookingServiceNeedsOverrides(b),capturedAt:old.serviceNeeds.capturedAt||b.submittedAt||syncAt}:createBookingServiceNeeds(b,recipient,null);
-        b.locations=bookingLocationsFromLegacy(b,old?.locations||null);
-        b.legs=bookingLegsFromLegacy(b.id,b,b.locations,old?.legs||null);
-        b.marketExpiresAt=sharedBookingMarketExpiryISO(b,b.submittedAt||syncAt);b.expiryPolicyVersion=BOOKING_EXPIRY_POLICY.policyVersion;b.expiredAt=old?.expiredAt||null;b.expiryReason=old?.expiryReason||null;
-        const duplicatePool=[...store.state.bookings.filter(x=>x.id!==b.id),...incoming.filter(x=>x.id!==b.id)];
-        const sheetDuplicate=duplicatePool.map(x=>bookingDuplicateEvaluation(b,x)).filter(x=>x?.highConfidence).sort((a,b)=>b.score-a.score)[0]||null;
-        if(sheetDuplicate&&!old){errors.push(`第 ${rowNumber} 列：高度疑似重複預約，與 ${sheetDuplicate.bookingId} 衝突（${sheetDuplicate.reasons.join('、')}）`);syncEventRows.push({bookingId:sheetDuplicate.bookingId,eventType:'duplicate_detected',fromState:bookingStateOf(sheetDuplicate.booking),toState:bookingStateOf(sheetDuplicate.booking),organizationId:sheetDuplicate.booking.organizationId||organizationId,bookingVersion:sheetDuplicate.booking.version||1,metadata:{rowNumber,externalBookingId,score:sheetDuplicate.score,reasons:sheetDuplicate.reasons}});return;}
-        incoming.push(b);
-      });
-      const incomingIds=new Set(incoming.map(b=>b.id));
-      const preservedOld=oldGoogleRows.filter(b=>!incomingIds.has(b.id));
-      store.mutate(db=>{
-        db.bookings=db.bookings.filter(b=>!(b.organizationId===organizationId&&(b.source==='google_sheet'||(!b.source&&!b.requestedByUserId)))).concat(preservedOld,incoming);
-        db.bookingRevisions=Array.isArray(db.bookingRevisions)?db.bookingRevisions:[];syncRevisionRows.forEach(r=>db.bookingRevisions.unshift(r));
-        incoming.forEach(row=>{if(row._captureCommercialSnapshot){const snap=appendBookingCommercialSnapshotInDb(db,row,{reason:row.version===1?'source_created':'source_updated',actorUserId});appendBookingEventInDb(db,{bookingId:row.id,eventType:'commercial_snapshot_captured',fromState:row.state,toState:row.state,actorUserId,organizationId:row.organizationId||organizationId,source:'google_sheet',bookingVersion:row.version,metadata:{revisionNo:row.revisionNo||0,commercialSnapshotId:snap?.id||null}});}delete row._captureCommercialSnapshot;});
-        db.integration.lastSyncAt=syncAt;
-        const parts=[`同步成功 ${incoming.length} 筆`];
-        if(errors.length)parts.push(`略過 ${errors.length} 筆無效資料`);
-        if(conflicts.length)parts.push(`${conflicts.length} 筆已鎖定案件有來源異動`);
-        if(preservedOld.length)parts.push(`保留 ${preservedOld.length} 筆來源未出現的既有資料`);
-        db.integration.lastSyncStatus=parts.join('・');
-        db.integration.lastSyncDetails=[...errors,...conflicts].slice(0,12);
-        syncEventRows.forEach(evt=>appendBookingEventInDb(db,{...evt,actorUserId,source:'google_sheet',createdAt:syncAt}));
-      });
-      Audit.log('bookings_synced',store.state.integration.lastSyncStatus,{organizationId,actorUserId,count:incoming.length,errorCount:errors.length,warningCount:warnings.length,conflictCount:conflicts.length,errors:errors.slice(0,8),conflicts:conflicts.slice(0,8)});
-      return {ok:true,count:incoming.length,errors,warnings,conflicts,message:store.state.integration.lastSyncStatus};
-    }catch(error){
-      store.mutate(db=>{ db.integration.lastSyncAt=nowISO(); db.integration.lastSyncStatus=`同步失敗：${error.message}`; db.integration.lastSyncDetails=[String(error.message||'同步失敗')]; });
-      return {ok:false,error:error.message};
-    }
-  }
+  // syncFromPublishedSheet 已移除。
+  // 它從一份「發布到網路」的 Google 試算表匯入預約——那種連結不需要登入，
+  // 任何拿到網址的人都能下載全部內容，而網址就寫在這個檔案裡（等於公開）。
+  // 實際內容是乘客姓名、電話、完整地址與醫療狀況，不該用這種方式流通。
+  // 這個方法在移除時已經沒有任何呼叫點。預約資料現在一律走 Postgres。
 };
 }
 
