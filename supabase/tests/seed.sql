@@ -1,5 +1,6 @@
 -- 測試資料。以 postgres 身分執行（擁有者會繞過 RLS，這裡正是我們要的）。
-truncate audit_events, kpi_daily, system_reports, benefit_assessments, notifications,
+truncate app_state,
+         audit_events, kpi_daily, system_reports, benefit_assessments, notifications,
          dispatch_plans, cancellations, quote_snapshots, booking_events, telemetry_events,
          issues, service_proofs, trip_bookings, trips, bookings, vehicles, drivers,
          care_recipient_contacts, care_recipients, memberships, password_credentials,

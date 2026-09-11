@@ -34,7 +34,7 @@ $PSQL_ADMIN -d "$PGDATABASE" -v ON_ERROR_STOP=1 -f "$HERE/seed.sql" >/dev/null
 total_fail=0
 # 順序有相依：bootstrap 會替 seed 裡那個沒有密碼的超級管理者設定密碼，
 # session 才有帳號可以登入；identity 借用 seed 的 B 隊負責人建立員工。
-for suite in bootstrap session identity state wiring; do
+for suite in bootstrap session identity state load wiring; do
   echo
   echo "== $suite =="
   if ! node "$HERE/$suite.test.js"; then total_fail=$((total_fail+1)); fi

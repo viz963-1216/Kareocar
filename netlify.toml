@@ -116,3 +116,8 @@
   from = "/api/v2/state-mutate"
   to = "/.netlify/functions/v2-state-mutate"
   status = 200
+
+[[redirects]]
+  from = "/api/v2/state-load"
+  to = "/.netlify/functions/v2-state-load"
+  status = 200

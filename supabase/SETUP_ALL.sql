@@ -1307,10 +1307,10 @@ drop policy if exists app_state_read on app_state;
 create policy app_state_read on app_state for select
   using (app.is_super_admin()
          or owner_user_id = app.current_user_id()
-         or organization_id = any(app.my_ops_orgs())
-         -- 未被承接的公開需求：營運方看得到，但只透過遮蔽過的 view
-         or (collection = 'bookings' and organization_id is null
-             and booking_state = 'open' and app.operates_any()));
+         or organization_id = any(app.my_ops_orgs()));
+-- 注意這裡「沒有」放行未承接的公開需求。放行的話，營運方就能直接查原始表
+-- 讀到完整門牌與預約者是誰——遮蔽只做在 view 上，繞過 view 就沒了。
+-- 需求池改由下面那個 security definer 的 view 提供，遮蔽無法繞過。
 
 drop policy if exists app_state_insert on app_state;
 -- 範圍由觸發器決定，呼叫端寫什麼都會被覆蓋，所以這裡不需要再限制
@@ -1320,9 +1320,7 @@ drop policy if exists app_state_update on app_state;
 create policy app_state_update on app_state for update
   using (app.is_super_admin()
          or owner_user_id = app.current_user_id()
-         or organization_id = any(app.my_ops_orgs())
-         or (collection = 'bookings' and organization_id is null
-             and booking_state = 'open' and app.operates_any()))
+         or organization_id = any(app.my_ops_orgs()))
   with check (app.is_super_admin()
               or owner_user_id = app.current_user_id()
               or organization_id = any(app.my_ops_orgs()));
@@ -1335,9 +1333,9 @@ grant select, insert, update on app_state to care_ride_app;
 -- 公開需求池：改讀 app_state，內容遮蔽到行政區
 -- ---------------------------------------------------------------------
 drop view if exists app_state_booking_pool;
-create view app_state_booking_pool
-with (security_invoker = true)
-as
+-- 刻意「不」用 security_invoker：view 以擁有者身分執行，所以呼叫者讀不到
+-- 原始表也照樣拿得到遮蔽後的結果。授權改由 view 自己的 where 條件把關。
+create view app_state_booking_pool as
   select s.id,
          app.approx_area(s.data->>'pickupAddress') as pickup_area,
          app.approx_area(s.data->>'destination')   as destination_area,

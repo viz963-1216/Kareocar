@@ -206,6 +206,21 @@ const booking = (id, extra = {}) => ({
     return /沒有權限/.test(out);
   });
 
+  console.log('--- 遮蔽不能被繞過 ---');
+  // 這條是回歸測試。原本的讀取政策為了讓需求池能運作，放行了「未承接的公開
+  // 預約」，結果營運方可以直接查原始表拿到完整門牌與預約者是誰——遮蔽只做在
+  // view 上，繞過 view 就沒了。現在需求池改由 security definer 的 view 提供。
+  await t('營運方無法直接從原始表讀到未承接預約的門牌', () => {
+    const out = psqlOutput("set role care_ride_app; select set_config('app.user_id','USR-DISP1',false); select coalesce(string_agg(data->>'pickupAddress',','),'<none>') from app_state where collection='bookings' and organization_id is null");
+    return !/文化路|100號/.test(out);
+  });
+  await t('營運方仍然看得到遮蔽後的需求池', async () => {
+    // 這時候 BKG-A 已被承接、BKG-B 已軟刪除，池子是空的；另開一筆未承接的來驗
+    await send(victim, [booking('BKG-POOL')]);
+    const out = psqlOutput("set role care_ride_app; select set_config('app.user_id','USR-DISP1',false); select count(*) from app_state_booking_pool");
+    return Number(out.trim().split('\n').pop()) >= 1;
+  });
+
   console.log(`\n結果：${pass} 通過 / ${fail} 失敗`);
   await getPool().end();
   process.exit(fail ? 1 : 0);

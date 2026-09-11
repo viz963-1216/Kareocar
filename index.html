@@ -2956,216 +2956,12 @@ class Store {
 
   constructor(){ this.#state=this.load(); }
   load(){
-    let raw=null;
-    try{
-      raw=LocalStore.getItem(APP_CONFIG.storageKey);
-      if(!raw) return this.reset(false);
-      const parsed=JSON.parse(raw);
-      const loadedSchemaVersion=Number(parsed.schemaVersion);
-      if(![17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44].includes(loadedSchemaVersion)) throw new Error(`UNSUPPORTED_SCHEMA:${loadedSchemaVersion}`);
-      parsed.schemaVersion=APP_CONFIG.schemaVersion;
-      parsed.version=APP_CONFIG.version;
-      parsed.externalIdentities=Array.isArray(parsed.externalIdentities)?parsed.externalIdentities:[];
-      parsed.membershipEvents=Array.isArray(parsed.membershipEvents)?parsed.membershipEvents:[];
-      parsed.memberships=(parsed.memberships||[])
-        .filter(m=>m.role!=='super_admin'&&m.role!=='viewer')
-        .map(m=>({createdAt:m.createdAt||parsed.updatedAt||nowISO(),updatedAt:m.updatedAt||parsed.updatedAt||nowISO(),...m,role:m.role==='owner'?'owner':m.role,status:(m.status==='invited'?'revoked':(m.status==='suspended'?'revoked':(m.status||'active')))}));
-      parsed.memberships.forEach(m=>{ if(m.status==='suspended') m.status='revoked'; });
-      if(!parsed.membershipEvents.length){
-        parsed.membershipEvents=parsed.memberships.map(m=>({id:uid('mevt'),membershipId:m.id,userId:m.userId,organizationId:m.organizationId,eventType:'migrated',fromStatus:null,toStatus:m.status||'active',fromRole:null,toRole:m.role,actorUserId:'usr_super_admin',createdAt:m.createdAt||parsed.updatedAt||nowISO(),note:'版本 12.19 建立組織身分歷史基準'}));
-      }
-      parsed.systemReports=parsed.systemReports||[];
-      parsed.benefitRulesets=Array.isArray(parsed.benefitRulesets)?parsed.benefitRulesets:[];
-      parsed.benefitRulesetEvents=Array.isArray(parsed.benefitRulesetEvents)?parsed.benefitRulesetEvents:[];
-      parsed.benefitAssessments=Array.isArray(parsed.benefitAssessments)?parsed.benefitAssessments:[];
-      parsed.benefitAssessmentEvents=Array.isArray(parsed.benefitAssessmentEvents)?parsed.benefitAssessmentEvents:[];
-      parsed.benefitLatestInfo=parsed.benefitLatestInfo&&typeof parsed.benefitLatestInfo==='object'?parsed.benefitLatestInfo:null;
-      parsed.benefitLatestEstimateRuns=Array.isArray(parsed.benefitLatestEstimateRuns)?parsed.benefitLatestEstimateRuns:[];
-      parsed.bookingEvents=Array.isArray(parsed.bookingEvents)?parsed.bookingEvents:[];
-      parsed.bookingRevisions=Array.isArray(parsed.bookingRevisions)?parsed.bookingRevisions:[];
-      parsed.tripOfflineQueue=Array.isArray(parsed.tripOfflineQueue)?parsed.tripOfflineQueue:[];
-      parsed.serviceProofs=Array.isArray(parsed.serviceProofs)?parsed.serviceProofs:[];
-      parsed.kpiDaily=Array.isArray(parsed.kpiDaily)?parsed.kpiDaily:[];
-      parsed.quoteSnapshots=Array.isArray(parsed.quoteSnapshots)?parsed.quoteSnapshots:[];
-      parsed.cancellations=Array.isArray(parsed.cancellations)?parsed.cancellations:[];
-      parsed.telemetryEvents=Array.isArray(parsed.telemetryEvents)?parsed.telemetryEvents:[];
-      parsed.integration={customerSheetCsv:APP_CONFIG.customerSheetCsv,googleSpreadsheetId:APP_CONFIG.googleSpreadsheetId,googleDatabaseLastSyncAt:null,lastSyncAt:null,lastSyncStatus:'尚未完成正式資料同步',lastSyncDetails:[],...(parsed.integration||{})};
-      parsed.integration.lastSyncDetails=Array.isArray(parsed.integration.lastSyncDetails)?parsed.integration.lastSyncDetails:[];
-      parsed.careRecipientRelations=Array.isArray(parsed.careRecipientRelations)?parsed.careRecipientRelations:[];
-      parsed.careRecipientRelations=parsed.careRecipientRelations.map(rel=>({...rel,canManageProfile:rel.canManageProfile!==undefined?!!rel.canManageProfile:!!rel.isPrimaryContact}));
-      {
-        const groups=new Map();
-        parsed.careRecipientRelations.filter(rel=>rel.status!=='revoked').forEach(rel=>{const rows=groups.get(rel.recipientId)||[];rows.push(rel);groups.set(rel.recipientId,rows);});
-        groups.forEach(rows=>{if(!rows.length)return;const chosen=rows.find(r=>r.isPrimaryContact&&r.canManageProfile)||rows.find(r=>r.isPrimaryContact)||rows.find(r=>r.canManageProfile)||rows[0];rows.forEach(r=>r.isPrimaryContact=r.id===chosen.id);});
-      }
-      parsed.careRecipientEvents=Array.isArray(parsed.careRecipientEvents)?parsed.careRecipientEvents:[];
-      parsed.careRecipientMergeEvents=Array.isArray(parsed.careRecipientMergeEvents)?parsed.careRecipientMergeEvents:[];
-      parsed.careRecipients=(parsed.careRecipients||[]).map(old=>{
-        const createdAt=old?.governance?.createdAt||old?.createdAt||parsed.updatedAt||nowISO(),updatedAt=old?.governance?.updatedAt||old?.updatedAt||createdAt;
-        if(old?.scope==='platform'&&old?.identity&&old?.contacts&&old?.addresses&&old?.governance){
-          const oldMobility=old.mobility||{},legacyAid=oldMobility.aidNeed||oldMobility.defaultAidNeed||'',legacySpecial=oldMobility.specialNeed||oldMobility.defaultSpecialNeeds||'';
-          const wheelchairType=oldMobility.wheelchairType||(/電動輪椅/.test(legacyAid)?'electric':/輪椅/.test(legacyAid)?'manual':'none');
-          return {
-            ...old,schemaVersion:3,status:old.status||'active',
-            mobility:{walkingAbility:oldMobility.walkingAbility||'unknown',wheelchairType,requiresAccessibleVehicle:oldMobility.requiresAccessibleVehicle??/輪椅|無障礙|升降/.test(`${legacyAid} ${legacySpecial}`),requiresEscort:!!oldMobility.requiresEscort,transferAssistance:oldMobility.transferAssistance||'unknown',defaultAidNeed:String(oldMobility.defaultAidNeed??legacyAid??'').trim(),defaultSpecialNeeds:String(oldMobility.defaultSpecialNeeds??legacySpecial??'').trim()},
-            servicePreferences:{defaultPickupAddress:old?.servicePreferences?.defaultPickupAddress||old?.addresses?.primary||'',defaultCompanions:Number(old?.servicePreferences?.defaultCompanions||0)||0,commonDestinations:Array.isArray(old?.servicePreferences?.commonDestinations)?old.servicePreferences.commonDestinations:[],notes:old?.servicePreferences?.notes||''},
-            governance:{...old.governance,createdAt,updatedAt,archivedAt:old.governance.archivedAt||null,mergedIntoRecipientId:old.governance.mergedIntoRecipientId||null,mergedAt:old.governance.mergedAt||null}
-          };
-        }
-        const aidNeed=old?.mobility?.aidNeed||'',specialNeed=old?.mobility?.specialNeed||'';
-        const wheelchairType=/電動輪椅/.test(aidNeed)?'electric':/輪椅/.test(aidNeed)?'manual':'none';
-        return {
-          id:old?.id||uid('rec'),schemaVersion:3,scope:'platform',status:old?.active===false?'archived':'active',
-          identity:{displayName:old?.name||'未命名服務對象',birthDate:old?.birthDate||null,gender:old?.gender||'unspecified'},
-          contacts:{primaryPhone:String(old?.primaryPhone||'').replace(/\D/g,''),emergencyContacts:Array.isArray(old?.emergencyContacts)?old.emergencyContacts:[]},
-          addresses:{primary:old?.primaryAddress||'',commonPickup:old?.primaryAddress||''},
-          mobility:{walkingAbility:'unknown',wheelchairType,requiresAccessibleVehicle:/輪椅|無障礙|升降/.test(`${aidNeed} ${specialNeed}`),requiresEscort:false,transferAssistance:'unknown',defaultAidNeed:aidNeed,defaultSpecialNeeds:specialNeed},
-          servicePreferences:{defaultPickupAddress:old?.primaryAddress||'',defaultCompanions:0,commonDestinations:[],notes:old?.notes||''},
-          governance:{createdByUserId:null,source:'v12_21_migration',sourceOrganizationId:old?.organizationId||null,createdAt,updatedAt,archivedAt:old?.active===false?updatedAt:null,mergedIntoRecipientId:null,mergedAt:null}
-        };
-      });
-      parsed.careRecipients=parsed.careRecipients.map(r=>{
-        const rid=r.id,legacyAddresses=r.addresses||{};
-        const legacyPrimary=String(legacyAddresses.primary||legacyAddresses.entries?.find(x=>x.id===legacyAddresses.primaryAddressId)?.address||'').trim();
-        const legacyPickup=String(r.servicePreferences?.defaultPickupAddress||legacyAddresses.commonPickup||legacyAddresses.entries?.find(x=>x.id===legacyAddresses.defaultPickupAddressId)?.address||legacyPrimary).trim();
-        const entries=[];
-        const addAddress=(address,type,label,id)=>{const value=String(address||'').trim();if(!value)return null;const existing=entries.find(x=>String(x.address||'').replace(/臺/g,'台').replace(/\s+/g,'')===value.replace(/臺/g,'台').replace(/\s+/g,''));if(existing)return existing.id;const row={id,type,label,address:value};entries.push(row);return row.id;};
-        (Array.isArray(legacyAddresses.entries)?legacyAddresses.entries:[]).forEach((x,i)=>addAddress(x.address,x.type||'other',x.label||`地址 ${i+1}`,x.id||`addr_${rid}_${i+1}`));
-        const primaryId=addAddress(legacyPrimary,'home','主要地址',`addr_${rid}_primary`)||entries[0]?.id||null;
-        const pickupId=addAddress(legacyPickup,'pickup','預設上車地址',legacyPickup===legacyPrimary&&primaryId?primaryId:`addr_${rid}_pickup`)||primaryId;
-        const emergency=(r.contacts?.emergencyContacts||[]).map((c,i)=>({id:c.id||`ec_${rid}_${i+1}`,name:String(c.name||'').trim(),relationship:c.relationship||'other',phone:String(c.phone||'').replace(/\D/g,''),priority:Number.isFinite(Number(c.priority))?Math.max(1,Number(c.priority)):i+1})).filter(c=>c.name||c.phone).sort((a,b)=>a.priority-b.priority);
-        const sp={...(r.servicePreferences||{})};delete sp.defaultPickupAddress;
-        const rawTransfer=String(r.mobility?.transferAssistance||'unknown').trim().toLowerCase();
-        const transferAliases={no:'none',not_required:'none',no_assistance:'none',independent:'independent',partial:'partial',full:'full',unknown:'unknown',none:'none'};
-        const transferAssistance=transferAliases[rawTransfer]||'unknown';
-        return {...r,schemaVersion:4,contacts:{...(r.contacts||{}),primaryPhone:String(r.contacts?.primaryPhone||'').replace(/\D/g,''),emergencyContacts:emergency},addresses:{entries,primaryAddressId:primaryId,defaultPickupAddressId:pickupId},mobility:{...(r.mobility||{}),transferAssistance},servicePreferences:{defaultCompanions:Math.max(0,Number(sp.defaultCompanions??0)||0),commonDestinations:Array.isArray(sp.commonDestinations)?sp.commonDestinations:[],notes:sp.notes||''},governance:{...(r.governance||{}),potentialDuplicateRecipientIds:Array.isArray(r.governance?.potentialDuplicateRecipientIds)?r.governance.potentialDuplicateRecipientIds:[]}};
-      });
-      {
-        const selfByUser=new Map(),selfByRecipient=new Map();
-        parsed.careRecipientRelations.filter(rel=>rel.status!=='revoked'&&rel.relationship==='self').sort((a,b)=>new Date(a.createdAt||0)-new Date(b.createdAt||0)).forEach(rel=>{
-          const userConflict=selfByUser.has(rel.userId)&&selfByUser.get(rel.userId)!==rel.recipientId,recipientConflict=selfByRecipient.has(rel.recipientId)&&selfByRecipient.get(rel.recipientId)!==rel.userId;
-          if(userConflict||recipientConflict){rel.relationship='other';rel.canBook=false;rel.canManageProfile=false;rel.isPrimaryContact=false;rel.updatedAt=nowISO();rel.migrationNote='V12.25.1：解除衝突的 self 關係，需平台人工確認';return;}
-          selfByUser.set(rel.userId,rel.recipientId);selfByRecipient.set(rel.recipientId,rel.userId);rel.canBook=true;rel.canManageProfile=true;
-        });
-        const groups=new Map();parsed.careRecipientRelations.filter(rel=>rel.status!=='revoked').forEach(rel=>{const rows=groups.get(rel.recipientId)||[];rows.push(rel);groups.set(rel.recipientId,rows);});
-        groups.forEach(rows=>{if(!rows.length)return;const chosen=rows.find(r=>r.relationship==='self')||rows.find(r=>r.isPrimaryContact&&r.canManageProfile)||rows.find(r=>r.canManageProfile)||rows[0];rows.forEach(r=>r.isPrimaryContact=r.id===chosen.id);if(chosen)chosen.canManageProfile=true;});
-      }
-      if(!parsed.careRecipientEvents.length){
-        parsed.careRecipientEvents=parsed.careRecipients.filter(r=>r.status!=='merged').map(r=>({id:uid('crevt'),recipientId:r.id,eventType:'migrated',actorUserId:null,organizationId:null,relationId:null,detail:'版本 12.22 建立服務對象第一階段異動歷史基準',changes:null,createdAt:r.governance?.updatedAt||parsed.updatedAt||nowISO()}));
-      }
-      const recipientByIdForMigration=new Map(parsed.careRecipients.map(r=>[r.id,r]));
-      const recipientDefaultNeedsForMigration=(recipient)=>{
-        const m=recipient?.mobility||{},sp=recipient?.servicePreferences||{};let aidNeed=String(m.defaultAidNeed||'').trim();
-        if(!aidNeed){if(m.wheelchairType==='electric')aidNeed='電動輪椅';else if(m.wheelchairType==='manual')aidNeed='手動輪椅';else if(m.walkingAbility==='walker')aidNeed='助行器';}
-        return {aidNeed,companions:Number(sp.defaultCompanions||0)||0,specialNeed:String(m.defaultSpecialNeeds||'').trim(),requiresAccessibleVehicle:!!m.requiresAccessibleVehicle,requiresEscort:!!m.requiresEscort,transferAssistance:m.transferAssistance||'unknown'};
-      };
-      parsed.bookings=(parsed.bookings||[]).map(b=>{
-        const defaults=b?.serviceNeeds?.recipientDefaultsSnapshot||recipientDefaultNeedsForMigration(recipientByIdForMigration.get(b.recipientId));
-        const oldOverrides=b?.serviceNeeds?.bookingOverrides||{};
-        const serviceNeeds={schemaVersion:1,recipientDefaultsSnapshot:defaults,bookingOverrides:{aidNeed:Object.prototype.hasOwnProperty.call(oldOverrides,'aidNeed')?oldOverrides.aidNeed:(String(b?.aidNeed||'').trim()||null),companions:Object.prototype.hasOwnProperty.call(oldOverrides,'companions')?oldOverrides.companions:(b?.companions!==undefined&&b?.companions!==null&&String(b.companions)!==''?Number(b.companions)||0:null),specialNeed:Object.prototype.hasOwnProperty.call(oldOverrides,'specialNeed')?oldOverrides.specialNeed:(String(b?.specialNeed||'').trim()||null)},capturedAt:b?.serviceNeeds?.capturedAt||b?.submittedAt||parsed.updatedAt||nowISO()};
-        if(loadedSchemaVersion<=22&&b?.source==='requester_app'&&Number(serviceNeeds.bookingOverrides.companions)===0&&Number(defaults?.companions||0)>0) serviceNeeds.bookingOverrides.companions=null;
-        const migrated={claimedByUserId:null,claimedAt:null,...b,claimStatus:b?.claimStatus||(b?.organizationId?'claimed':'open'),serviceNeeds};
-        const validStates=new Set(['open','claimed','partially_scheduled','scheduled','rejected','cancelled','expired']);
-        const state=validStates.has(migrated.state)?migrated.state:(migrated.status==='scheduled'?'scheduled':migrated.status==='rejected'?'rejected':(migrated.status==='cancelled'||migrated.claimStatus==='cancelled')?'cancelled':(migrated.organizationId||migrated.claimStatus==='claimed')?'claimed':'open');
-        migrated.state=state;migrated.version=Math.max(1,Number(migrated.version)||1);migrated.stateChangedAt=migrated.stateChangedAt||migrated.updatedAt||migrated.submittedAt||parsed.updatedAt||nowISO();migrated.updatedAt=migrated.updatedAt||migrated.stateChangedAt;
-        if(state==='open'){migrated.status='pending';migrated.claimStatus='open';migrated.organizationId=null;migrated.claimedByUserId=null;migrated.claimedAt=null;migrated.tripId=null;}
-        else if(state==='claimed'){migrated.status='pending';migrated.claimStatus='claimed';migrated.tripId=null;}
-        else if(state==='partially_scheduled'){migrated.status='partially_scheduled';migrated.claimStatus='claimed';}
-        else if(state==='scheduled'){migrated.status='scheduled';migrated.claimStatus='claimed';}
-        else if(state==='rejected'){migrated.status='rejected';migrated.claimStatus='closed';migrated.tripId=null;}
-        else if(state==='cancelled'){migrated.status='cancelled';migrated.claimStatus='cancelled';migrated.tripId=null;}
-        else {migrated.status='expired';migrated.claimStatus='expired';migrated.organizationId=null;migrated.claimedByUserId=null;migrated.claimedAt=null;migrated.tripId=null;}
-        migrated.locations=bookingLocationsFromLegacy(migrated,migrated.locations||null);
-        migrated.legs=bookingLegsFromLegacy(migrated.id,migrated,migrated.locations,migrated.legs||null);
-        if(state==='scheduled'&&!migrated.legs.some(l=>l.status==='scheduled')){const first=migrated.legs[0];if(first){first.status='scheduled';first.tripId=migrated.tripId||null;first.scheduledOrganizationId=migrated.organizationId||null;first.scheduledAt=migrated.scheduledAt||migrated.updatedAt||null;}}
-        if(state==='scheduled'&&migrated.legs.some(l=>l.status==='pending')){migrated.state='partially_scheduled';migrated.status='partially_scheduled';migrated.claimStatus='claimed';}
-        migrated.marketExpiresAt=migrated.marketExpiresAt||sharedBookingMarketExpiryISO(migrated,migrated.submittedAt||migrated.updatedAt||null);migrated.expiryPolicyVersion=migrated.expiryPolicyVersion||BOOKING_EXPIRY_POLICY.policyVersion;migrated.expiredAt=migrated.expiredAt||null;migrated.expiryReason=migrated.expiryReason||null;
-        migrated.revisionNo=Math.max(0,Number(migrated.revisionNo)||0);
-        if(!Array.isArray(migrated.commercialSnapshots)||!migrated.commercialSnapshots.length){
-          const sid=uid('bterms'),capturedAt=migrated.updatedAt||migrated.submittedAt||parsed.updatedAt||nowISO();
-          migrated.commercialSnapshots=[{id:sid,schemaVersion:1,bookingId:migrated.id,bookingVersion:migrated.version||1,reason:'migration',quote:{schemaVersion:1,status:'ruleset_required',currency:'TWD',pricingRulesetVersion:null,estimatedFare:null,baseFare:null,distanceFare:null,timeFare:null,extraFee:null,explanation:'歷史資料尚未載入版本化定價規則。',source:'migration',capturedAt},benefit:{schemaVersion:1,status:'ruleset_required',cmsLevel:null,requestedService:'transportation',estimatedSubsidy:null,rulesetVersion:null,sourceAssessmentId:null,explanation:'歷史資料尚未載入版本化補助規則。',capturedAt},capturedByUserId:null,capturedAt}];
-          migrated.activeCommercialSnapshotId=sid;
-        }else if(!migrated.activeCommercialSnapshotId){migrated.activeCommercialSnapshotId=migrated.commercialSnapshots[migrated.commercialSnapshots.length-1]?.id||null;}
-        const migrationRecipient=recipientByIdForMigration.get(migrated.recipientId)||null;
-        const existingJurisdiction=BOOKING_SERVICE_JURISDICTIONS.includes(String(migrated.serviceJurisdiction||''))?migrated.serviceJurisdiction:null;
-        const migrationResidenceAddress=migrationRecipient?(()=>{const a=migrationRecipient.addresses||{},entries=Array.isArray(a.entries)?a.entries:[],row=entries.find(x=>x.id===a.primaryAddressId)||entries.find(x=>x.type==='home')||entries[0];return String(row?.address||row?.addressText||'').trim();})():'';
-        migrated.serviceJurisdiction=existingJurisdiction||serviceJurisdictionFromResidenceAddress(migrationResidenceAddress);
-        migrated.serviceJurisdictionSource=migrated.serviceJurisdictionSource||(existingJurisdiction?'existing_snapshot':(migrationResidenceAddress?'migration_care_recipient_residence':'migration_unknown'));
-        migrated.serviceJurisdictionResidenceCity=migrated.serviceJurisdictionResidenceCity||locationCity(migrationResidenceAddress)||null;
-        migrated.serviceJurisdictionCapturedAt=migrated.serviceJurisdictionCapturedAt||migrated.updatedAt||migrated.submittedAt||parsed.updatedAt||nowISO();
-        return migrated;
-      });
-      parsed.bookings.forEach(b=>{
-        if(b?.source!=='google_sheet'||b.externalBookingId)return;
-        const submitted=String(b.submittedAt||'').trim().replace(/\s+/g,' ').slice(0,160);
-        if(submitted)b.externalBookingId=`form_timestamp:${submitted}`;
-      });
-      {
-        const known=new Set(parsed.bookingEvents.map(e=>e.bookingId));
-        parsed.bookings.forEach(b=>{if(known.has(b.id))return;parsed.bookingEvents.push({id:uid('bevt'),bookingId:b.id,eventType:'migrated',action:null,fromState:null,toState:b.state||null,actorUserId:null,organizationId:b.organizationId||null,tripId:b.tripId||null,reasonCode:null,reasonText:'',source:'migration',bookingVersion:Math.max(1,Number(b.version)||1),metadata:null,createdAt:b.updatedAt||b.submittedAt||parsed.updatedAt||nowISO()});});
-      }
-      const superUser=(parsed.users||[]).find(u=>u.id==='usr_super_admin');
-      if(superUser){ superUser.platformRole='super_admin'; if(!String(superUser.name||'').trim())superUser.name='平台超級管理者'; }
-      parsed.organizations=(parsed.organizations||[]).map(o=>({contactPhone:'',...o,taxId:String(o.taxId||'').replace(/\D/g,'')}));
-      parsed.drivers=(parsed.drivers||[]).map(d=>{const next={...d};delete next.name;delete next.phone;return next;});
-      parsed.vehicles=(parsed.vehicles||[]).map(v=>({...v,status:v.status==='inactive'?'maintenance':(v.status||'available')}));
-      const vehicleIdsUsedByTrips=new Set((parsed.trips||[]).map(t=>t.vehicleId).filter(Boolean));
-      parsed.vehicles=parsed.vehicles.filter(v=>{
-        if(!v.deletedAt) return true;
-        if(vehicleIdsUsedByTrips.has(v.id)){
-          v.status='retired';
-          v.retiredAt=v.retiredAt||v.deletedAt||nowISO();
-          v.retiredByUserId=v.retiredByUserId||v.deletedByUserId||null;
-          delete v.deletedAt; delete v.deletedByUserId;
-          return true;
-        }
-        return false;
-      });
-      const survivingVehicleIds=new Set(parsed.vehicles.map(v=>v.id));
-      parsed.vehicleAssignments=(parsed.vehicleAssignments||[])
-        .filter(a=>!a.vehicleId||survivingVehicleIds.has(a.vehicleId))
-        .map(a=>a.active?({...a,active:false,endsAt:a.endsAt||nowISO(),endReason:a.endReason||'migration_shared_vehicle_pool'}):a);
-      let requesterOrg=parsed.organizations.find(o=>o.id===APP_CONFIG.requesterOrganizationId);
-      if(!requesterOrg){
-        requesterOrg={id:APP_CONFIG.requesterOrganizationId,type:'requester_hub',name:'需求者組織',taxId:'',contactPhone:'',active:true,systemManaged:true,createdAt:nowISO()};
-        parsed.organizations.push(requesterOrg);
-      }else{
-        Object.assign(requesterOrg,{type:'requester_hub',name:'需求者組織',active:true,systemManaged:true});
-      }
-      const requesterByUser=new Map();
-      parsed.memberships=(parsed.memberships||[]).filter(m=>{
-        if(m.role!=='requester') return true;
-        if(requesterByUser.has(m.userId)) return false;
-        m.organizationId=APP_CONFIG.requesterOrganizationId;
-        m.role='requester';
-        m.updatedAt=nowISO();
-        requesterByUser.set(m.userId,m.id);
-        return true;
-      });
-      parsed.memberships.forEach(m=>{if(m.organizationId===APP_CONFIG.requesterOrganizationId&&m.role!=='requester'){m.status='revoked';m.updatedAt=nowISO();}});
-      const ownerSeen=new Set();
-      parsed.memberships.forEach(m=>{
-        if(m.role!=='owner'||m.status==='revoked') return;
-        if(ownerSeen.has(m.organizationId)){m.status='revoked';m.revokedAt=nowISO();m.updatedAt=nowISO();}
-        else ownerSeen.add(m.organizationId);
-      });
-      const externalSeen=new Set();
-      parsed.externalIdentities=parsed.externalIdentities.filter(x=>{
-        const key=`${x.provider||''}:${x.providerUserId||''}`;
-        if(!x.provider||!x.providerUserId||!x.userId||externalSeen.has(key)) return false;
-        externalSeen.add(key);return true;
-      });
-      // V12.25.65：仍停用舊版自動 Demo Seed；展示資料改由 Google 商用資料庫 live/cache hydration 提供。
-      this.#recoveryInfo=null;
-      return parsed;
-    }catch(error){
-      const backupKey=`${APP_CONFIG.storageKey}:recovery:${Date.now()}`;
-      let backupPersisted=false;
-      if(raw){try{backupPersisted=!!LocalStore.setItem(backupKey,raw);}catch{}}
-      this.#recoveryInfo={active:true,reason:String(error?.message||error||'DB_LOAD_FAILED'),backupKey:backupPersisted?backupKey:null,enteredAt:nowISO(),rawPreservedAtPrimaryKey:!!raw};
-      console.error('[Store] DB load/migration 失敗. Entering read-only recovery mode; primary storage is NOT overwritten.',error);
-      return seedDB();
-    }
+    // 不再從 localStorage 還原整份資料庫。權威資料在 Postgres：開啟頁面時先給
+    // 一個空結構，登入之後由 AppStateDatabase.loadAll() 拉回這個身分看得到的
+    // 資料。這樣做順便解掉三個舊問題：整包鏡像撐爆 localStorage、本機留著一份
+    // 會過期的資料、以及舊版 schema 遷移那一長串永遠要維護的相容程式碼。
+    this.#recoveryInfo=null;
+    return seedDB();
   }
   get state(){ return this.#state; }
   get recoveryInfo(){ return this.#recoveryInfo?deepClone(this.#recoveryInfo):null; }
@@ -3182,7 +2978,10 @@ class Store {
     const persist=()=>{
       this.#saveTimer=null;
       if(!this.#dirty)return this.#lastSavePersistent;
-      this.#lastSavePersistent=!!LocalStore.setItem(APP_CONFIG.storageKey,JSON.stringify(this.#state));
+      // 整份資料庫不再寫進 localStorage。權威資料在 Postgres，本機只留
+      // 「還沒送出的佇列」；把整包鏡像存在瀏覽器正是 QuotaExceededError 的
+      // 來源，而且離線時那份鏡像也只會是過期資料。
+      this.#lastSavePersistent=true;
       this.#dirty=false;
       try{updateStorageHealthUI();}catch{}
       return this.#lastSavePersistent;
@@ -3201,21 +3000,14 @@ class Store {
   mutate(mutator,options={}){ const capture=options?.remote!==false&&authoritativeProduction_()&&typeof backendAuthToken==='function'&&!!backendAuthToken()&&!!authoritativeCurrentActor_(); const before=capture?deepClone(this.#state):null; mutator(this.#state); this.save(); if(capture)authoritativeQueueChanges_(authoritativeDiff_(before,this.#state)); return this.#state; }
   async flushAuthoritative(){ return authoritativeFlush_(); }
   refreshFromStorage(){
-    try{
-      const raw=LocalStore.getItem(APP_CONFIG.storageKey);
-      if(!raw) return this.#state;
-      const parsed=JSON.parse(raw);
-      if(Number(parsed.schemaVersion)!==APP_CONFIG.schemaVersion) return this.#state;
-      this.#state=parsed;
-    }catch(error){
-      console.warn('[Store] refreshFromStorage 失敗; keeping in-memory state.',error?.name||error);
-    }
+    // 本機不再保存整份資料庫，所以沒有東西可以重新讀取。
+    // 要拿到最新資料請呼叫 AppStateDatabase.loadAll()。
     return this.#state;
   }
   reset(emit=true){
     this.#recoveryInfo=null;
     this.#state=seedDB();
-    this.#lastSavePersistent=!!LocalStore.setItem(APP_CONFIG.storageKey,JSON.stringify(this.#state));
+    this.#lastSavePersistent=true;
     if(emit) this.#listeners.forEach(fn=>fn(this.#state));
     try{updateStorageHealthUI();}catch{}
     return this.#state;
@@ -3761,6 +3553,62 @@ GoogleDatabase={
     }catch(error){const message=`Google 資料轉換失敗：${error.message||error}`;store.mutate(db=>{db.integration={...(db.integration||{}),lastSyncStatus:message,lastSyncDetails:details};});return {ok:false,error:message,details};}
   }
 };
+
+// =====================================================================
+// 從 Postgres 載入這個身分看得到的資料。
+//
+// 取代 GoogleDatabase.syncAll：舊版要對 Google 試算表發十幾次請求、再把試算表
+// 欄位一列一列轉回前端模型。app_state 存的本來就是前端模型，所以這裡不做轉換。
+//
+// 過濾在資料庫層（RLS）完成，不在這裡：需求者只會拿到自己的，調度員只會拿到
+// 自家組織的。舊版從試算表撈的是「全部」，那正是本機儲存會爆掉的原因。
+// =====================================================================
+const AppStateDatabase={
+  lastLoadedAt:null,
+  async loadAll({silent=false}={}){
+    if(typeof navigator!=='undefined'&&navigator.onLine===false){
+      const error='目前離線，無法向正式資料庫取得最新資料。';
+      if(!silent)showToast(error);
+      return {ok:false,error,details:[error]};
+    }
+    const token=typeof window.backendAuthToken==='function'?window.backendAuthToken():'';
+    if(!token)return {ok:false,error:'尚未登入',details:['尚未登入']};
+    try{
+      const response=await fetch('/api/v2/state-load',{
+        method:'GET',
+        headers:{'Accept':'application/json','Authorization':`Bearer ${token}`},
+        credentials:'same-origin',cache:'no-store'
+      });
+      const result=await response.json().catch(()=>null);
+      if(!response.ok||!result?.ok){
+        const message=result?.error?.message||`載入失敗（HTTP ${response.status}）`;
+        if(!silent)showToast(message);
+        return {ok:false,error:message,details:[message],code:result?.error?.code};
+      }
+      const collections=result.data?.collections||{};
+      const details=Object.entries(result.data?.counts||{}).map(([k,v])=>`${k} ${v} 筆`);
+      // remote:false 很重要：這是「從伺服器拿回來的資料」，不是使用者的變更，
+      // 不能再被 diff 成待送出的異動排隊送回伺服器。
+      store.mutate(db=>{
+        AUTHORITATIVE_STATE_COLLECTIONS.forEach(name=>{
+          if(Array.isArray(collections[name]))db[name]=collections[name];
+          else if(!Array.isArray(db[name]))db[name]=[];
+        });
+        db.demandPool=Array.isArray(result.data?.pool)?result.data.pool:[];
+        db.integration={...(db.integration||{}),lastSyncStatus:'',lastSyncDetails:details,
+                        lastSyncedAt:result.data?.loadedAt||nowISO(),source:'postgres'};
+      },{remote:false,reason:'state_load'});
+      this.lastLoadedAt=result.data?.loadedAt||nowISO();
+      if(result.data?.truncated)console.warn('[StateLoad] 資料量達到上限，只載入了一部分');
+      return {ok:true,details,counts:result.data?.counts||{}};
+    }catch(error){
+      const message=`載入正式資料失敗：${error?.message||error}`;
+      if(!silent)showToast(message);
+      return {ok:false,error:message,details:[message]};
+    }
+  }
+};
+window.AppStateDatabase=AppStateDatabase;
 
 function canonicalExternalBookingId(value=''){
   return String(value||'').trim().replace(/\s+/g,' ').slice(0,160);
@@ -8080,7 +7928,7 @@ async function confirmSocialLogin(){
     {
       setTimeout(async()=>{
         try{
-          const sync=await GoogleDatabase.syncAll({silent:true});
+          const sync=await AppStateDatabase.loadAll({silent:true});
           if(!sync?.ok){console.warn('[SocialLogin] Google Database background sync failed',sync?.error||sync);return;}
           if(Identity.currentUser()){applyIdentityContext();renderNav();render();updateSyncUI();}
         }catch(error){console.warn('[SocialLogin] Google Database background sync failed',error);}
@@ -8227,7 +8075,7 @@ async function login(){
     {
       setTimeout(async()=>{
         try{
-          const sync=await GoogleDatabase.syncAll({
+          const sync=await AppStateDatabase.loadAll({
             silent:true,
             strictProduction:true
           });
@@ -9340,7 +9188,7 @@ async function syncBookings(event){
   if(btn){btn.disabled=true;btn.setAttribute('aria-busy','true');btn.textContent='同步資料中…';}
   showToast('正在同步最新正式資料…');
   try{
-    const result=await GoogleDatabase.syncAll();
+    const result=await AppStateDatabase.loadAll();
     if(result.ok){
       try{Benefit.migrate();}catch(error){console.warn('[GoogleDatabase] Benefit normalization warning',error);}
       try{Trip.migrateRuntimeModel?.();Trip.migrateEventHistory?.();Trip.migratePassengerRuntimeHistory?.();Trip.migrateIssueStateModel?.();}catch(error){console.warn('[GoogleDatabase] Trip normalization warning',error);}
@@ -9405,7 +9253,7 @@ async function saveStaff(){
   try{
     {
       const result=await CloudIdentity.createStaff({organizationId:orgId(),name,phone,password,role:staffRole,alsoRequester});
-      const sync=await GoogleDatabase.syncAll({silent:true});if(!sync.ok)throw new Error(`帳號已送出，但資料庫重新同步失敗：${sync.error}`);
+      const sync=await AppStateDatabase.loadAll({silent:true});if(!sync.ok)throw new Error(`帳號已送出，但資料庫重新同步失敗：${sync.error}`);
       if(!result.membership?.membershipId&&!result.membershipId)console.warn('[createStaff] backend response missing membership id',result);
     }
     $('staffInitialPasswordInput').value='';closeModal('addStaffModal');render();
@@ -9740,7 +9588,7 @@ function bindViewEvents(){
     if(!result.ok){showToast(result.error);render();return;}
     const persisted=await store.flushAuthoritative();
     if(!persisted?.ok){render();showToast(`接案尚未完成後端確認：${persisted?.error||'請保持網路連線後重試'}`);return;}
-    const cloudRefresh=await GoogleDatabase.syncAll({silent:true});
+    const cloudRefresh=await AppStateDatabase.loadAll({silent:true});
     if(!cloudRefresh?.ok){render();showToast(`接案已寫入 Google Sheet，但完整履約資訊重新載入失敗：${cloudRefresh?.error||'請重新整理'}`);return;}
     render();showToast(`已由 ${result.organization.name} 接案，後端版本確認完成，完整履約資訊已解鎖`);
   }));
@@ -10025,7 +9873,7 @@ async function bootstrapApplication(){
       const lastSyncAt=store.state?.integration?.googleDatabaseLastSyncAt||store.state?.integration?.lastSyncAt||null;
       const lastSyncMs=lastSyncAt?Date.now()-new Date(lastSyncAt).getTime():Infinity;
       if(Number.isFinite(lastSyncMs)&&lastSyncMs>=0&&lastSyncMs<120000)return;
-      const result=await GoogleDatabase.syncAll({silent:true});
+      const result=await AppStateDatabase.loadAll({silent:true});
       if(!result?.ok){console.warn('[Bootstrap] authenticated Google database refresh failed',result?.error||result);return;}
       try{Benefit.migrate();}catch(error){console.warn('[Bootstrap] Benefit cloud normalization warning',error);}
       try{Trip.migrateRuntimeModel?.();Trip.migrateEventHistory?.();Trip.migratePassengerRuntimeHistory?.();Trip.migrateIssueStateModel?.();}catch(error){console.warn('[Bootstrap] Trip cloud normalization warning',error);}
