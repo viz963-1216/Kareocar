@@ -28,7 +28,6 @@ process.env.AUTH_PBKDF2_ITERATIONS = '1000';
 const auth = require(path.join(FN, '_auth-pg.js'));
 const { withoutUser, withUser, getPool } = require(path.join(FN, '_db.js'));
 const login = require(path.join(FN, 'v2-password-login.js'));
-const bookings = require(path.join(FN, 'v2-bookings.js'));
 
 let pass = 0, fail = 0;
 const t = async (name, fn) => {
@@ -42,11 +41,6 @@ const t = async (name, fn) => {
 const post = (body, ip) => login.handler({
   httpMethod: 'POST', body: JSON.stringify(body),
   headers: ip ? { 'x-nf-client-connection-ip': ip } : {}
-});
-const getBookings = (token, qs) => bookings.handler({
-  httpMethod: 'GET',
-  headers: token ? { authorization: `Bearer ${token}` } : {},
-  queryStringParameters: qs || {}
 });
 const parse = (res) => ({ status: res.statusCode, ...JSON.parse(res.body) });
 
@@ -111,41 +105,16 @@ const parse = (res) => ({ status: res.statusCode, ...JSON.parse(res.body) });
     return out === '0' && Number(total) > 0;
   });
 
-  console.log('--- 讀預約：RLS 決定看得到什麼 ---');
-  await t('沒有 token 回 401', async () => parse(await getBookings(null)).status === 401);
-  await t('偽造 token 被拒', async () =>
-    parse(await getBookings('bogus.token')).error.code === 'SESSION_INVALID');
-  await t('需求者只看得到自己的預約', async () => {
-    const r = parse(await getBookings(victimToken));
-    return r.ok && r.data.bookings.every((b) => b.requested_by_user_id === 'USR-VICTIM');
-  });
-  await t('調度員看得到自家組織的預約', async () => {
-    const r = parse(await getBookings(dispatchToken));
-    return r.ok && r.data.bookings.some((b) => b.organization_id === 'ORG-TP-001');
-  });
-  await t('調度員看不到別家組織的預約', async () => {
-    const r = parse(await getBookings(dispatchToken));
-    return r.data.bookings.every((b) => b.organization_id === 'ORG-TP-001' || b.organization_id === null);
-  });
-
-  console.log('--- 公開需求池已遮蔽 ---');
-  await t('調度員讀得到需求池', async () => {
-    const r = parse(await getBookings(dispatchToken, { pool: '1' }));
-    return r.ok && Array.isArray(r.data.pool);
-  });
-  await t('需求池不含門牌與預約者', async () => {
-    const res = await getBookings(dispatchToken, { pool: '1' });
-    return !/文化路|requested_by|USR-VICTIM/.test(res.body);
-  });
-  await t('需求者讀需求池得到空結果', async () => {
-    const r = parse(await getBookings(victimToken, { pool: '1' }));
-    return r.ok && r.data.pool.length === 0;
-  });
+  // 「讀預約」與「公開需求池」兩段已移除：它們打的是 v2-bookings，讀 typed
+  // bookings 表。預約資料現在寫在 app_state，那條路徑已經沒有人走。等價的驗證
+  // 在 state.test.js（寫入與遮蔽）與 load.test.js（每個身分讀得到什麼）。
 
   console.log('--- 改密碼後舊 token 失效 ---');
   await t('bump session 版本後舊 token 被拒', async () => {
     await withUser('USR-VICTIM', (c) => auth.bumpSessionVersion(c, 'USR-VICTIM'));
-    const r = parse(await getBookings(victimToken));
+    const load = require(path.join(FN, 'v2-state-load.js'));
+    const r = parse(await load.handler({ httpMethod: 'GET',
+      headers: { authorization: `Bearer ${victimToken}` } }));
     return r.error && r.error.code === 'SESSION_INVALID';
   });
 

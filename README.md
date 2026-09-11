@@ -26,25 +26,35 @@ Google Sheets
 ## 開發
 
 ```bash
-npm test          # 後端回歸測試（不需部署，Node 直接跑 .gs）
+# 需要本機 Postgres 16
+PGHOST=/tmp/pgrun PGPORT=5433 supabase/tests/run-all.sh   # 全套接線與 RLS 測試
+npm test                                                  # Apps Script 層的回歸測試
 node tools/check-inline-js.js    # index.html 內嵌 JS 語法檢查
 node tools/check-dom-refs.js     # DOM id 交叉檢查
-bash tools/checksums.sh          # 重新產生 SHA256SUMS.txt
 ```
 
-`tests/` 用一個小型的 Apps Script 模擬層（`tests/shim.js`、`tests/sheets.js`）在 Node 上執行 `.gs` 檔，因此授權與密碼邏輯可以在部署前就驗證。
+`supabase/tests/run-all.sh` 會從乾淨的資料庫依序跑完所有測試套件。它跑的是
+`netlify/functions/` 底下的實際程式碼，接在真實 Postgres 上、以真實的
+`care_ride_app` 角色連線，所以 RLS 是真的在把關，不是模擬的。
 
-## 資料庫遷移（進行中）
+`tests/` 則是 Apps Script 層的測試，用一個小型模擬層（`tests/shim.js`、
+`tests/sheets.js`）在 Node 上執行 `.gs` 檔。
 
-`supabase/` 下是 Postgres 版的 schema 與 RLS 政策，已通過 31 項驗證測試（含攻擊模擬）。
-目前**尚未接線**——執行中的系統仍走 Apps Script + Google Sheets。
+## 資料庫
+
+執行中的系統跑在 **Postgres（Supabase）** 上：身分、預約、行程、稽核全部在
+`supabase/migrations/` 定義的 schema 與 RLS 政策之下。
+
+Apps Script 與 Google Sheets 只剩 Google 社群登入那一條路徑還在用，而該功能
+目前在登入頁是停用的，等移轉到 Postgres 後才會重新開啟。
 
 套用步驟與注意事項見 [supabase/README.md](supabase/README.md)。最重要的一點：
 Netlify Function 必須用 `care_ride_app` 角色連線，用 `postgres` 會繞過全部 RLS 政策。
 
 ## 部署
 
-見 [DEPLOYMENT.md](DEPLOYMENT.md)。Apps Script 與 Netlify 必須整包一起更新，只換 `index.html` 會造成前後端契約不一致。
+見 [DEPLOYMENT.md](DEPLOYMENT.md)。`index.html`、`netlify/functions/` 與
+`supabase/migrations/` 必須一起更新——只換其中一個會造成前後端契約不一致。
 
 ## 版本紀錄
 
