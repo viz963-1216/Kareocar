@@ -11,3 +11,6 @@ Thumbs.db
 .env.local
 supabase/.temp/
 *.pgpass
+
+# Cowork 交付檔案的暫存副本，正本在 netlify/ 與 supabase/ 底下
+Claude outputs/
