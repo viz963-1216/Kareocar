@@ -6972,8 +6972,18 @@ function loadSession(){
 
 Identity = {
   init(){ return loadSession(); },
-  startBackendSession({user:backendUser,memberships:backendMemberships=[],provider='password'}){
+  startBackendSession({user:backendUser,memberships:backendMemberships=[],organizations:backendOrganizations=[],provider='password'}){
     const backendUserId=String(backendUser?.userId||'').trim();if(!backendUserId)return {ok:false,error:'後端沒有回傳使用者識別碼'};
+    // 組織要先進本機，成員資格才算數：activeMembershipsForUser 會要求成員資格
+    // 指向的組織存在於 store.state.organizations，否則那筆身分會被濾掉。以前組織
+    // 是靠整份資料庫鏡像帶進來的，改成登入後才向伺服器載入之後，這裡本機是空的，
+    // 剛註冊完的人就會看到「沒有有效身分」。
+    const incomingOrgs=(Array.isArray(backendOrganizations)?backendOrganizations:[])
+      .map(o=>({id:window.gsOrganizationId(o.id),name:o.name||'',type:o.type||'',active:o.active!==false}))
+      .filter(o=>o.id);
+    if(incomingOrgs.length){
+      store.mutate(db=>{incomingOrgs.forEach(o=>{const existing=db.organizations.find(x=>x.id===o.id);if(existing)Object.assign(existing,o);else db.organizations.push(o);});},{remote:false,reason:'backend_session_orgs'});
+    }
     const localUserId=window.gsUserId(backendUserId);let user=store.state.users.find(u=>u.id===localUserId);
     const normalizedPhone=digitsOnly(backendUser?.phone||'');
     if(!user){
@@ -6993,7 +7003,7 @@ Identity = {
       store.mutate(db=>normalizedMemberships.forEach(m=>{const existing=db.memberships.find(x=>x.id===m.id);if(existing)Object.assign(existing,m);else db.memberships.push(m);}),{remote:false,reason:'backend_session'});
     }
     const memberships=activeMembershipsForUser(localUserId),membership=memberships.find(m=>m.organizationId===APP_CONFIG.defaultOrganizationId)||memberships[0];
-    if(!membership)return {ok:false,reason:'no_active_identity',error:'此帳號目前沒有有效身分；請確認 Google Sheet 的成員資格為 active'};
+    if(!membership)return {ok:false,reason:'no_active_identity',error:'此帳號目前沒有有效身分，請聯絡平台管理者'};
     startMembershipSession(store.state.users.find(u=>u.id===localUserId),membership,provider);
     Audit.log('identity.login_success',`後端驗證登入 ${user.name}`,{actorUserId:localUserId,organizationId:membership.organizationId,membershipId:membership.id,provider});
     return {ok:true,user:store.state.users.find(u=>u.id===localUserId),membership};
@@ -7877,7 +7887,7 @@ async function confirmRegisterRequester(){
     {
       assertIdentityServicesReady_();
       const cloud=await CloudIdentity.registerRequester(payload);
-      result=Identity.startBackendSession({user:cloud.user,memberships:cloud.memberships||[cloud.membership],provider:'password'});
+      result=Identity.startBackendSession({user:cloud.user,memberships:cloud.memberships||[cloud.membership],organizations:cloud.organizations||[],provider:'password'});
       if(!result.ok)throw new Error(`後端帳號已建立，但登入身分載入失敗：${result.error}`);
     }
     closeModal('registerRequesterModal');$('registerPasswordInput').value='';
@@ -7953,6 +7963,7 @@ async function login(){
       result=Identity.startBackendSession({
         user:cloud.user,
         memberships:cloud.memberships||[],
+        organizations:cloud.organizations||[],
         provider:'password'
       });
 
@@ -9739,7 +9750,7 @@ async function bootstrapApplication(){
       try{
         if(!CloudIdentity.token())throw window.backendApiError('找不到伺服器登入工作階段','SESSION_REQUIRED');
         const cloud=await CloudIdentity.resumeSession();
-        const resumed=Identity.startBackendSession({user:cloud.user,memberships:cloud.memberships||[],provider:'session'});
+        const resumed=Identity.startBackendSession({user:cloud.user,memberships:cloud.memberships||[],organizations:cloud.organizations||[],provider:'session'});
         if(!resumed.ok)throw window.backendApiError(resumed.error,'SESSION_FAILED');
       }catch(error){console.warn('[Bootstrap] production session resume rejected',error);Identity.logout();clearProductionSensitiveCache_();}
     }

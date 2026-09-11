@@ -54,15 +54,22 @@ exports.handler = async (event) => {
 
     result.memberships = [result.membership];
 
-    // 稽核用新帳號自己的身分寫入，RLS 一併適用
+    // 稽核與組織清單都用新帳號自己的身分做，RLS 一併適用。
+    // 組織一定要回給前端：activeMembershipsForUser 會要求成員資格指向的組織在
+    // 本機存在，否則那筆身分會被濾掉，使用者剛註冊完就看到「沒有有效身分」。
     try {
-      await withUser(userId, (client) => client.query(
-        `insert into audit_events (id, event_type, actor_user_id, organization_id, entity_type, entity_id, reason_code, details)
-         values ($1,'identity.requester_registered',$2,$3,'user',$2,'SELF_REGISTRATION',$4)`,
-        [`AUD-${Date.now()}-${auth.randomHex(4)}`, userId, REQUESTER_ORG_ID,
-         JSON.stringify({ membershipId, sourceIp: clientIp(event) ? 'recorded' : 'unknown' })]));
+      result.organizations = await withUser(userId, async (client) => {
+        await client.query(
+          `insert into audit_events (id, event_type, actor_user_id, organization_id, entity_type, entity_id, reason_code, details)
+           values ($1,'identity.requester_registered',$2,$3,'user',$2,'SELF_REGISTRATION',$4)`,
+          [`AUD-${Date.now()}-${auth.randomHex(4)}`, userId, REQUESTER_ORG_ID,
+           JSON.stringify({ membershipId, sourceIp: clientIp(event) ? 'recorded' : 'unknown' })]);
+        const { rows } = await client.query('select id, org_type, name, active from organizations');
+        return rows.map((o) => ({ id: o.id, type: o.org_type, name: o.name || '', active: o.active !== false }));
+      });
     } catch (auditError) {
       console.error('[audit] identity.requester_registered 寫入失敗', auditError);
+      result.organizations = [{ id: REQUESTER_ORG_ID, type: 'requester_hub', name: '需求者組織', active: true }];
     }
 
     return json(200, { ok: true, data: result });

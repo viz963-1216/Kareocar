@@ -46,7 +46,7 @@ exports.handler = async (event) => {
       throw auth.authError('INVALID_CREDENTIALS', '帳號或密碼錯誤');
     }
 
-    const result = await withoutUser(async (client) => {
+    const result = await withUser(attempt.user.id, async (client) => {
       const user = attempt.user;
       await auth.clearLoginRate(client, phone);
 
@@ -55,8 +55,17 @@ exports.handler = async (event) => {
         throw auth.authError('NO_ACTIVE_IDENTITY', '此帳號目前沒有有效身分，請聯絡平台管理者');
       }
 
+      // 前端的 activeMembershipsForUser 會要求「成員資格指向的組織必須在本機存在」，
+      // 否則那筆身分會被過濾掉、變成「沒有有效身分」。以前組織是靠整份鏡像帶進來的，
+      // 現在本機一開始是空的，所以身分回應必須自己把組織一起帶上。
+      const organizations = (await client.query(
+        `select id, org_type, name, active from organizations`)).rows.map((o) => ({
+          id: o.id, type: o.org_type, name: o.name || '', active: o.active !== false
+        }));
+
       const sessionToken = await auth.issueSessionToken(client, user.id);
       return {
+        organizations,
         user: {
           userId: user.id,
           displayName: user.display_name || '',
