@@ -2430,7 +2430,6 @@ const APP_CONFIG = Object.freeze({
   loginSecurityKey: 'careRideV122579ReportDemoLoginSecurity',
   defaultOrganizationId: 'org_demo_1',
   requesterOrganizationId: 'org_requesters',
-  googleSpreadsheetId: '1sMu_yIuGiJzyq18Iiy4F55En8C1TtfHce-8L9Py1qkI',
   authProxyUrl: '/api/google-auth',
   runtimeConfigUrl: '/api/runtime-config',
   identityRegisterUrl: '/api/v2/register-requester',
@@ -2440,7 +2439,6 @@ const APP_CONFIG = Object.freeze({
   identitySessionUrl: '/api/v2/session',
   backendHealthUrl: '/api/health',
   authSessionTokenKey: 'careRideV122579ReportDemoAuthSessionToken',
-  googleDataProxyUrl: '/api/google-db',
   stateMutateUrl: '/api/v2/state-mutate',
   identityRequestPasswordResetUrl: '/api/v2/request-password-reset',
   identityConfirmPasswordResetUrl: '/api/v2/confirm-password-reset',
@@ -2748,7 +2746,7 @@ function seedDB(){
     users:[],
     fleets:[],drivers:[],externalIdentities:[],membershipEvents:[],
     vehicleAssignments:[],vehicles:[],careRecipients:[],careRecipientRelations:[],careRecipientEvents:[],careRecipientMergeEvents:[],bookings:[],bookingEvents:[],bookingRevisions:[],dispatchPlans:[],trips:[],tripEvents:[],tripOfflineQueue:[],issues:[],systemReports:[],events:[],notifications:[],serviceProofs:[],kpiDaily:[],quoteSnapshots:[],cancellations:[],telemetryEvents:[],benefitRulesets:[],benefitRulesetEvents:[],benefitAssessments:[],benefitAssessmentEvents:[],benefitLatestInfo:null,benefitLatestEstimateRuns:[],
-    integration:{googleSpreadsheetId:APP_CONFIG.googleSpreadsheetId,googleDatabaseLastSyncAt:null,lastSyncAt:null,lastSyncStatus:'尚未完成正式資料同步',lastSyncDetails:[]}
+    integration:{googleDatabaseLastSyncAt:null,lastSyncAt:null,lastSyncStatus:'尚未完成正式資料同步',lastSyncDetails:[]}
   };
 }
 
@@ -3040,7 +3038,7 @@ function updateStorageHealthUI(){
 }
 setTimeout(updateStorageHealthUI,0);
 
-let Audit, SystemReport, Identity, SocialAuth, CloudIdentity, LoginSecurity, Organization, CareRecipient, Booking, Dispatch, Trip, Notification, Benefit, Analytics, GoogleDatabase;
+let Audit, SystemReport, Identity, SocialAuth, CloudIdentity, LoginSecurity, Organization, CareRecipient, Booking, Dispatch, Trip, Notification, Benefit, Analytics;
 
 
 function sharedBookingEffectiveNeeds(booking){
@@ -3318,247 +3316,18 @@ function normalizeTimeText(value){ const m=String(value||'').trim().match(/(\d{1
 // unavailable, the last cached V63 state remains usable. Cloud-backed collections
 // are merged selectively so Trip event/offline and versioned Benefit models survive.
 // ============================================================================
-const GOOGLE_DB_SHEETS=Object.freeze([
-  '組織','使用者','成員資格','服務對象','服務對象聯絡人','預約','司機','車輛','行程','行程預約關聯','服務證明','稽核紀錄',
-  '預約異動歷史','調度最佳化','異常回報','通知紀錄','補助試算','系統回報','KPI每日','預約報價快照','取消退單','行程遙測事件','應用狀態'
-]);
-const GOOGLE_DB_REQUIRED=Object.freeze(['組織','使用者','成員資格','服務對象','預約','司機','車輛','行程','行程預約關聯']);
-const gsBool=(v)=>/^(true|1|yes|y|是)$/i.test(String(v??'').trim());
-const gsNum=(v,fallback=0)=>{const raw=String(v??'').trim();if(!raw)return fallback;const n=Number(raw.replace(/[^0-9.\-]/g,''));return Number.isFinite(n)?n:fallback;};
-const gsMoney=(v)=>{const s=String(v??'').trim();if(!s)return null;const n=Number(s.replace(/[^0-9.\-]/g,''));return Number.isFinite(n)?n:null;};
+// Google 試算表讀取層已整段移除（原本約 240 行：GOOGLE_DB_SHEETS、gs* 欄位轉換、
+// fetchGoogleSheetBackend、readGoogleDatabaseSheet、buildGoogleDatabaseSnapshot、
+// commitGoogleDatabaseSnapshot、GoogleDatabase.syncAll）。資料改由 Postgres 經
+// AppStateDatabase.loadAll 載入，app_state 存的就是前端模型，不需要任何欄位轉換。
+//
+// 只留下這三個識別碼對應：舊資料用的 ID 與前端本機用的 ID 不同，登入時建立
+// session 仍然要靠它們把後端 ID 轉成本機 ID。
 const gsText=(v)=>String(v??'').trim();
 const gsUserId=(v)=>{const id=gsText(v);return id==='USR-SUPER-JERRY'?'usr_super_admin':id;};
 window.gsUserId=gsUserId;
 const gsOrganizationId=(v)=>{const id=gsText(v);return id==='ORG-REQ-001'?APP_CONFIG.requesterOrganizationId:id;};
 window.gsOrganizationId=gsOrganizationId;
-const gsMembershipStatus=(v)=>{const s=gsText(v).toLowerCase();return s==='suspended'||s==='invited'?'revoked':(s||'active');};
-const gsPlatformRole=(v)=>{const s=gsText(v).trim().toLowerCase();return s==='super_admin'?'super_admin':null;};
-const gsPhone=(v)=>{const d=digitsOnly(v);return /^8869\d{8}$/.test(d)?`0${d.slice(3)}`:d;};
-const gsJson=(v)=>{try{return JSON.parse(gsText(v)||'{}');}catch{return {};}};
-const gsDateParts=(iso)=>{const text=gsText(iso);const m=text.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{1,2}):(\d{2})/);if(m)return {date:m[1],time:`${String(m[2]).padStart(2,'0')}:${m[3]}`};const d=new Date(text);return Number.isNaN(d.getTime())?{date:'',time:''}:localDateTimeParts(d);};
-const gsReturnTime=(text='')=>String(text).match(/返程(?:約|由)?\s*(\d{1,2}:\d{2})(?:\s*改為\s*(\d{1,2}:\d{2}))?/)?.slice(1).filter(Boolean).pop()||'';
-async function fetchGoogleSheetBackend(sheetName,timeoutMs=15000){
-  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
-  try{
-    const url=`${APP_CONFIG.googleDataProxyUrl}?sheet=${encodeURIComponent(sheetName)}&t=${Date.now()}`;
-    const sessionToken=typeof window.backendAuthToken==='function'?window.backendAuthToken():'';
-    if(!sessionToken)throw new Error('尚未登入，不能讀取私有 Google Database');
-    const response=await fetch(url,{
-      method:'GET',
-      headers:{'Accept':'application/json',...(sessionToken?{'Authorization':`Bearer ${sessionToken}`}:{})},
-      credentials:'same-origin',
-      cache:'no-store',
-      signal:controller.signal
-    });
-    const result=await response.json().catch(()=>null);
-    if(response.status===404)throw new Error('Netlify Google Database Function 尚未部署');
-    if(!response.ok||!result?.ok)throw new Error(result?.error?.message||`Google Database HTTP ${response.status}`);
-    const rows=result?.data?.rows;
-    if(!Array.isArray(rows))throw new Error('Google Database 回傳格式錯誤');
-    return rows;
-  }finally{clearTimeout(timer);}
-}
-async function readGoogleDatabaseSheet(sheetName){
-  // 只走已驗證的 Netlify -> Apps Script 代理；不再退回瀏覽器直讀公開試算表。
-  return fetchGoogleSheetBackend(sheetName);
-}
-function cloudBookingState(rawStatus){
-  const s=gsText(rawStatus).toLowerCase();
-  if(s==='open')return 'open';if(s==='claimed')return 'claimed';if(s==='cancelled')return 'cancelled';if(s==='expired')return 'expired';
-  return 'scheduled'; // Google 的 completed 在 Booking aggregate 中視為已排車；完成狀態由 Trip 保存。
-}
-function cloudTripStatus(rawStatus){
-  const s=gsText(rawStatus).toLowerCase();
-  if(s==='completed')return 'completed';if(s==='cancelled')return 'cancelled';if(s==='aborted')return 'aborted';if(s==='interrupted')return 'interrupted';if(s==='in_progress')return 'in_progress';return 'scheduled';
-}
-function cloudAidText(recipient,bookingRow){
-  const wheelchair=gsText(recipient?.mobility?.wheelchairType);const slots=gsNum(bookingRow?.['輪椅席次']);
-  if(wheelchair==='electric')return '電動輪椅';if(wheelchair==='manual'||slots>0)return '手動輪椅';
-  const walking=gsText(recipient?.mobility?.walkingAbility);if(walking==='walker')return '助行器';if(walking==='assisted')return '需攙扶';return '';
-}
-function buildGoogleDatabaseSnapshot(tables,currentDb){
-  const rows=(name)=>Array.isArray(tables[name])?tables[name]:[];
-  const syncAt=nowISO(),prevUsers=new Map((currentDb.users||[]).map(u=>[u.id,u]));
-
-  const organizations=rows('組織').map(r=>({
-    id:gsOrganizationId(r['組織ID']),type:gsText(r['組織類型'])||'transport_provider',name:gsText(r['組織名稱'])||'未命名組織',taxId:gsText(r['統一編號']),contactPhone:gsText(r['聯絡電話']),
-    active:r['啟用狀態']===''?true:gsBool(r['啟用狀態']),systemManaged:gsText(r['組織類型'])==='requester_hub',createdAt:gsText(r['建立時間'])||syncAt,updatedAt:gsText(r['更新時間'])||syncAt,source:'google_database'
-  })).filter(x=>x.id);
-  const users=rows('使用者').map(r=>{
-    const id=gsUserId(r['使用者ID']),prev=prevUsers.get(id)||{},platformRole=gsPlatformRole(r['平台角色']);
-    const isSuper=platformRole==='super_admin';
-    return {id,name:isSuper?'Jerry大神':(gsText(r['顯示名稱'])||prev.name||'未命名使用者'),phone:gsPhone(gsText(r['手機號碼(E.164)']))||gsPhone(prev.phone),email:gsText(r['電子郵件'])||prev.email||'',password:prev.password||'',active:r['啟用狀態']===''?true:gsBool(r['啟用狀態']),platformRole:platformRole||null,photoDataUrl:prev.photoDataUrl||null,createdAt:gsText(r['建立時間'])||syncAt,updatedAt:gsText(r['更新時間'])||syncAt,source:'google_database'};
-  }).filter(x=>x.id);
-  const externalIdentities=rows('使用者').map(r=>({id:`ext_${gsUserId(r['使用者ID'])}_${gsText(r['驗證提供者'])}`,userId:gsUserId(r['使用者ID']),provider:gsText(r['驗證提供者']),providerUserId:gsText(r['驗證主體ID']),createdAt:gsText(r['建立時間'])||syncAt})).filter(x=>x.userId&&x.provider&&x.providerUserId);
-  const memberships=rows('成員資格').map(r=>({id:gsText(r['成員資格ID']),userId:gsUserId(r['使用者ID']),organizationId:gsOrganizationId(r['組織ID']),role:gsText(r['角色']),status:gsMembershipStatus(r['狀態']),createdAt:gsText(r['建立時間'])||syncAt,updatedAt:gsText(r['更新時間'])||syncAt,revokedAt:gsText(r['撤銷時間'])||null,revokedByUserId:gsUserId(r['撤銷者使用者ID'])||null,source:'google_database'})).filter(x=>x.id&&x.userId&&x.organizationId);
-
-  const driverRows=rows('司機');
-  const fleets=[...new Map(driverRows.filter(r=>gsText(r['車隊ID'])).map(r=>[gsText(r['車隊ID']),{id:gsText(r['車隊ID']),organizationId:gsOrganizationId(r['組織ID']),name:`${organizations.find(o=>o.id===gsOrganizationId(r['組織ID']))?.name||'車隊'} 車隊`,active:true,source:'google_database'}])).values()];
-  const drivers=driverRows.map(r=>({id:gsText(r['司機ID']),userId:gsUserId(r['使用者ID']),organizationId:gsOrganizationId(r['組織ID']),fleetId:gsText(r['車隊ID'])||null,status:gsText(r['值勤狀態'])||'off_duty',serviceArea:gsText(r['服務區域']),active:r['啟用狀態']===''?true:gsBool(r['啟用狀態']),createdAt:syncAt,updatedAt:gsText(r['更新時間'])||syncAt,source:'google_database'})).filter(x=>x.id);
-  const vehicles=rows('車輛').map(r=>({id:gsText(r['車輛ID']),organizationId:gsOrganizationId(r['組織ID']),plate:gsText(r['車牌']),model:gsText(r['車型']),capacity:Math.max(1,gsNum(r['載客人數'],1)),wheelchairSlots:Math.max(0,gsNum(r['輪椅席次'],0)),accessible:gsBool(r['無障礙車輛']),status:gsText(r['車輛狀態'])||'available',retiredAt:gsText(r['車輛狀態'])==='retired'?(gsText(r['更新時間'])||syncAt):null,createdAt:syncAt,updatedAt:gsText(r['更新時間'])||syncAt,source:'google_database'})).filter(x=>x.id);
-
-  const contactRows=rows('服務對象聯絡人');
-  const contactsByRecipient=new Map();contactRows.forEach(r=>{const id=gsText(r['服務對象ID']);const list=contactsByRecipient.get(id)||[];list.push(r);contactsByRecipient.set(id,list);});
-  const rawBookings=rows('預約');
-  const destinationsByRecipient=new Map();rawBookings.forEach(r=>{const id=gsText(r['服務對象ID']),dest=gsText(r['目的地']);if(!id||!dest)return;const set=destinationsByRecipient.get(id)||new Set();set.add(dest);destinationsByRecipient.set(id,set);});
-  const careRecipients=rows('服務對象').map(r=>{
-    const id=gsText(r['服務對象ID']),address=gsText(r['居住地址']),wheelchair=gsText(r['輪椅類型'])||'none',walking=gsText(r['行走能力'])||'unknown',contactRowsFor=contactsByRecipient.get(id)||[];
-    const emergencyContacts=contactRowsFor.map((c,i)=>({id:gsText(c['聯絡人ID'])||`ec_${id}_${i+1}`,name:gsText(c['姓名']),relationship:gsText(c['關係'])||'family',phone:gsPhone(c['電話']),priority:i+1}));
-    const aid=wheelchair==='electric'?'電動輪椅':wheelchair==='manual'?'手動輪椅':walking==='walker'?'助行器':walking==='assisted'?'需攙扶':'';
-    return {id,schemaVersion:4,scope:'platform',status:gsText(r['狀態'])||'active',identity:{displayName:gsText(r['顯示名稱'])||'未命名服務對象',birthDate:gsText(r['出生日期'])||null,gender:'unspecified'},contacts:{primaryPhone:gsPhone(r['主要電話']),emergencyContacts},addresses:{entries:address?[{id:`addr_${id}_primary`,type:'home',label:'主要地址',address}]:[],primaryAddressId:address?`addr_${id}_primary`:null,defaultPickupAddressId:address?`addr_${id}_primary`:null},mobility:{walkingAbility:walking,wheelchairType:wheelchair,requiresAccessibleVehicle:gsBool(r['需要無障礙車輛']),requiresEscort:gsBool(r['需要陪同']),transferAssistance:gsText(r['移位協助程度'])||'unknown',defaultAidNeed:aid,defaultSpecialNeeds:gsText(r['特殊需求'])},servicePreferences:{defaultCompanions:gsBool(r['需要陪同'])?1:0,commonDestinations:[...(destinationsByRecipient.get(id)||[])],notes:'Google 商用資料庫同步'},governance:{createdByUserId:null,source:'google_database',sourceOrganizationId:null,potentialDuplicateRecipientIds:[],createdAt:syncAt,updatedAt:syncAt,archivedAt:null,mergedIntoRecipientId:null,mergedAt:null}};
-  }).filter(x=>x.id);
-  const recipientById=new Map(careRecipients.map(r=>[r.id,r]));
-  const careRecipientRelations=contactRows.map(r=>({id:gsText(r['聯絡人ID']),userId:gsUserId(r['使用者ID']),recipientId:gsText(r['服務對象ID']),relationship:gsText(r['關係'])||'family',isPrimaryContact:r['主要聯絡人']===''?false:gsBool(r['主要聯絡人']),canBook:r['可代為預約']===''?true:gsBool(r['可代為預約']),canManageProfile:r['主要聯絡人']===''?false:gsBool(r['主要聯絡人']),status:gsText(r['狀態'])||'active',createdAt:gsText(r['更新時間'])||syncAt,updatedAt:gsText(r['更新時間'])||syncAt,source:'google_database'})).filter(x=>x.id&&x.userId&&x.recipientId);
-  const recipientIdByUser=new Map(careRecipientRelations.filter(r=>r.status!=='revoked').map(r=>[r.userId,r.recipientId]));
-
-  const rawTrips=rows('行程'),rawTripById=new Map(rawTrips.map(r=>[gsText(r['行程ID']),r]));
-  const linkRows=rows('行程預約關聯').map(r=>({id:gsText(r['行程預約關聯ID']),tripId:gsText(r['行程ID']),bookingId:gsText(r['預約ID']),sequence:gsNum(r['順序'],1),actualPickupAt:gsText(r['實際上車時間'])||null,actualDropoffAt:gsText(r['實際下車時間'])||null,passengerStatus:gsText(r['乘客狀態'])||'pending',updatedAt:gsText(r['更新時間'])||syncAt})).filter(x=>x.tripId&&x.bookingId);
-  const linksByBooking=new Map();const linksByTrip=new Map();linkRows.forEach(l=>{const a=linksByBooking.get(l.bookingId)||[];a.push(l);linksByBooking.set(l.bookingId,a);const b=linksByTrip.get(l.tripId)||[];b.push(l);linksByTrip.set(l.tripId,b);});
-  const quoteRows=rows('預約報價快照'),quoteByBooking=new Map();quoteRows.forEach(r=>{const id=gsText(r['預約ID']);const list=quoteByBooking.get(id)||[];list.push(r);quoteByBooking.set(id,list);});
-  const benefitRows=rows('補助試算'),benefitByRecipient=new Map();benefitRows.forEach(r=>{const id=gsText(r['服務對象ID']);const list=benefitByRecipient.get(id)||[];list.push(r);benefitByRecipient.set(id,list);});
-
-  const bookings=rawBookings.map(r=>{
-    const id=gsText(r['預約ID']),recipientId=gsText(r['服務對象ID']),recipient=recipientById.get(recipientId),pickupAt=gsText(r['上車時間']),parts=gsDateParts(pickupAt),tripType=gsText(r['行程類型'])==='round_trip'?'來回':'單程',returnTime=tripType==='來回'?gsReturnTime(r['特殊需求']):'',returnDate=returnTime?parts.date:'';
-    const pickupAddress=gsText(r['上車地址']),destination=gsText(r['目的地']),locations=bookingLocationsFromLegacy({pickupAddress,destination,pickupAccessNote:'Google 商用資料庫：依案家備註接送',destinationAccessNote:'請依院區指定接送區下車'});
-    const bookingLinks=(linksByBooking.get(id)||[]).slice().sort((a,b)=>{const as=cloudTripStatus(rawTripById.get(a.tripId)?.['行程狀態']),bs=cloudTripStatus(rawTripById.get(b.tripId)?.['行程狀態']);const rank={completed:6,in_progress:5,interrupted:4,scheduled:3,aborted:2,cancelled:1};return (rank[bs]||0)-(rank[as]||0);});
-    const activeLink=bookingLinks.find(l=>!['cancelled','aborted'].includes(cloudTripStatus(rawTripById.get(l.tripId)?.['行程狀態'])))||bookingLinks[0]||null;
-    const state=cloudBookingState(r['預約狀態']),legs=bookingLegsFromLegacy(id,{pickupDate:parts.date,pickupTime:parts.time,tripType,returnDate,returnTime},locations,null);
-    if(activeLink&&state==='scheduled'){legs[0].status='scheduled';legs[0].tripId=activeLink.tripId;legs[0].scheduledOrganizationId=gsOrganizationId(r['組織ID'])||null;legs[0].scheduledAt=gsText(r['更新時間'])||syncAt;}
-    const qrows=(quoteByBooking.get(id)||[]).slice().sort((a,b)=>new Date(gsText(a['建立時間'])||0)-new Date(gsText(b['建立時間'])||0));
-    const brows=(benefitByRecipient.get(recipientId)||[]).slice().sort((a,b)=>new Date(gsText(a['試算日期'])||0)-new Date(gsText(b['試算日期'])||0));const latestBenefit=brows[brows.length-1]||null;
-    const snapshots=qrows.map(q=>({id:gsText(q['快照ID'])||uid('bterms'),schemaVersion:1,bookingId:id,bookingVersion:1,reason:'google_database_quote_snapshot',quote:{schemaVersion:1,status:'estimated',currency:'TWD',pricingRulesetVersion:gsText(q['計價版本'])||null,estimatedFare:gsMoney(q['預估原價']),baseFare:null,distanceFare:null,timeFare:null,extraFee:null,explanation:gsText(q['備註']),source:'google_database',estimatedDistanceKm:gsNum(q['預估距離km']),vehicleRequirement:gsText(q['車型需求']),capturedAt:gsText(q['建立時間'])||syncAt},benefit:{schemaVersion:1,status:latestBenefit?gsText(latestBenefit['結果']):'ruleset_required',cmsLevel:latestBenefit?gsText(latestBenefit['CMS等級']):null,requestedService:latestBenefit?gsText(latestBenefit['服務項目']):'transportation',estimatedSubsidy:latestBenefit?gsMoney(latestBenefit['展示預估補助']):null,rulesetVersion:latestBenefit?gsText(latestBenefit['規則版本']):null,sourceAssessmentId:latestBenefit?gsText(latestBenefit['試算ID']):null,explanation:latestBenefit?gsText(latestBenefit['備註']):'尚無補助試算',capturedAt:latestBenefit?`${gsText(latestBenefit['試算日期'])}T00:00:00+08:00`:syncAt},capturedByUserId:gsUserId(r['預約者使用者ID'])||null,capturedAt:gsText(q['建立時間'])||syncAt}));
-    if(!snapshots.length&&latestBenefit)snapshots.push({id:`BEN-SNAP-${gsText(latestBenefit['試算ID'])}`,schemaVersion:1,bookingId:id,bookingVersion:1,reason:'google_database_benefit_snapshot',quote:{schemaVersion:1,status:'ruleset_required',currency:'TWD',pricingRulesetVersion:null,estimatedFare:null,baseFare:null,distanceFare:null,timeFare:null,extraFee:null,explanation:'Google 資料庫尚無此預約報價快照',source:'google_database',capturedAt:syncAt},benefit:{schemaVersion:1,status:gsText(latestBenefit['結果']),cmsLevel:gsText(latestBenefit['CMS等級']),requestedService:gsText(latestBenefit['服務項目']),estimatedSubsidy:gsMoney(latestBenefit['展示預估補助']),rulesetVersion:gsText(latestBenefit['規則版本']),sourceAssessmentId:gsText(latestBenefit['試算ID']),explanation:gsText(latestBenefit['備註']),capturedAt:`${gsText(latestBenefit['試算日期'])}T00:00:00+08:00`},capturedByUserId:null,capturedAt:`${gsText(latestBenefit['試算日期'])}T00:00:00+08:00`});
-    const passengerCount=Math.max(1,gsNum(r['乘客人數'],1));
-    return {id,state,version:1,revisionNo:0,publicSanitized:gsBool(r['__PUBLIC_SANITIZED__']),stateChangedAt:gsText(r['更新時間'])||syncAt,updatedAt:gsText(r['更新時間'])||syncAt,organizationId:gsOrganizationId(r['組織ID'])||null,claimStatus:state==='open'?'open':state==='expired'?'expired':state==='cancelled'?'cancelled':'claimed',claimedByUserId:null,claimedAt:state==='open'?null:(gsText(r['更新時間'])||syncAt),recipientId,status:state==='scheduled'?'scheduled':state==='claimed'||state==='open'?'pending':state,tripId:activeLink?.tripId||null,submittedAt:gsText(r['建立時間'])||syncAt,source:'google_database',externalBookingId:id,requestedByUserId:gsUserId(r['預約者使用者ID'])||null,name:recipient?.identity?.displayName||'服務對象',phone:recipient?.contacts?.primaryPhone||'',pickupDate:parts.date,pickupTime:parts.time,pickupAddress,destination,tripType,returnDate,returnTime,pickupAccessNote:locations.pickup.accessNote,destinationAccessNote:locations.dropoff.accessNote,aidNeed:cloudAidText(recipient,r),companions:String(Math.max(0,passengerCount-1)),specialNeed:gsText(r['特殊需求']),note:`Google DB ${id}`,consent:'同意',poolingConsent:gsBool(r['共乘同意']),wheelchairUnits:gsNum(r['輪椅席次']),completionStatus:gsText(r['預約狀態'])==='completed'?'completed':null,serviceNeeds:{schemaVersion:1,recipientDefaultsSnapshot:{aidNeed:recipient?.mobility?.defaultAidNeed||'',companions:recipient?.servicePreferences?.defaultCompanions||0,specialNeed:recipient?.mobility?.defaultSpecialNeeds||'',requiresAccessibleVehicle:!!recipient?.mobility?.requiresAccessibleVehicle,requiresEscort:!!recipient?.mobility?.requiresEscort,transferAssistance:recipient?.mobility?.transferAssistance||'unknown'},bookingOverrides:{aidNeed:cloudAidText(recipient,r)||null,companions:Math.max(0,passengerCount-1),specialNeed:gsText(r['特殊需求'])||null},capturedAt:gsText(r['建立時間'])||syncAt},locations,legs,commercialSnapshots:snapshots,activeCommercialSnapshotId:snapshots[snapshots.length-1]?.id||null,termsVersion:gsText(r['服務條款版本'])||null};
-  }).filter(x=>x.id);
-  const bookingById=new Map(bookings.map(b=>[b.id,b]));
-
-  const proofRows=rows('服務證明').map(r=>({id:gsText(r['服務證明ID']),schemaVersion:4,sequence:1,status:'active',tripId:gsText(r['行程ID']),stepId:null,bookingId:null,bookingLegId:null,passengerId:null,receiverName:gsText(r['簽收人姓名'])||'服務確認人',receiverRole:'family',note:'Google Drive 服務證明快照',driverConfirmed:true,capturedAt:gsText(r['拍攝時間']),actorUserId:gsUserId(r['建立者使用者ID']),gps:null,photo:null,driveFileId:gsText(r['Drive檔案ID']),retentionUntil:gsText(r['保存至日期']),sha256:gsText(r['SHA-256校驗碼']),createdByUserId:gsUserId(r['建立者使用者ID']),source:'google_database'})).filter(x=>x.id);
-  const telemetryEvents=rows('行程遙測事件').map(r=>({id:gsText(r['遙測事件ID']),tripId:gsText(r['行程ID']),eventType:gsText(r['事件類型']),lat:gsNum(r['緯度'],null),lng:gsNum(r['經度'],null),etaMinutes:gsNum(r['ETA分鐘'],null),routeDeviationMeters:gsNum(r['路線偏離公尺'],0),networkStatus:gsText(r['網路狀態']),detail:gsText(r['說明']),createdAt:gsText(r['建立時間'])||syncAt,source:'google_database'})).filter(x=>x.id);
-  const proofsByTrip=new Map();proofRows.forEach(p=>{const list=proofsByTrip.get(p.tripId)||[];list.push(p);proofsByTrip.set(p.tripId,list);});
-  const telemetryByTrip=new Map();telemetryEvents.forEach(p=>{const list=telemetryByTrip.get(p.tripId)||[];list.push(p);telemetryByTrip.set(p.tripId,list);});
-
-  const trips=rawTrips.map(r=>{
-    const id=gsText(r['行程ID']),links=(linksByTrip.get(id)||[]).slice().sort((a,b)=>a.sequence-b.sequence),bookingIds=links.map(l=>l.bookingId).filter(Boolean),linkedBookings=bookingIds.map(bid=>bookingById.get(bid)).filter(Boolean),plannedStart=gsText(r['預計開始時間']),plannedEnd=gsText(r['預計結束時間']),rawStatus=gsText(r['行程狀態']),status=cloudTripStatus(rawStatus);
-    const firstPickup=linkedBookings[0]?.pickupAddress||'',lastDropoff=linkedBookings[linkedBookings.length-1]?.destination||'';const startDate=new Date(plannedStart);const departAt=Number.isNaN(startDate.getTime())?plannedStart:addMinutes(startDate,-20).toISOString();
-    const steps=[{id:`${id}_depart`,type:'depart',scheduledAt:departAt||plannedStart,title:`準備下一趟｜${linkedBookings.map(b=>b.name).join('＋')||id}`,name:`出發前往${linkedBookings[0]?.name||'乘客'}`,destination:firstPickup,contacts:linkedBookings[0]?[{name:linkedBookings[0].name,phone:linkedBookings[0].phone}]:[],note:'Google 商用資料庫行程',actualAt:gsText(r['實際開始時間'])||null,status:gsText(r['實際開始時間'])?'completed':'pending'}];
-    links.forEach((l,i)=>{const b=bookingById.get(l.bookingId);if(!b)return;steps.push({id:`${id}_pickup_${i+1}`,type:'pickup',scheduledAt:new Date(`${b.pickupDate}T${b.pickupTime}:00+08:00`).toISOString(),title:`接送｜${b.name}`,name:b.name,destination:b.pickupAddress,contacts:[{name:b.name,phone:b.phone}],bookingId:b.id,bookingLegId:b.legs?.[0]?.id||null,passengerId:`passenger_${id}_${b.id}`,note:[b.aidNeed,b.specialNeed].filter(Boolean).join('・')||'一般接送',actualAt:l.actualPickupAt,status:l.actualPickupAt?'completed':'pending'});});
-    links.forEach((l,i)=>{const b=bookingById.get(l.bookingId);if(!b)return;let sched=plannedEnd;if(links.length>1&&plannedStart&&plannedEnd){const a=new Date(plannedStart),z=new Date(plannedEnd);if(!Number.isNaN(a.getTime())&&!Number.isNaN(z.getTime()))sched=new Date(a.getTime()+((z-a)*(i+1)/links.length)).toISOString();}steps.push({id:`${id}_dropoff_${i+1}`,type:'dropoff',scheduledAt:sched||plannedEnd,title:`送達｜${b.name}`,name:`送達${b.name}`,destination:b.destination,contacts:[{name:b.name,phone:b.phone}],bookingId:b.id,bookingLegId:b.legs?.[0]?.id||null,passengerId:`passenger_${id}_${b.id}`,note:i===links.length-1?'完成最後送達後，完整趟次才 +1。':'完成此乘客送達後繼續下一站。',actualAt:l.actualDropoffAt,status:l.actualDropoffAt?'completed':'pending'});});
-    const completedSteps=steps.filter(s=>s.actualAt).length,currentStepIndex=status==='completed'?steps.length:Math.min(completedSteps,Math.max(0,steps.length-1));const estKm=gsNum(r['預估公里數'],0),actualKm=gsNum(r['實際公里數'],0);const tripTelemetry=(telemetryByTrip.get(id)||[]).slice().sort((a,b)=>new Date(a.createdAt||0)-new Date(b.createdAt||0)),locationSamples=tripTelemetry.filter(x=>Number.isFinite(Number(x.lat))&&Number.isFinite(Number(x.lng))&&Math.abs(Number(x.lat))>0.01&&Math.abs(Number(x.lng))>0.01).map(x=>({id:x.id,at:x.createdAt,lat:Number(x.lat),lng:Number(x.lng),accuracyMeters:null,source:'google_database'})),latestTelemetry=tripTelemetry[tripTelemetry.length-1]||null,deviationKm=latestTelemetry&&Number.isFinite(Number(latestTelemetry.routeDeviationMeters))?Number(latestTelemetry.routeDeviationMeters)/1000:null,deviationLevel=deviationKm===null?'unavailable':deviationKm>=2.5?'critical':deviationKm>=1.2?'warning':'normal',dropoffSteps=steps.filter(x=>x.type==='dropoff'),tripProofs=(proofsByTrip.get(id)||[]).map((proof,index)=>{const target=dropoffSteps[Math.min(index,Math.max(0,dropoffSteps.length-1))]||null;return {...proof,sequence:index+1,stepId:target?.id||null,bookingId:target?.bookingId||bookingIds[index]||bookingIds[0]||null,bookingLegId:target?.bookingLegId||null,passengerId:target?.passengerId||null};});
-    return {id,organizationId:gsOrganizationId(r['組織ID']),dispatchPlanId:null,code:id,date:gsDateParts(plannedStart).date,driverId:gsText(r['司機ID'])||null,vehicleId:gsText(r['車輛ID'])||null,status,cloudStatus:rawStatus,bookingIds,bookingLegRefs:bookingIds.map(bid=>({bookingId:bid,legId:bookingById.get(bid)?.legs?.[0]?.id||null})),pickupLocation:makeLocationSnapshot(firstPickup),dropoffLocation:makeLocationSnapshot(lastDropoff),passengerSummary:linkedBookings.map(b=>b.name).join('＋')||id,passengerCount:linkedBookings.reduce((s,b)=>s+1+gsNum(b.companions),0)||1,isPooled:bookingIds.length>1,needs:[...new Set(linkedBookings.map(b=>[b.aidNeed,b.specialNeed].filter(Boolean).join('・')).filter(Boolean))].join('／')||'一般乘客',pickupAddress:[...new Set(linkedBookings.map(b=>b.pickupAddress).filter(Boolean))].join('／'),dropoffAddress:[...new Set(linkedBookings.map(b=>b.destination).filter(Boolean))].join('／'),estimatedEmptyKm:Number((Math.max(0.8,estKm*0.25)).toFixed(1)),estimatedLoadedKm:estKm||actualKm,actualKm:actualKm||null,optimizerScore:null,currentStepIndex,createdAt:gsText(r['更新時間'])||plannedStart||syncAt,completedAt:status==='completed'?(gsText(r['實際結束時間'])||plannedEnd||null):null,cancelledAt:status==='cancelled'?(gsText(r['實際結束時間'])||gsText(r['更新時間'])||null):null,abortedAt:status==='aborted'?(gsText(r['實際結束時間'])||gsText(r['更新時間'])||null):null,interruptedAt:status==='interrupted'?(gsText(r['更新時間'])||null):null,revision:gsNum(r['修訂版本'],1),steps,serviceProofs:tripProofs,telemetryEvents:tripTelemetry,locationSamples,liveNavigation:{schemaVersion:2,source:'google_database',updatedAt:latestTelemetry?.createdAt||null,stepId:null,etaAt:latestTelemetry?.etaMinutes!==null&&latestTelemetry?.etaMinutes!==undefined?new Date(new Date(latestTelemetry.createdAt||syncAt).getTime()+Number(latestTelemetry.etaMinutes)*60000).toISOString():null,etaMinutes:latestTelemetry?.etaMinutes??null,scheduledAt:null,projectedDelayMinutes:null,distanceToTargetKm:null,deviationKm,deviationLevel,accuracyMeters:null},source:'google_database'};
-  }).filter(x=>x.id);
-  const tripById=new Map(trips.map(t=>[t.id,t]));
-
-  const bookingEvents=rows('預約異動歷史').map(r=>{const bookingId=gsText(r['預約ID']),b=bookingById.get(bookingId);return {id:gsText(r['事件ID']),bookingId,eventType:gsText(r['事件類型']),action:gsText(r['事件類型']),fromState:gsText(r['原狀態'])||null,toState:gsText(r['新狀態'])||null,actorUserId:gsUserId(r['操作者使用者ID'])||null,organizationId:b?.organizationId||null,tripId:b?.tripId||null,reasonCode:gsText(r['原因代碼'])||null,reasonText:gsText(r['詳細說明']),source:'google_database',bookingVersion:b?.version||1,metadata:{},createdAt:gsText(r['建立時間'])||syncAt};}).filter(x=>x.id&&x.bookingId);
-  const revCounter=new Map();const bookingRevisions=bookingEvents.filter(e=>['updated','amended','reassigned'].includes(e.eventType)).map(e=>{const n=(revCounter.get(e.bookingId)||0)+1;revCounter.set(e.bookingId,n);const b=bookingById.get(e.bookingId);return {id:`REV-${e.id}`,schemaVersion:1,bookingId:e.bookingId,revisionNo:n,actorUserId:e.actorUserId,reasonText:e.reasonText,changedFields:e.eventType==='reassigned'?['tripId','organizationId']:['pickupDate','pickupTime','specialNeed'],snapshot:{editable:{pickupDate:b?.pickupDate||'',pickupTime:b?.pickupTime||'',pickupAddress:b?.pickupAddress||'',destination:b?.destination||'',tripType:b?.tripType||'單程',returnDate:b?.returnDate||'',returnTime:b?.returnTime||''},locations:deepClone(b?.locations||{}),legs:deepClone(b?.legs||[]),serviceNeeds:deepClone(b?.serviceNeeds||{}),commercialSnapshot:deepClone(b?.commercialSnapshots?.slice(-1)[0]||null),state:b?.state||null,organizationId:b?.organizationId||null,bookingVersion:b?.version||1,updatedAt:b?.updatedAt||syncAt},createdAt:e.createdAt};});
-
-  const dispatchPlans=rows('調度最佳化').map(r=>{
-    const bookingIds=gsText(r['預約IDs']).split(',').map(x=>x.trim()).filter(Boolean),bs=bookingIds.map(id=>bookingById.get(id)).filter(Boolean),pooled=gsBool(r['共乘']),startAt=bs[0]?new Date(`${bs[0].pickupDate}T${bs[0].pickupTime}:00+08:00`).toISOString():`${gsText(r['日期'])}T08:00:00+08:00`,endAt=new Date(new Date(startAt).getTime()+60*60000).toISOString();
-    const item={id:`${gsText(r['方案ID'])}_item_1`,bookingIds,bookingLegRefs:bookingIds.map(id=>({bookingId:id,legId:bookingById.get(id)?.legs?.[0]?.id||null})),driverId:gsText(r['建議司機ID'])||null,vehicleId:gsText(r['建議車輛ID'])||null,isPooled:pooled,passengerUnits:bs.reduce((s,b)=>s+1+gsNum(b.companions),0)||1,wheelchairUnits:bs.reduce((s,b)=>s+(b.wheelchairUnits||0),0),startAt,endAt,firstPickupAddress:bs[0]?.pickupAddress||'',finalDropoffAddress:bs[bs.length-1]?.destination||'',pickups:bs.map(b=>({bookingId:b.id,name:b.name,address:b.pickupAddress,at:new Date(`${b.pickupDate}T${b.pickupTime}:00+08:00`).toISOString()})),dropoffs:bs.map((b,i)=>({bookingId:b.id,name:b.name,address:b.destination,at:new Date(new Date(startAt).getTime()+(35+i*10)*60000).toISOString()})),emptyKm:gsNum(r['最佳化後空車km']),loadedKm:Number((bs.length*6.5).toFixed(1)),score:gsNum(r['效率分數']),reason:gsText(r['建議理由']),feasible:gsText(r['方案狀態'])!=='rejected'};
-    return {id:gsText(r['方案ID']),organizationId:gsOrganizationId(r['組織ID']),date:gsText(r['日期']),status:gsText(r['方案狀態'])||'draft',createdAt:`${gsText(r['日期'])}T06:50:00+08:00`,confirmedAt:gsText(r['方案狀態'])==='applied'?`${gsText(r['日期'])}T06:55:00+08:00`:null,appliedAt:gsText(r['方案狀態'])==='applied'?`${gsText(r['日期'])}T07:00:00+08:00`:null,items:[item],summary:{bookings:bookingIds.length,trips:1,poolGroups:pooled?1:0,savedTrips:pooled?Math.max(0,bookingIds.length-1):0,emptyKm:gsNum(r['最佳化後空車km']),loadedKm:item.loadedKm},source:'google_database'};
-  }).filter(x=>x.id);
-
-  const issues=rows('異常回報').map(r=>{const tripId=gsText(r['行程ID']),trip=tripById.get(tripId);return {id:gsText(r['異常ID']),organizationId:trip?.organizationId||null,tripId,stepId:null,driverId:gsText(r['司機ID'])||trip?.driverId||null,type:gsText(r['異常類型']),severity:gsText(r['嚴重程度'])||'medium',note:gsText(r['說明']),status:gsText(r['狀態'])||'open',createdAt:gsText(r['建立時間'])||syncAt,resolvedAt:gsText(r['解決時間'])||null,resolvedBy:gsUserId(r['處理者使用者ID'])||null,source:'google_database'};}).filter(x=>x.id);
-  const notifications=rows('通知紀錄').map(r=>{const bookingId=gsText(r['預約ID']),tripId=gsText(r['行程ID']),recipientUserId=gsUserId(r['接收者使用者ID']),org=tripById.get(tripId)?.organizationId||bookingById.get(bookingId)?.organizationId||null;return {id:gsText(r['通知ID']),organizationId:org,recipientId:recipientIdByUser.get(recipientUserId)||null,recipientUserId,channel:gsText(r['頻道']).toLowerCase(),template:gsText(r['通知類型']),eventType:gsText(r['通知類型']).toUpperCase(),payload:{bookingId:bookingId||null,tripId:tripId||null,summary:gsText(r['訊息摘要'])},status:gsText(r['狀態'])||'queued',createdAt:gsText(r['建立時間'])||syncAt,sentAt:gsText(r['發送時間'])||null,error:gsText(r['狀態'])==='failed'?gsText(r['訊息摘要']):null,source:'google_database'};}).filter(x=>x.id);
-  const benefitAssessments=benefitRows.map(r=>{const recipientId=gsText(r['服務對象ID']),candidate=bookings.filter(b=>b.recipientId===recipientId&&b.organizationId).sort((a,b)=>new Date(b.pickupDate)-new Date(a.pickupDate))[0];return {id:gsText(r['試算ID']),organizationId:candidate?.organizationId||APP_CONFIG.requesterOrganizationId,recipientId,cmsLevel:gsNum(r['CMS等級']),cmsLevelLabel:gsText(r['CMS等級']),identityCategory:gsText(r['身分類別']),requestedService:gsText(r['服務項目'])||'transportation',status:/人工|確認/.test(gsText(r['結果']))?'manual_review':'estimated',estimatedSubsidy:gsMoney(r['展示預估補助']),estimatedCopay:gsMoney(r['展示預估自付']),rulesetVersion:gsText(r['規則版本'])||null,dataSource:gsText(r['資料來源']),explanation:[gsText(r['結果']),gsText(r['備註'])].filter(Boolean).join('・'),createdAt:`${gsText(r['試算日期'])}T00:00:00+08:00`,source:'google_database'};}).filter(x=>x.id);
-  const systemReports=rows('系統回報').map(r=>({id:gsText(r['回報ID']),organizationId:gsOrganizationId(r['組織ID'])||null,userId:gsUserId(r['使用者ID'])||null,role:null,category:gsText(r['問題類型']),title:gsText(r['標題']),detail:gsText(r['詳細說明']),priority:gsText(r['優先級']),status:gsText(r['狀態'])||'open',createdAt:gsText(r['建立時間'])||syncAt,resolvedAt:gsText(r['解決時間'])||null,resolvedBy:null,source:'google_database'})).filter(x=>x.id);
-  const events=rows('稽核紀錄').map(r=>({id:gsText(r['事件ID']),at:gsText(r['建立時間'])||syncAt,action:gsText(r['事件類型']),detail:[gsText(r['原因代碼']),gsText(r['詳細資料JSON'])].filter(Boolean).join('・'),organizationId:gsOrganizationId(r['組織ID'])||null,actorUserId:gsUserId(r['操作者使用者ID'])||null,entityType:gsText(r['實體類型']),entityId:gsText(r['實體ID']),reasonCode:gsText(r['原因代碼']),metadata:gsJson(r['詳細資料JSON']),source:'google_database'})).filter(x=>x.id);
-  const membershipEvents=events.filter(e=>e.action.startsWith('membership.')).map(e=>({id:`ME-${e.id}`,membershipId:e.entityId,userId:memberships.find(m=>m.id===e.entityId)?.userId||null,organizationId:e.organizationId,eventType:e.action.split('.').pop(),fromStatus:e.metadata?.from||null,toStatus:gsMembershipStatus(e.metadata?.to||memberships.find(m=>m.id===e.entityId)?.status||null),fromRole:null,toRole:memberships.find(m=>m.id===e.entityId)?.role||null,actorUserId:e.actorUserId,createdAt:e.at,note:e.reasonCode||e.detail}));
-  memberships.forEach(m=>{if(!membershipEvents.some(e=>e.membershipId===m.id))membershipEvents.push({id:`ME-BASE-${m.id}`,membershipId:m.id,userId:m.userId,organizationId:m.organizationId,eventType:'synced',fromStatus:null,toStatus:m.status,fromRole:null,toRole:m.role,actorUserId:null,createdAt:m.createdAt||syncAt,note:'Google 商用資料庫同步基準'});});
-  const careRecipientEvents=events.filter(e=>e.action.startsWith('care_recipient.')).map(e=>({id:`CR-${e.id}`,recipientId:e.entityId,eventType:e.action.split('.').pop(),actorUserId:e.actorUserId,organizationId:e.organizationId,relationId:null,detail:e.detail,changes:e.metadata,createdAt:e.at}));
-  const kpiDaily=rows('KPI每日').map(r=>{const emptyKm=gsNum(r['空車公里']),loadedKm=gsNum(r['載客公里']);return {date:gsText(r['日期']),organizationId:gsOrganizationId(r['組織ID']),driverId:gsText(r['司機ID']),completedTrips:gsNum(r['完成趟次']),scheduledTrips:Math.max(gsNum(r['完成趟次']),1),emptyKm,loadedKm,loadFactor:gsNum(r['平均載客率']),onTimeRate:gsText(r['準時率'])===''?null:gsNum(r['準時率']),avgWaitMinutes:gsText(r['平均等待分鐘'])===''?null:gsNum(r['平均等待分鐘']),cancellationRate:gsNum(r['取消率']),poolRate:gsNum(r['共乘率']),utilizationKm:(emptyKm+loadedKm)?Math.round(loadedKm/(emptyKm+loadedKm)*100):0,source:'google_database'};}).filter(x=>x.date&&x.driverId);
-  const cancellations=rows('取消退單').map(r=>({id:gsText(r['取消ID']),bookingId:gsText(r['預約ID']),cancelledByUserId:gsUserId(r['取消者使用者ID']),cancelledAt:gsText(r['取消時間']),fromState:gsText(r['原狀態']),reason:gsText(r['取消原因']),charged:gsBool(r['是否收費']),refundAmount:gsMoney(r['退款金額']),status:gsText(r['處理狀態']),note:gsText(r['備註']),source:'google_database'})).filter(x=>x.id);
-  const quoteSnapshots=quoteRows.map(r=>({id:gsText(r['快照ID']),bookingId:gsText(r['預約ID']),pricingVersion:gsText(r['計價版本']),estimatedFare:gsMoney(r['預估原價']),estimatedSubsidy:gsMoney(r['展示補助預估']),estimatedCopay:gsMoney(r['展示自付預估']),estimatedDistanceKm:gsNum(r['預估距離km']),vehicleRequirement:gsText(r['車型需求']),createdAt:gsText(r['建立時間']),note:gsText(r['備註']),source:'google_database'})).filter(x=>x.id);
-  cancellations.forEach(c=>{const b=bookingById.get(c.bookingId);if(b)b.cancellation=deepClone(c);});
-
-  const snapshot={organizations,users,memberships,fleets,drivers,externalIdentities,membershipEvents,vehicleAssignments:Array.isArray(currentDb.vehicleAssignments)?deepClone(currentDb.vehicleAssignments):[],vehicles,careRecipients,careRecipientRelations,careRecipientEvents,careRecipientMergeEvents:Array.isArray(currentDb.careRecipientMergeEvents)?deepClone(currentDb.careRecipientMergeEvents):[],bookings,bookingEvents,bookingRevisions,dispatchPlans,trips,issues,systemReports,events,notifications,benefitAssessments,serviceProofs:proofRows,kpiDaily,quoteSnapshots,cancellations,telemetryEvents};
-  // V12.25.79 P0-B: Google Sheet 應用狀態 is the operational authority. Normalized sheets form the base snapshot; authorized state rows overlay newer UI mutations.
-  const allowedCollections=new Set(['organizations','users','memberships','membershipEvents','drivers','vehicles','careRecipients','careRecipientRelations','careRecipientEvents','careRecipientMergeEvents','bookings','bookingEvents','bookingRevisions','dispatchPlans','trips','tripEvents','issues','systemReports','notifications','benefitRulesets','benefitRulesetEvents','benefitAssessments','benefitAssessmentEvents','benefitLatestEstimateRuns','serviceProofs','quoteSnapshots','cancellations','telemetryEvents']);
-  const stateRows=Array.isArray(tables['應用狀態'])?tables['應用狀態'].slice():[];
-  stateRows.sort((a,b)=>(Number(a['版本'])||0)-(Number(b['版本'])||0));
-  stateRows.forEach(row=>{
-    const collection=gsText(row['實體類型']),id=gsText(row['實體ID']);if(!allowedCollections.has(collection)||!id)return;
-    if(!Array.isArray(snapshot[collection]))snapshot[collection]=Array.isArray(currentDb?.[collection])?deepClone(currentDb[collection]):[];
-    const index=snapshot[collection].findIndex(x=>String(x?.id||'')===id),deleted=gsBool(row['已刪除']);
-    if(deleted){if(index>=0)snapshot[collection].splice(index,1);return;}
-    let record=null;try{record=JSON.parse(gsText(row['資料JSON'])||'{}');}catch{return;}
-    if(!record||typeof record!=='object')return;record.id=record.id||id;record.__authoritativeVersion=Number(row['版本'])||1;record.__authoritativeUpdatedAt=gsText(row['更新時間'])||null;
-    if(index>=0){
-      const base=snapshot[collection][index];
-      if(collection==='bookings'&&record.publicSanitized&&base&&!base.publicSanitized){
-        const patch={...record};['name','phone','pickupAddress','destination','recipientId','requestedByUserId','locations','serviceNeeds','pickupAccessNote','destinationAccessNote'].forEach(k=>delete patch[k]);patch.publicSanitized=false;snapshot[collection][index]={...base,...patch};
-      }else snapshot[collection][index]={...base,...record};
-    }else snapshot[collection].push(record);
-  });
-  return snapshot;
-}
-function commitGoogleDatabaseSnapshot(tables,{details=[],mode='embedded_fallback'}={}){
-  const snapshot=buildGoogleDatabaseSnapshot(tables,store.state),syncAt=nowISO();
-  store.mutate(db=>{
-    const priorTripEvents=Array.isArray(db.tripEvents)?db.tripEvents:[];
-    const priorBenefitAssessmentEvents=Array.isArray(db.benefitAssessmentEvents)?db.benefitAssessmentEvents:[];
-    Object.assign(db,snapshot);
-    const tripIds=new Set((snapshot.trips||[]).map(t=>t.id));
-    db.tripEvents=priorTripEvents.filter(e=>!e?.tripId||tripIds.has(e.tripId));
-    const knownEventKeys=new Set(db.tripEvents.map(e=>`${e.tripId}|${e.eventType}|${e.at}|${e.metadata?.telemetryId||''}`));
-    (snapshot.telemetryEvents||[]).forEach((tel,index)=>{
-      if(!tripIds.has(tel.tripId))return;
-      const eventType=tel.eventType==='route_deviation'?'trip_route_deviation_detected':tel.eventType==='eta_updated'?'trip_navigation_eta_updated':tel.eventType==='offline_started'?'trip_offline_started':tel.eventType==='offline_synced'?'trip_offline_synced':`trip_telemetry_${tel.eventType||'event'}`;
-      const key=`${tel.tripId}|${eventType}|${tel.createdAt}|${tel.id}`;if(knownEventKeys.has(key))return;
-      db.tripEvents.push({id:`TE-${tel.id}`,schemaVersion:1,tripId:tel.tripId,sequence:0,eventType,at:tel.createdAt||syncAt,actorUserId:null,clientRecordedAt:tel.createdAt||syncAt,serverRecordedAt:tel.createdAt||syncAt,deviceId:'google_database',deviceIdSource:'google_database',sessionId:'google_database',stepId:null,reason:tel.detail||'',metadata:{telemetryId:tel.id,etaMinutes:tel.etaMinutes,routeDeviationMeters:tel.routeDeviationMeters,networkStatus:tel.networkStatus,lat:tel.lat,lng:tel.lng},targetEventIds:[]});
-      knownEventKeys.add(key);
-    });
-    // Normalize deterministic sequence numbers after importing cloud telemetry without touching event payloads.
-    const byTrip=new Map();db.tripEvents.forEach(e=>{if(!e?.tripId)return;const list=byTrip.get(e.tripId)||[];list.push(e);byTrip.set(e.tripId,list);});
-    byTrip.forEach(list=>list.sort((a,b)=>new Date(a.at||0)-new Date(b.at||0)).forEach((e,i)=>{e.sequence=i+1;}));
-    const assessmentIds=new Set((snapshot.benefitAssessments||[]).map(a=>a.id));
-    db.benefitAssessmentEvents=priorBenefitAssessmentEvents.filter(e=>!e?.assessmentId||assessmentIds.has(e.assessmentId));
-    db.schemaVersion=APP_CONFIG.schemaVersion;db.version=APP_CONFIG.version;
-    db.integration={...(db.integration||{}),googleSpreadsheetId:APP_CONFIG.googleSpreadsheetId,lastSyncAt:syncAt,googleDatabaseLastSyncAt:syncAt,lastSyncStatus:`正式資料庫同步成功｜預約 ${snapshot.bookings.length}・行程 ${snapshot.trips.length}・使用者 ${snapshot.users.length}`,lastSyncDetails:details};
-    db.googleDatabase={spreadsheetId:APP_CONFIG.googleSpreadsheetId,syncedAt:syncAt,mode};
-  },{remote:false,reason:'google_database_hydration'});
-  return {ok:true,message:store.state.integration.lastSyncStatus,details,counts:{organizations:snapshot.organizations.length,users:snapshot.users.length,memberships:snapshot.memberships.length,careRecipients:snapshot.careRecipients.length,bookings:snapshot.bookings.length,trips:snapshot.trips.length}};
-}
-GoogleDatabase={
-  spreadsheetId:APP_CONFIG.googleSpreadsheetId,
-  sheetNames:GOOGLE_DB_SHEETS,
-  async fetchSheet(sheetName){return readGoogleDatabaseSheet(sheetName);},
-  async syncAll({silent=false}={}){
-    const tables={},details=[];
-    if(typeof navigator!=='undefined'&&navigator.onLine===false){
-      const error='目前離線，無法與正式資料庫同步；畫面維持上一次同步成功的內容。';
-      store.mutate(db=>{db.integration={...(db.integration||{}),lastSyncStatus:error,lastSyncDetails:[error]};});
-      return {ok:false,error,details:[error]};
-    }
-    const settled=[];
-    const batchSize=6;
-    for(let i=0;i<this.sheetNames.length;i+=batchSize){
-      const batch=this.sheetNames.slice(i,i+batchSize);
-      const batchResults=await Promise.allSettled(
-        batch.map(async name=>[name,await this.fetchSheet(name)])
-      );
-      settled.push(...batchResults);
-    }
-    settled.forEach((result,i)=>{
-      const name=this.sheetNames[i];
-      if(result.status==='fulfilled'){
-        tables[name]=result.value[1];details.push(`${name} ${result.value[1].length} 筆`);
-      }else{
-        details.push(`${name} 失敗：${result.reason?.message||result.reason||'unknown error'}`);
-      }
-    });
-    const missing=GOOGLE_DB_REQUIRED.filter(name=>!Array.isArray(tables[name])); // V12.25.79: row-level authorization may legitimately return zero rows.
-    if(missing.length){
-      const error=`必要資料表無法讀取：${missing.join('、')}。正式環境已保留上一份快取，沒有以內建資料覆寫。`;
-      store.mutate(db=>{db.integration={...(db.integration||{}),googleSpreadsheetId:this.spreadsheetId,lastSyncStatus:error,lastSyncDetails:details};});
-      return {ok:false,error,details};
-    }
-    try{
-      const usedFallback=details.some(x=>x.includes('使用內建快照'));
-      return commitGoogleDatabaseSnapshot(tables,{details,mode:usedFallback?'preview_fallback':'private_google_database'});
-    }catch(error){const message=`Google 資料轉換失敗：${error.message||error}`;store.mutate(db=>{db.integration={...(db.integration||{}),lastSyncStatus:message,lastSyncDetails:details};});return {ok:false,error:message,details};}
-  }
-};
 
 // =====================================================================
 // 從 Postgres 載入這個身分看得到的資料。
@@ -9102,8 +8871,8 @@ async function syncBookings(event){
   try{
     const result=await AppStateDatabase.loadAll();
     if(result.ok){
-      try{Benefit.migrate();}catch(error){console.warn('[GoogleDatabase] Benefit normalization warning',error);}
-      try{Trip.migrateRuntimeModel?.();Trip.migrateEventHistory?.();Trip.migratePassengerRuntimeHistory?.();Trip.migrateIssueStateModel?.();}catch(error){console.warn('[GoogleDatabase] Trip normalization warning',error);}
+      try{Benefit.migrate();}catch(error){console.warn('[StateLoad] Benefit normalization warning',error);}
+      try{Trip.migrateRuntimeModel?.();Trip.migrateEventHistory?.();Trip.migratePassengerRuntimeHistory?.();Trip.migrateIssueStateModel?.();}catch(error){console.warn('[StateLoad] Trip normalization warning',error);}
       Identity.init();
       if(Identity.currentUser()){applyIdentityContext();renderNav();render();}
     }
@@ -9781,7 +9550,7 @@ async function bootstrapApplication(){
   // Authenticated refresh only. Anonymous production visitors never receive Google Database rows.
   setTimeout(async()=>{
     try{
-      if(typeof GoogleDatabase==='undefined'||typeof navigator==='undefined'||navigator.onLine===false||!Identity.currentUser())return;
+      if(typeof AppStateDatabase==='undefined'||typeof navigator==='undefined'||navigator.onLine===false||!Identity.currentUser())return;
       const lastSyncAt=store.state?.integration?.googleDatabaseLastSyncAt||store.state?.integration?.lastSyncAt||null;
       const lastSyncMs=lastSyncAt?Date.now()-new Date(lastSyncAt).getTime():Infinity;
       if(Number.isFinite(lastSyncMs)&&lastSyncMs>=0&&lastSyncMs<120000)return;
