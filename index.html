@@ -3338,6 +3338,30 @@ window.gsOrganizationId=gsOrganizationId;
 // 過濾在資料庫層（RLS）完成，不在這裡：需求者只會拿到自己的，調度員只會拿到
 // 自家組織的。舊版從試算表撈的是「全部」，那正是本機儲存會爆掉的原因。
 // =====================================================================
+// 後端與前端用的是兩套識別碼：後端叫 ORG-REQ-001，前端本機叫 org_requesters
+// （gsOrganizationId 負責換算）。startBackendSession 一直都有做這個換算，但
+// loadAll 沒有——結果登入當下權限是好的，載入資料之後成員資格的組織就變成後端
+// 那一套，跟 28 處寫死比對 APP_CONFIG.requesterOrganizationId 的地方全部對不上，
+// 使用者會看到「你沒有建立預約權限」。帳號和資料都是好的，純粹是 ID 對不起來。
+const LOADED_ORG_FIELDS_=Object.freeze(['organizationId','sourceOrganizationId','targetOrganizationId','viewOrganizationId']);
+const LOADED_USER_FIELDS_=Object.freeze(['userId','actorUserId','requestedByUserId','ownerUserId','claimedByUserId','createdByUserId','resolvedByUserId','revokedByUserId','capturedByUserId','reporterUserId','recipientUserId']);
+function normalizeLoadedIds_(collections){
+  const mapOrg=(v)=>v?window.gsOrganizationId(v):v;
+  const mapUser=(v)=>v?window.gsUserId(v):v;
+  const out={};
+  Object.entries(collections||{}).forEach(([name,rows])=>{
+    out[name]=(Array.isArray(rows)?rows:[]).map(row=>{
+      const r={...row};
+      if(name==='organizations'&&r.id)r.id=mapOrg(r.id);
+      if(name==='users'&&r.id)r.id=mapUser(r.id);
+      LOADED_ORG_FIELDS_.forEach(f=>{if(r[f])r[f]=mapOrg(r[f]);});
+      LOADED_USER_FIELDS_.forEach(f=>{if(r[f])r[f]=mapUser(r[f]);});
+      return r;
+    });
+  });
+  return out;
+}
+
 const AppStateDatabase={
   lastLoadedAt:null,
   async loadAll({silent=false}={}){
@@ -3360,7 +3384,7 @@ const AppStateDatabase={
         if(!silent)showToast(message);
         return {ok:false,error:message,details:[message],code:result?.error?.code};
       }
-      const collections=result.data?.collections||{};
+      const collections=normalizeLoadedIds_(result.data?.collections||{});
       const details=Object.entries(result.data?.counts||{}).map(([k,v])=>`${k} ${v} 筆`);
       // remote:false 很重要：這是「從伺服器拿回來的資料」，不是使用者的變更，
       // 不能再被 diff 成待送出的異動排隊送回伺服器。

@@ -31,6 +31,7 @@ PGHOST=/tmp/pgrun PGPORT=5433 supabase/tests/run-all.sh   # 全套接線與 RLS 
 npm test                                                  # Apps Script 層的回歸測試
 node tools/check-inline-js.js    # index.html 內嵌 JS 語法檢查
 node tools/check-dom-refs.js     # DOM id 交叉檢查
+node tools/check-id-mapping.js   # 後端／前端識別碼對應（權限會壞在這裡）
 ```
 
 `supabase/tests/run-all.sh` 會從乾淨的資料庫依序跑完所有測試套件。它跑的是
