@@ -14,3 +14,4 @@ supabase/.temp/
 
 # Cowork 交付檔案的暫存副本，正本在 netlify/ 與 supabase/ 底下
 Claude outputs/
+SHA256SUMS.txt
