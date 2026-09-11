@@ -2440,6 +2440,7 @@ const APP_CONFIG = Object.freeze({
   backendHealthUrl: '/api/health',
   authSessionTokenKey: 'careRideV122579ReportDemoAuthSessionToken',
   stateMutateUrl: '/api/v2/state-mutate',
+  identityWriteUrl: '/api/v2/identity-write',
   identityRequestPasswordResetUrl: '/api/v2/request-password-reset',
   identityConfirmPasswordResetUrl: '/api/v2/confirm-password-reset',
   identityUpdateAccountUrl: '/api/v2/update-account',
@@ -2867,6 +2868,9 @@ const AUTHORITATIVE_STATE_COLLECTIONS=Object.freeze([
   'benefitRulesets','benefitRulesetEvents','benefitAssessments','benefitAssessmentEvents','benefitLatestEstimateRuns',
   'serviceProofs','quoteSnapshots','cancellations','telemetryEvents'
 ]);
+// 這三個集合有自己的 typed 資料表，寫入走 identity-write 而不是 state-mutate。
+// users 不在裡面：建立帳號只能透過註冊或建立員工的端點。
+const IDENTITY_WRITE_COLLECTIONS=new Set(['organizations','memberships','drivers']);
 const AUTHORITATIVE_QUEUE_KEY=`${APP_CONFIG.storageKey}:authoritativeQueue:v1`;
 const authoritativeQueue=new Map();
 let authoritativeFlushTimer=null,authoritativeFlushInFlight=false,authoritativeLastError='',authoritativeLastAckAt=null;
@@ -2920,8 +2924,20 @@ async function authoritativeFlush_(){
   const rows=[...authoritativeQueue.values()].filter(x=>x.actorUserId===actor).slice(0,100);if(!rows.length){updateAuthoritativeWriteUI_();return {ok:true,count:0};}
   authoritativeFlushInFlight=true;updateAuthoritativeWriteUI_();
   try{
-    const response=await fetch(APP_CONFIG.stateMutateUrl,{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${token}`},credentials:'same-origin',cache:'no-store',body:JSON.stringify({changes:rows.map(({collection,id,record,deleted,expectedRevision})=>({collection,id,record,deleted,expectedRevision}))})});
-    const result=await response.json().catch(()=>null);if(!response.ok||!result?.ok)throw new Error(result?.error?.message||`正式資料寫入失敗（HTTP ${response.status}）`);
+    // 身分資料（組織／成員資格／司機）走專屬端點：它們有 typed 資料表，登入與
+    // RLS 都依賴，不能從通用的 app_state 管道寫入。兩邊分開送，任一邊失敗就整批
+    // 視為失敗、留在佇列裡重試。
+    const payload=rows.map(({collection,id,record,deleted,expectedRevision})=>({collection,id,record,deleted,expectedRevision}));
+    const identityRows=payload.filter(x=>IDENTITY_WRITE_COLLECTIONS.has(x.collection));
+    const stateRows=payload.filter(x=>!IDENTITY_WRITE_COLLECTIONS.has(x.collection));
+    const post=async(url,changes)=>{
+      if(!changes.length)return;
+      const response=await fetch(url,{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${token}`},credentials:'same-origin',cache:'no-store',body:JSON.stringify({changes})});
+      const result=await response.json().catch(()=>null);
+      if(!response.ok||!result?.ok)throw new Error(result?.error?.message||`正式資料寫入失敗（HTTP ${response.status}）`);
+    };
+    await post(APP_CONFIG.identityWriteUrl,identityRows);
+    await post(APP_CONFIG.stateMutateUrl,stateRows);
     rows.forEach(x=>authoritativeQueue.delete(`${x.actorUserId}|${x.collection}|${x.id}`));authoritativeLastError='';authoritativeLastAckAt=nowISO();authoritativePersistQueue_();
     if(authoritativeQueue.size)setTimeout(()=>authoritativeFlush_(),20);return {ok:true,count:rows.length};
   }catch(error){
