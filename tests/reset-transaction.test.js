@@ -5,6 +5,10 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 const root = path.join(__dirname, '../netlify/functions');
+// _db-config.js 是在真實 module 系統裡載入的（不是 vm 沙箱），所以它讀的是
+// 真實的 process.env。給一個合成的本機連線字串，這支測試不會真的連線。
+process.env.DATABASE_URL = process.env.DATABASE_URL
+  || 'postgres://care_ride_app@localhost/offline';
 function load(name, deps) {
   const module = {exports:{}};
   vm.runInNewContext(fs.readFileSync(path.join(root,name),'utf8'), {
@@ -20,10 +24,13 @@ async function run(kind) {
     return {rows:sql.includes('find_user')?[{id:'synthetic',active:true}]:[]};
   }};
   class Pool {on(){} async connect(){return client;}}
+  const dbConfig=require('../netlify/functions/_db-config');
   const mod={exports:{}};
   vm.runInNewContext(fs.readFileSync(path.join(root,'_db.js'),'utf8'),{
     // URL 不是 ECMAScript 內建，新的 vm context 不會自帶，要明確傳進去。
-    module:mod,exports:mod.exports,require:()=>({Pool}),URL,
+    // _db.js 現在會 require('./_db-config')，沙箱要分別回應兩個 require 目標。
+    module:mod,exports:mod.exports,URL,
+    require:n=>n==='./_db-config'?dbConfig:({Pool}),
     process:{env:{DATABASE_URL:'postgres://care_ride_app@localhost/offline'}},console
   });
   const auth={normalizeTaiwanPhone:p=>p,toE164:p=>p,authError:(code,msg)=>Object.assign(Error(msg),{code}),
