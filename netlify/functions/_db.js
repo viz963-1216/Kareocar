@@ -13,35 +13,94 @@ const { Pool } = require('pg');
 
 let pool = null;
 
-function connectionString() {
-  const url = String(process.env.DATABASE_URL || '').trim();
+/** loopback 主機名。Unix socket 另外用「路徑開頭是 /」判斷。 */
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+
+function configError(message) {
+  return Object.assign(new Error(message), { code: 'CONFIG_INVALID' });
+}
+
+/**
+ * 這個連線是否指向本機隔離端點。
+ * 只有本機端點才允許明文連線；其他一律必須走 TLS。
+ */
+function isLocalEndpoint(host) {
+  if (!host) return true;                 // 沒有 host＝Unix socket
+  if (host.startsWith('/')) return true;  // Unix socket 路徑
+  return LOCAL_HOSTS.has(host.toLowerCase());
+}
+
+/**
+ * 從連線字串裡移除 sslmode。
+ *
+ * 這一步是必要的，不是整理格式：pg 會把 parse(connectionString) 的結果
+ * Object.assign 覆蓋到傳進 Pool 的 config 上，所以連線字串裡的 sslmode 會
+ * 蓋掉我們在這裡明確指定的 ssl。不拿掉的話，底下那個「遠端一律 TLS」的判斷
+ * 就只是個註解，實際生效的是連線字串。
+ */
+function stripSslmode(url) {
+  const at = url.indexOf('?');
+  if (at < 0) return url;
+  const base = url.slice(0, at);
+  const kept = url.slice(at + 1).split('&').filter((p) => !/^sslmode=/i.test(p));
+  return kept.length ? `${base}?${kept.join('&')}` : base;
+}
+
+/**
+ * 解析並驗證連線設定。
+ *
+ * 傳入 rawUrl 時完全不碰 process.env——測試就是這樣在不讀取正式 DATABASE_URL
+ * 的情況下驗證這裡的判斷。
+ */
+function resolveDbConfig(rawUrl) {
+  const url = String(rawUrl === undefined ? process.env.DATABASE_URL || '' : rawUrl).trim();
   if (!url) {
     throw Object.assign(new Error('Netlify 尚未設定 DATABASE_URL'), { code: 'CONFIG_MISSING' });
   }
   // 擋掉最容易犯、後果也最嚴重的設定錯誤
   if (/:\/\/postgres(?::|@)/.test(url)) {
-    throw Object.assign(
-      new Error('DATABASE_URL 不可使用 postgres 角色（會繞過所有 RLS 政策），請改用 care_ride_app'),
-      { code: 'CONFIG_INVALID' });
+    throw configError('DATABASE_URL 不可使用 postgres 角色（會繞過所有 RLS 政策），請改用 care_ride_app');
   }
-  return url;
+
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw configError('DATABASE_URL 不是合法的連線字串');
+  }
+
+  // Unix socket 的路徑是百分比編碼塞在 host 欄位；IPv6 會帶方括號。
+  const host = decodeURIComponent(parsed.hostname).replace(/^\[/, '').replace(/\]$/, '');
+  const sslmode = String(parsed.searchParams.get('sslmode') || '').toLowerCase();
+  const local = isLocalEndpoint(host);
+
+  if (sslmode === 'disable' && !local) {
+    throw configError(
+      `DATABASE_URL 要求停用 TLS（sslmode=disable），但主機「${host}」不是本機隔離端點。`
+      + '遠端連線一律必須走 TLS；明文連線只允許用在本機隔離測試（Unix socket、localhost、127.0.0.1、::1）。');
+  }
+
+  return {
+    connectionString: stripSslmode(url),
+    // 只有「本機端點 + 明確要求 disable」才走明文。其他情況——包含遠端寫了
+    // sslmode=prefer / allow 之類可能靜默降級成明文的設定——一律 TLS。
+    ssl: sslmode === 'disable' && local ? false : { rejectUnauthorized: false },
+    host,
+    local
+  };
 }
 
 function getPool() {
   if (!pool) {
-    const url = connectionString();
-    // 正式環境（Supabase）一律走 TLS。只有連線字串明確寫 sslmode=disable 時才
-    // 關掉——那是給隔離測試用的本機 Postgres，它沒有啟用 SSL，硬要 TLS 會
-    // 直接連不上。正式連線字串不會有這個參數，行為不變。
-    const sslDisabled = /[?&]sslmode=disable(&|$)/.test(url);
+    const cfg = resolveDbConfig();
     pool = new Pool({
-      connectionString: url,
+      connectionString: cfg.connectionString,
       // Netlify Function 是短生命週期的，連線池開小一點，交給 Supabase 的
       // pooler 做真正的匯聚。
       max: 2,
       idleTimeoutMillis: 10_000,
       connectionTimeoutMillis: 8_000,
-      ssl: sslDisabled ? false : { rejectUnauthorized: false }
+      ssl: cfg.ssl
     });
     pool.on('error', (err) => console.error('[db] idle client error', err));
   }
@@ -89,4 +148,4 @@ function translateDbError(error) {
   return error;
 }
 
-module.exports = { getPool, withUser, withoutUser, translateDbError };
+module.exports = { getPool, withUser, withoutUser, translateDbError, resolveDbConfig };

@@ -24,6 +24,7 @@ const reset = require('../../netlify/functions/_auth-reset');
 const auth = require('../../netlify/functions/_auth-pg');
 const confirm = require('../../netlify/functions/v2-confirm-password-reset');
 const phone='0912000001', user='USR-VICTIM';
+const other='USR-ATTACK', otherPhone='+886912000002';
 const newPassword='synthetic-new-password';
 const post = async otp => JSON.parse((await confirm.handler({httpMethod:'POST',body:JSON.stringify({phone,otp,newPassword})})).body);
 let count=0;
@@ -59,6 +60,43 @@ async function challenge(){
     assert.equal(results.filter(r=>r.error?.code==='RESET_CODE_INVALID').length,1);
     assert.equal((await admin.query('select session_version from users where id=$1',[user])).rows[0].session_version,before+1);
     assert.equal(await db.withoutUser(c=>auth.verifyPasswordCredential(c,user,newPassword)),true);
+  });
+  await check('challenge bound to another user is invalidated, no account changes, reuse rejected',async()=>{
+    // 挑戰綁 USR-VICTIM，然後把號碼移到 USR-ATTACK：此時挑戰的 userId 與這支
+    // 手機現在對應的使用者不符。正確碼也必須被拒，挑戰必須失效，兩個帳號都
+    // 不能被改動。
+    const otp=await challenge();
+    const e164=auth.toE164(phone), parked='+886912099999';
+    const snap=async()=>(await admin.query(
+      `select u.id, u.session_version, u.updated_at,
+              (select count(*)::int from password_credentials c where c.user_id=u.id) creds
+         from users u where u.id in ($1,$2) order by u.id`,[user,other])).rows;
+    await admin.query('update users set phone_e164=$1 where id=$2',[parked,user]);
+    await admin.query('update users set phone_e164=$1 where id=$2',[e164,other]);
+    try {
+      const before=await snap();
+      const first=await post(otp);
+      assert.equal(first.error.code,'RESET_CODE_INVALID');
+      assert.equal(first.ok,undefined);
+
+      // 挑戰已作廢（提交後生效），不是只被回滾
+      assert.equal((await admin.query('select count(*)::int n from auth_rate_limits where key=$1',
+        [auth.opaqueKey('reset',phone)])).rows[0].n,0);
+
+      // 兩個帳號的 session_version、updated_at、憑證數量都沒變
+      assert.deepEqual(await snap(),before);
+
+      // 沒有任何一方的密碼被設成這次送進來的新密碼
+      assert.equal(await db.withoutUser(c=>auth.verifyPasswordCredential(c,other,newPassword)),false);
+
+      // 同一組碼再送一次仍然被拒（挑戰真的不見了，不是還留著可重試）
+      assert.equal((await post(otp)).error.code,'RESET_CODE_INVALID');
+      assert.deepEqual(await snap(),before);
+    } finally {
+      await admin.query('update users set phone_e164=null where id=$1',[other]);
+      await admin.query('update users set phone_e164=$1 where id=$2',[e164,user]);
+      await admin.query('update users set phone_e164=$1 where id=$2',[otherPhone,other]);
+    }
   });
   await check('failed SMS callback rolls back challenge and rate state',async()=>{
     await admin.query('delete from auth_rate_limits');
