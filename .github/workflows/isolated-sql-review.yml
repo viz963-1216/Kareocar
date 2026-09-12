@@ -4,8 +4,23 @@ name: Isolated SQL and reset checks
 # 建庫，跑 seed 情境測試與密碼重設的交易／併發測試。
 # 全部使用合成資料，不連正式資料庫、不呼叫任何外部服務。
 
+# push 到 main 是「合併後檢查」：確認進到 main 的內容自己跑得過，不是只在 PR
+# 的合併預覽上跑得過。
+#
+# 它擋不住任何東西。GitHub Actions 與 Netlify 是兩個獨立的觸發來源，同一個
+# push 會同時啟動；這個 workflow 失敗不會阻止、也不會回復 Netlify 已經開始
+# 或完成的自動部署。要真正把部署擋在檢查之後，得靠 Netlify 端的設定
+# （關閉 auto-publish，或用 branch deploy／deploy preview 流程）。
 on:
   pull_request:
+    paths:
+      - 'supabase/**'
+      - 'netlify/functions/**'
+      - 'tests/**'
+      - 'package.json'
+      - '.github/workflows/isolated-sql-review.yml'
+  push:
+    branches: [main]
     paths:
       - 'supabase/**'
       - 'netlify/functions/**'
