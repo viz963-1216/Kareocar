@@ -34,8 +34,17 @@ permissions:
 
 jobs:
   postgres:
+    # Netlify 的建置與 function runtime 設定為 Node 24.x，所以 24 是真正要保證
+    # 的版本；package.json 的 engines 是 >=20，所以 20 一起跑，避免只在單一版本
+    # 上綠燈。兩個版本跑的是同一套測試。
+    name: postgres (node ${{ matrix.node }})
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '24']
 
     services:
       postgres:
@@ -62,7 +71,10 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ matrix.node }}
+
+      - name: 記錄實際 Node 版本
+        run: node --version
 
       - name: 安裝 psql 與測試相依
         run: |
