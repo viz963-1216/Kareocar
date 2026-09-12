@@ -16,8 +16,8 @@
  * 建構 Client 不會發出任何連線。
  */
 const assert = require('node:assert/strict');
-const { Client } = require('pg');
-const { resolveDbConfig, pgClientConfig } = require('../../netlify/functions/_db');
+const { Client, Pool } = require('pg');
+const { resolveDbConfig, pgClientConfig, poolOptions } = require('../../netlify/functions/_db');
 
 const REMOTE_HOST = 'aws-0-ap-southeast-1.pooler.supabase.com';
 const REMOTE = `postgresql://care_ride_app.synthref:synthetic@${REMOTE_HOST}:6543/postgres`;
@@ -91,6 +91,81 @@ function expectRejected(url, pattern, label) {
   }
 
   expectRejected(`${REMOTE}?sslmode=banana`, /無法辨識/, '無法辨識的 sslmode 被拒絕');
+
+  // ------------------------------------------------ 2b. 參數名稱大小寫（Codex 的重現）
+  // 先確認前提：pg 自己對參數名稱是大小寫敏感的，?SSLMODE=... 不會被它當成 sslmode。
+  {
+    const leaked = new Client({
+      connectionString: `${REMOTE}?SSLMODE=verify-full`,
+      ssl: { rejectUnauthorized: false }
+    }).connectionParameters;
+    console.log('      [記錄] pg 對 ?SSLMODE=verify-full 的解析結果：',
+      JSON.stringify({ ssl: leaked.ssl }));
+    assert.notEqual(leaked.ssl, false,
+      '前提確認：pg 不會把大寫的 SSLMODE 當成 sslmode');
+  }
+
+  expectRejected(`${REMOTE}?SSLMODE=verify-full`, /查詢參數名稱必須全小寫/,
+    '大寫 SSLMODE 被拒絕（先前會通過白名單後被靜默忽略成 TLS 不驗證）');
+  expectRejected(`${REMOTE}?SslMode=require`, /查詢參數名稱必須全小寫/,
+    '混合大小寫 SslMode 被拒絕');
+  expectRejected('postgresql://care_ride_app@localhost/d?sslmode=require&SSLMODE=disable',
+    /查詢參數名稱必須全小寫/,
+    '大小寫混合的重複 sslmode 被拒絕（先前不會判為衝突）');
+  expectRejected(`${REMOTE}?APPLICATION_NAME=x`, /查詢參數名稱必須全小寫/,
+    '大寫 APPLICATION_NAME 被拒絕');
+
+  {
+    // 同一個名稱、值大小寫不同：視為同一個模式，不算歧義。
+    const cp = finalParams(`${REMOTE}?sslmode=require&sslmode=REQUIRE`);
+    assert.notEqual(cp.ssl, false);
+    ok('sslmode 值的大小寫差異視為同一個模式');
+  }
+
+  // ------------------------------------------------ 2c. connect_timeout
+  for (const bad of ['abc', '-5', '1.5', '1e3', '', ' ', '0x10', 'Infinity', 'NaN']) {
+    expectRejected(`${REMOTE}?connect_timeout=${encodeURIComponent(bad)}`,
+      /connect_timeout=.*(無效|超出範圍)/,
+      `connect_timeout=${JSON.stringify(bad)} 被拒絕`);
+  }
+  expectRejected(`${REMOTE}?connect_timeout=601`, /超出範圍/,
+    'connect_timeout 超過上限（601 秒）被拒絕');
+  expectRejected(`${REMOTE}?connect_timeout=5&connect_timeout=9`, /多個不一致的 connect_timeout/,
+    '重複且不一致的 connect_timeout 被拒絕');
+
+  // 最後真正交給 Pool 的值
+  {
+    const opts = poolOptions(resolveDbConfig(`${REMOTE}?connect_timeout=30`));
+    assert.equal(opts.connectionTimeoutMillis, 30_000);
+    assert.equal(new Pool(opts).options.connectionTimeoutMillis, 30_000);
+    ok('connect_timeout=30 → Pool 的 connectionTimeoutMillis 為 30000');
+  }
+  {
+    // 0 = 不設上限（libpq 語意），不可以被預設值蓋掉
+    const opts = poolOptions(resolveDbConfig(`${REMOTE}?connect_timeout=0`));
+    assert.equal(opts.connectionTimeoutMillis, 0);
+    assert.equal(new Pool(opts).options.connectionTimeoutMillis, 0);
+    ok('connect_timeout=0 → Pool 的 connectionTimeoutMillis 為 0（不設上限，未被預設值蓋掉）');
+  }
+  {
+    // 沒帶參數時套用預設值
+    const opts = poolOptions(resolveDbConfig(REMOTE));
+    assert.equal(opts.connectionTimeoutMillis, 8_000);
+    assert.equal(new Pool(opts).options.connectionTimeoutMillis, 8_000);
+    ok('未指定 connect_timeout → Pool 沿用預設 8000ms');
+  }
+  {
+    // Pool 拿到的主機／使用者／TLS 也必須是驗證過的值
+    const opts = poolOptions(resolveDbConfig(`${REMOTE}?application_name=care-ride-ci`));
+    const p = new Pool(opts);
+    assert.equal(p.options.host, REMOTE_HOST);
+    assert.equal(p.options.user, 'care_ride_app.synthref');
+    assert.notEqual(p.options.ssl, false);
+    assert.equal(p.options.application_name, 'care-ride-ci');
+    assert.equal(p.options.connectionString, undefined,
+      'Pool 不該拿到 connectionString，否則字串又能覆寫驗證過的值');
+    ok('Pool 收到的主機／使用者／TLS／application_name 皆為驗證過的值，且不含 connectionString');
+  }
 
   // ================================================ 3. verify-ca / verify-full
   for (const mode of ['verify-ca', 'verify-full']) {

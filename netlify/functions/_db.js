@@ -24,10 +24,14 @@ const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
  * remote.example，不是 localhost——只檢查 URL 的 hostname 會被這樣繞過。
  * 與其一個個列舉危險參數（漏一個就破功），不如只放行明確支援的。
  *
- * supabase/README.md 記載的正式連線字串沒有任何查詢參數，所以這個白名單
- * 不影響正式設定。
+ * 正式設定相容性尚待確認：supabase/README.md 記載的連線字串形式沒有查詢
+ * 參數，但沒有人核對過正式環境變數的實際內容。若正式字串帶了這裡沒列的
+ * 參數，部署後會以 CONFIG_INVALID 明確拒絕啟動（而不是靜默降級）。
  */
 const SUPPORTED_PARAMS = new Set(['sslmode', 'application_name', 'connect_timeout']);
+
+/** connect_timeout 的上限（秒）。0 代表不設上限，語意與 libpq 一致。 */
+const CONNECT_TIMEOUT_MAX_SECONDS = 600;
 
 /** 會覆寫連線身分或 TLS 的參數，錯誤訊息要講得更具體。 */
 const OVERRIDE_PARAMS = new Set([
@@ -83,12 +87,26 @@ function resolveDbConfig(rawUrl) {
   }
 
   // ---------------------------------------------------------------- 查詢參數
-  // 用 URLSearchParams 一次處理百分比編碼與重複參數，不做字串正規表示式，
-  // 避免「檢查時的解碼」與「驅動解析時的解碼」不一致。
-  const names = new Set();
-  for (const name of parsed.searchParams.keys()) names.add(name.toLowerCase());
+  // 名稱先正規化再驗證與取值。先前是「用小寫比對白名單、卻用大小寫敏感的
+  // getAll('sslmode') 取值」，結果 ?SSLMODE=verify-full 通過白名單之後被靜默
+  // 忽略，而 ?sslmode=require&SSLMODE=disable 也不會被判為衝突。
+  //
+  // libpq 的關鍵字全為小寫，所以非小寫的名稱一律明確拒絕，不猜使用者的意圖。
+  const params = new Map();          // 小寫名稱 -> 原始值陣列
+  const badCase = [];
+  for (const [rawName, value] of parsed.searchParams) {
+    const name = rawName.toLowerCase();
+    if (rawName !== name && !badCase.includes(rawName)) badCase.push(rawName);
+    if (!params.has(name)) params.set(name, []);
+    params.get(name).push(value);
+  }
+  if (badCase.length) {
+    throw configError(
+      `DATABASE_URL 的查詢參數名稱必須全小寫（libpq 關鍵字都是小寫）：收到 ${badCase.join('、')}。`
+      + '大小寫混用會讓驗證與取值對不上，一律拒絕而不是靜默忽略。');
+  }
 
-  const rejected = [...names].filter((n) => !SUPPORTED_PARAMS.has(n));
+  const rejected = [...params.keys()].filter((n) => !SUPPORTED_PARAMS.has(n));
   if (rejected.length) {
     const overrides = rejected.filter((n) => OVERRIDE_PARAMS.has(n));
     throw configError(
@@ -99,12 +117,41 @@ function resolveDbConfig(rawUrl) {
       + `目前只支援 ${[...SUPPORTED_PARAMS].join('、')}。`);
   }
 
-  // 重複的 sslmode：值相同視為同一個，值不同就是有歧義，拒絕。
-  const sslmodes = parsed.searchParams.getAll('sslmode').map((v) => String(v).trim().toLowerCase());
-  if (new Set(sslmodes).size > 1) {
-    throw configError(`DATABASE_URL 有多個不一致的 sslmode：${sslmodes.join('、')}。請只保留一個。`);
+  // 重複參數：值相同視為同一個，值不同就是有歧義，一律拒絕。
+  // sslmode 的值比對不分大小寫（require 與 REQUIRE 是同一個模式）。
+  const valueOf = (name) => {
+    const raw = params.get(name);
+    if (!raw) return undefined;
+    const normalized = raw.map((v) => (name === 'sslmode'
+      ? String(v).trim().toLowerCase() : String(v).trim()));
+    if (new Set(normalized).size > 1) {
+      throw configError(
+        `DATABASE_URL 有多個不一致的 ${name}：${normalized.join('、')}。請只保留一個。`);
+    }
+    return normalized[0];
+  };
+
+  const sslmode = valueOf('sslmode') || '';
+  const applicationName = valueOf('application_name') || undefined;
+
+  // connect_timeout：libpq 是「秒」，0 代表不設上限。只接受非負整數秒數，
+  // 非數字／負值／小數／科學記號／超過上限都明確拒絕，不讓它變成 NaN。
+  let connectionTimeoutMillis;       // undefined = 使用預設值
+  const rawTimeout = valueOf('connect_timeout');
+  if (rawTimeout !== undefined) {
+    if (!/^\d+$/.test(rawTimeout)) {
+      throw configError(
+        `DATABASE_URL 的 connect_timeout=${rawTimeout} 無效：只接受非負整數秒數`
+        + `（0 代表不設上限，最大 ${CONNECT_TIMEOUT_MAX_SECONDS}）。`);
+    }
+    const seconds = Number(rawTimeout);
+    if (!Number.isFinite(seconds) || seconds > CONNECT_TIMEOUT_MAX_SECONDS) {
+      throw configError(
+        `DATABASE_URL 的 connect_timeout=${rawTimeout} 超出範圍：`
+        + `上限為 ${CONNECT_TIMEOUT_MAX_SECONDS} 秒（0 代表不設上限）。`);
+    }
+    connectionTimeoutMillis = seconds * 1000;   // 0 -> 0，pg 視為不設上限
   }
-  const sslmode = sslmodes[0] || '';
 
   // ---------------------------------------------------------------- 身分
   // Unix socket 的路徑是百分比編碼塞在 host 欄位；IPv6 會帶方括號。
@@ -152,13 +199,10 @@ function resolveDbConfig(rawUrl) {
       + `支援：${[...TLS_MODES].filter(Boolean).join('、')}、disable（僅本機隔離測試）。`);
   }
 
-  const applicationName = parsed.searchParams.get('application_name') || undefined;
-  const connectTimeout = parsed.searchParams.get('connect_timeout');
-
   return {
     host, port, user, password, database, ssl, local,
     application_name: applicationName,
-    connectionTimeoutMillis: connectTimeout ? Number(connectTimeout) * 1000 : undefined
+    connectionTimeoutMillis
   };
 }
 
@@ -176,17 +220,25 @@ function pgClientConfig(cfg) {
   return out;
 }
 
+/**
+ * 交給 pg Pool 的最終設定。抽出來是為了讓測試能斷言「真正送進 Pool 的值」，
+ * 而不是在測試裡重寫一份同樣的組裝邏輯。
+ */
+function poolOptions(cfg) {
+  return {
+    ...pgClientConfig(cfg),
+    // Netlify Function 是短生命週期的，連線池開小一點，交給 Supabase 的
+    // pooler 做真正的匯聚。
+    max: 2,
+    idleTimeoutMillis: 10_000,
+    // connect_timeout=0 的語意是「不設上限」，所以只有 undefined 才套用預設值。
+    connectionTimeoutMillis: cfg.connectionTimeoutMillis ?? 8_000
+  };
+}
+
 function getPool() {
   if (!pool) {
-    const cfg = resolveDbConfig();
-    pool = new Pool({
-      ...pgClientConfig(cfg),
-      // Netlify Function 是短生命週期的，連線池開小一點，交給 Supabase 的
-      // pooler 做真正的匯聚。
-      max: 2,
-      idleTimeoutMillis: 10_000,
-      connectionTimeoutMillis: cfg.connectionTimeoutMillis ?? 8_000
-    });
+    pool = new Pool(poolOptions(resolveDbConfig()));
     pool.on('error', (err) => console.error('[db] idle client error', err));
   }
   return pool;
@@ -233,4 +285,7 @@ function translateDbError(error) {
   return error;
 }
 
-module.exports = { getPool, withUser, withoutUser, translateDbError, resolveDbConfig, pgClientConfig };
+module.exports = {
+  getPool, withUser, withoutUser, translateDbError,
+  resolveDbConfig, pgClientConfig, poolOptions
+};
