@@ -29,14 +29,19 @@ function connectionString() {
 
 function getPool() {
   if (!pool) {
+    const url = connectionString();
+    // 正式環境（Supabase）一律走 TLS。只有連線字串明確寫 sslmode=disable 時才
+    // 關掉——那是給隔離測試用的本機 Postgres，它沒有啟用 SSL，硬要 TLS 會
+    // 直接連不上。正式連線字串不會有這個參數，行為不變。
+    const sslDisabled = /[?&]sslmode=disable(&|$)/.test(url);
     pool = new Pool({
-      connectionString: connectionString(),
+      connectionString: url,
       // Netlify Function 是短生命週期的，連線池開小一點，交給 Supabase 的
       // pooler 做真正的匯聚。
       max: 2,
       idleTimeoutMillis: 10_000,
       connectionTimeoutMillis: 8_000,
-      ssl: { rejectUnauthorized: false }
+      ssl: sslDisabled ? false : { rejectUnauthorized: false }
     });
     pool.on('error', (err) => console.error('[db] idle client error', err));
   }

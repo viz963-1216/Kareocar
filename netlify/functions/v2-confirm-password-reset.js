@@ -40,7 +40,15 @@ exports.handler = async (event) => {
         throw auth.authError('RESET_CODE_INVALID', '驗證碼無效或已失效');
       }
 
-      const verified = await reset.verifyChallenge(client, phone, code);
+      // 驗證錯誤的次數／作廢必須提交；在交易外才回報預期錯誤。
+      // 其他錯誤仍拋出，保留原本完整回滾行為。
+      let verified;
+      try {
+        verified = await reset.verifyChallenge(client, phone, code);
+      } catch (error) {
+        if (error.code === 'RESET_CODE_INVALID') return { verificationError: error };
+        throw error;
+      }
       if (String(verified.userId) !== String(user.id)) {
         throw auth.authError('RESET_CODE_INVALID', '驗證碼無效或已失效');
       }
@@ -71,6 +79,7 @@ exports.handler = async (event) => {
       };
     });
 
+    if (data.verificationError) throw data.verificationError;
     return json(200, { ok: true, data });
   } catch (error) {
     return handleError(translateDbError(error));

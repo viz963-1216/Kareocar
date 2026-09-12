@@ -1,0 +1,68 @@
+name: Isolated SQL and reset checks
+
+# 在一個用完就丟的 postgres:16 容器上，用 supabase/migrations/ 的實際 migration
+# 建庫，跑 seed 情境測試與密碼重設的交易／併發測試。
+# 全部使用合成資料，不連正式資料庫、不呼叫任何外部服務。
+
+on:
+  pull_request:
+    paths:
+      - 'supabase/**'
+      - 'netlify/functions/**'
+      - 'tests/**'
+      - 'package.json'
+      - '.github/workflows/isolated-sql-review.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        # 走 TCP 而不是掛載 Unix socket 目錄：socket 的權限在 runner 上容易壞，
+        # 而測試腳本本來就吃 PG* 環境變數。
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 安裝 psql 與測試相依
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          npm install --ignore-scripts --no-audit --no-fund
+
+      - name: 確認資料庫連得上
+        run: psql -X -v ON_ERROR_STOP=1 -c 'select version()'
+
+      - name: 離線回歸測試（Apps Script 層）
+        run: bash tests/run.sh
+
+      - name: 離線交易回歸測試（記憶體 PG 替身）
+        run: node tests/reset-transaction.test.js
+
+      - name: 實際 migration + seed 情境 + 重設交易／併發測試
+        run: bash supabase/tests/run-isolated-review.sh

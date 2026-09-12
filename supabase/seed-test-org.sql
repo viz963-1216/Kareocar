@@ -297,6 +297,8 @@ f as (
     (select max(x.display_name) from users x where x.phone_e164 = p.phone)  as user_name,
     (select count(*)        from organizations g where g.id = p.org_id)     as org_cnt,
     (select max(g.name)     from organizations g where g.id = p.org_id)     as org_name,
+    (select max(g.org_type) from organizations g where g.id = p.org_id) as org_type,
+    (select max(g.contact_phone) from organizations g where g.id = p.org_id) as org_phone,
     (select bool_or(g.active) from organizations g where g.id = p.org_id)   as org_active,
     (select count(*) from memberships s
       where s.organization_id = p.org_id and s.role = 'owner'
@@ -313,6 +315,10 @@ select
   case
     when org_cnt = 0            then 'FAIL：組織 ' || org_id || ' 不存在'
     when org_active is not true then 'FAIL：組織存在但 active = false'
+    when org_name is distinct from '測試服務單位（請勿使用）'
+      or org_type is distinct from 'transport_provider'
+      or org_phone is distinct from '0212345678'
+                                then 'FAIL：組織內容與預期不符'
     when user_cnt = 0           then 'FAIL：找不到 phone_e164 = ' || phone || ' 的使用者'
     when user_cnt > 1           then 'FAIL：該手機對應 ' || user_cnt || ' 位使用者'
     when user_active is not true then 'FAIL：使用者 ' || user_id || ' 已停用'
@@ -322,8 +328,8 @@ select
                                 then 'FAIL：負責人是 ' || coalesce(owner_user_id, '(null)')
                                      || '，不是預期的 ' || coalesce(user_id, '(null)')
     when owner_mem_id is distinct from mem_id
-                                then 'PASS（但 membership ID 是 ' || coalesce(owner_mem_id, '(null)')
-                                     || '，不是 ' || mem_id || '）'
+                                then 'FAIL：membership ID 是 ' || coalesce(owner_mem_id, '(null)')
+                                     || '，不是 ' || mem_id
     else 'PASS'
   end                as 驗證結果,
   org_id             as 組織ID,

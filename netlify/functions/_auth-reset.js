@@ -92,6 +92,8 @@ async function recordSent(client, ctx) {
  * 必須把剛寫進去的挑戰刪掉，否則使用者會拿不到碼卻被擋在節流後面。
  */
 async function createChallenge(client, userId, phone, sendCode) {
+  // 共用交易鎖：同一手機的發送與驗證不能同時讀寫挑戰。
+  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [challengeKey(phone)]);
   const existing = await activeChallenge(client, phone);
   if (existing && String(existing.state.userId) === String(userId)) {
     return { expiresInSeconds: existing.expiresInSeconds, resent: false };
@@ -121,6 +123,7 @@ async function createChallenge(client, userId, phone, sendCode) {
 
 /** 驗證成功回傳 { userId }；任何失敗都拋 RESET_CODE_INVALID，不透露是哪一種。 */
 async function verifyChallenge(client, phone, code) {
+  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [challengeKey(phone)]);
   const key = challengeKey(phone);
   const state = await stateGet(client, key);
   const now = nowSec();

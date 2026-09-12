@@ -18,6 +18,17 @@
 # 刻意不使用 set -e：預期失敗的指令必須讓腳本繼續跑下去。
 set -uo pipefail
 
+# 本腳本會 TRUNCATE，只允許明確指定的隔離測試庫。
+case "${PGHOST:-}" in
+  /tmp/care-ride-*|localhost|127.0.0.1) ;;
+  *) echo "拒絕執行：PGHOST 必須是隔離本機測試端點"; exit 1 ;;
+esac
+[ "${PGDATABASE:-}" = "careride_seed_test" ] || {
+  echo "拒絕執行：PGDATABASE 必須為 careride_seed_test"; exit 1;
+}
+command -v psql >/dev/null || { echo "缺少 psql"; exit 1; }
+psql -X -q -v ON_ERROR_STOP=1 -c 'select 1' >/dev/null || exit 1
+
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 SEED_SQL="$ROOT/supabase/seed-test-org.sql"
@@ -223,6 +234,9 @@ grep -q 'MEM-OTHER' "$TMP/psql.log" && ok "錯誤訊息點出實際的 membershi
   && ok "未新增重複關聯" || ng "產生了重複關聯"
 [ "$(snapshot)" = "$before" ] && ok "資料未被改動" || ng "資料被改動了"
 
+v=$(verdict)
+case "$v" in FAIL*) ok "不同 membership ID 的驗證回 FAIL" ;; *) ng "不同 ID 卻回 $v" ;; esac
+
 # --------------------------------------------------------------------------
 echo ""
 echo "=== 情境 8：組織已有另一位啟用中負責人 ==="
@@ -247,6 +261,23 @@ grep -q '已經有另一位啟用中的負責人' "$TMP/psql.log" && ok "錯誤�
 
 # --------------------------------------------------------------------------
 echo ""
+echo "=== 情境 9：既有有效關聯，但組織欄位遭修改 ==="
+reset_data
+add_user "$USER_ID" "$PHONE" true
+rc=$(run_sql "$TMP/step2.sql")
+[ "$rc" -eq 0 ] || { cat "$TMP/psql.log"; exit 1; }
+for field in name org_type contact_phone; do
+  case "$field" in
+    name) replacement="不同名稱"; original="$ORG_NAME" ;;
+    org_type) replacement="requester_hub"; original="transport_provider" ;;
+    contact_phone) replacement="0299999999"; original="0212345678" ;;
+  esac
+  psql -X -q -v ON_ERROR_STOP=1 -c "update organizations set $field='$replacement' where id='$ORG'" || exit 1
+  v=$(verdict)
+  case "$v" in FAIL*) ok "$field 不符時驗證回 FAIL" ;; *) ng "$field 不符卻回 $v" ;; esac
+  psql -X -q -v ON_ERROR_STOP=1 -c "update organizations set $field='$original' where id='$ORG'" || exit 1
+done
+
 echo "═══════════════════════════════════════════════════"
 echo "結果：$pass 通過 / $fail 失敗"
 if [ "$fail" -eq 0 ]; then
