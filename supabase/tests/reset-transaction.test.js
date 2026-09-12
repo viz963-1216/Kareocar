@@ -77,7 +77,7 @@ async function challenge(){
       const before=await snap();
       const first=await post(otp);
       assert.equal(first.error.code,'RESET_CODE_INVALID');
-      assert.equal(first.ok,undefined);
+      assert.equal(first.ok,false);   // handleError 會回 { ok:false, error:{...} }
 
       // 挑戰已作廢（提交後生效），不是只被回滾
       assert.equal((await admin.query('select count(*)::int n from auth_rate_limits where key=$1',
