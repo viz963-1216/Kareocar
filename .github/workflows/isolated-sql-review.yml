@@ -92,3 +92,9 @@ jobs:
 
       - name: 實際 migration + seed 情境 + 重設交易／併發測試
         run: bash supabase/tests/run-isolated-review.sh
+
+      # 斷言預期業務行為（接案、司機執行、需求者取消）。已知缺陷會讓這一步
+      # 如實失敗，不把 403 寫成預期成功。放在最後、獨立一步，前面各步的結果
+      # 仍可單獨判讀。
+      - name: 業務權限整合測試（state-load／state-mutate + RLS）
+        run: bash supabase/tests/run-business-flow.sh
