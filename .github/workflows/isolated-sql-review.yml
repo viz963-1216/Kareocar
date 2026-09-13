@@ -17,6 +17,9 @@ on:
       - 'supabase/**'
       - 'netlify/functions/**'
       - 'tests/**'
+      - 'tools/**'
+      - 'index.html'
+      - 'netlify.toml'
       - 'package.json'
       - '.github/workflows/isolated-sql-review.yml'
   push:
@@ -25,6 +28,9 @@ on:
       - 'supabase/**'
       - 'netlify/functions/**'
       - 'tests/**'
+      - 'tools/**'
+      - 'index.html'
+      - 'netlify.toml'
       - 'package.json'
       - '.github/workflows/isolated-sql-review.yml'
   workflow_dispatch:
@@ -93,8 +99,99 @@ jobs:
       - name: 實際 migration + seed 情境 + 重設交易／併發測試
         run: bash supabase/tests/run-isolated-review.sh
 
-      # 斷言預期業務行為（接案、司機執行、需求者取消）。已知缺陷會讓這一步
-      # 如實失敗，不把 403 寫成預期成功。放在最後、獨立一步，前面各步的結果
-      # 仍可單獨判讀。
-      - name: 業務權限整合測試（state-load／state-mutate + RLS）
+      # 斷言預期業務行為（接案、司機執行、需求者取消）。放在獨立一步，前面各步
+      # 的結果仍可單獨判讀。
+      - name: 業務權限整合測試（接案／司機執行／需求者取消 + RLS）
         run: bash supabase/tests/run-business-flow.sh
+
+      - name: migration 0008 部署行為（不改寫、鎖、lock_timeout、重試、執行計畫）
+        run: bash supabase/tests/migration-0008-deploy.test.sh
+
+  compat-old-code:
+    # 部署順序是先 migration、後程式。這一段時間線上是「舊程式 + 新資料庫」，
+    # 這裡用 main 上的 handler 對含 0008 與不含 0008 的兩個庫各跑一次比對。
+    name: 舊程式 × 新資料庫相容性 (node 24)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: 安裝 psql 與測試相依
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          npm install --ignore-scripts --no-audit --no-fund
+
+      - name: 取得 main 作為舊程式
+        run: git fetch --no-tags --depth=1 origin main:refs/remotes/origin/main
+
+      - name: 舊程式 × 新資料庫
+        run: bash supabase/tests/run-compat-old-code.sh
+
+  browser-e2e:
+    # 在真的 Chrome 裡操作 index.html：調度接案、司機執行（含離線／返回／服務
+    # 證明照片）、需求者取消與通知。Chrome 是 runner 映像內建的，不另外安裝；
+    # 瀏覽器控制只用 DevTools Protocol 與 Node 24 內建的 WebSocket。
+    name: 瀏覽器端對端 (node 24)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: 安裝 psql 與測試相依
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          npm install --ignore-scripts --no-audit --no-fund
+
+      - name: 記錄 Chrome 版本
+        run: google-chrome --version
+
+      - name: 瀏覽器端對端測試
+        run: bash supabase/tests/run-browser-e2e.sh
