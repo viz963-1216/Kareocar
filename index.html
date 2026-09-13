@@ -2441,6 +2441,9 @@ const APP_CONFIG = Object.freeze({
   authSessionTokenKey: 'careRideV122579ReportDemoAuthSessionToken',
   stateMutateUrl: '/api/v2/state-mutate',
   identityWriteUrl: '/api/v2/identity-write',
+  claimBookingUrl: '/api/v2/claim-booking',
+  cancelBookingUrl: '/api/v2/cancel-booking',
+  tripExecuteUrl: '/api/v2/trip-execute',
   identityRequestPasswordResetUrl: '/api/v2/request-password-reset',
   identityConfirmPasswordResetUrl: '/api/v2/confirm-password-reset',
   identityUpdateAccountUrl: '/api/v2/update-account',
@@ -3701,6 +3704,17 @@ function validateBookingPayload(input={},options={}){
   return {ok:errors.length===0,errors,warnings,value,dateTime};
 }
 
+// 遮蔽需求池（state-load 的 data.pool，來自 app_state_booking_pool）轉成接案畫面用的形狀。
+// 只使用 view 露出的欄位：行政區、時間、行程類型、服務需求列舉值；沒有門牌、姓名、電話。
+function bookingPoolProjection(row){
+  if(!row||!row.id)return null;
+  const wheelchairs=Math.max(0,Number(row.wheelchair_slots)||0),companions=Math.max(0,Number(row.companions)||0);
+  const needs=[row.aid_need,wheelchairs?`輪椅 ${wheelchairs} 位`:'',companions?`陪同 ${companions} 人`:''].filter(Boolean).join('・')||'一般接送需求';
+  return Object.freeze({id:String(row.id),version:Math.max(1,Number(row.version)||1),state:BOOKING_STATE.OPEN,marketExpiresAt:row.market_expires_at||'',
+    pickupDate:String(row.pickup_at||''),pickupTime:String(row.pickup_time||''),tripType:String(row.trip_type||'單程'),returnDate:String(row.return_date||''),returnTime:String(row.return_time||''),
+    pickupArea:row.pickup_area||'區域未填',destinationArea:row.destination_area||'區域未填',destinationLabel:row.destination_area||'未填',
+    needsSummary:needs,serviceConstraints:Object.freeze({requiresAccessibleVehicle:wheelchairs>0,requiresEscort:false,companions}),source:'demand_pool'});
+}
 function bookingPublicArea(address=''){
   const text=String(address||'').replace(/臺/g,'台').replace(/\s+/g,'');
   const city=text.match(/(台北市|新北市|桃園市|基隆市|新竹市|新竹縣|宜蘭縣|台中市|彰化縣|南投縣|嘉義市|嘉義縣|台南市|高雄市|屏東縣|花蓮縣|台東縣)/)?.[1]||'';
@@ -4032,37 +4046,26 @@ Booking = {
   },
   openDemand(date=null,userId=null){
     if(!bookingActorCanAnyOrganization(userId,BOOKING_PERMISSION.MARKET_READ)&&!bookingActorCan(userId,BOOKING_PERMISSION.MARKET_READ,null))return [];
-    return store.state.bookings
-      .filter(b=>{const dt=this.dateTime(b);return this.stateOf(b)===BOOKING_STATE.OPEN&&!this.isMarketExpired(b)&&(!date||b.pickupDate===date)&&!!dt&&dt>=new Date();})
-      .sort((a,b)=>(this.dateTime(a)?.getTime()??Number.MAX_SAFE_INTEGER)-(this.dateTime(b)?.getTime()??Number.MAX_SAFE_INTEGER))
-      .map(b=>this.publicProjection(b))
-      .filter(Boolean);
+    // 未承接的需求不會出現在 bookings：後端 RLS 只回傳呼叫者有權看的原始資料。
+    // 公開需求只能讀 state-load 回傳的遮蔽需求池（app_state_booking_pool）。
+    const now=Date.now(),at=b=>parseBookingDateTimeStrict(b.pickupDate,b.pickupTime);
+    return (store.state.demandPool||[])
+      .map(row=>bookingPoolProjection(row))
+      .filter(b=>{if(!b)return false;const dt=at(b);if(!dt||dt.getTime()<now)return false;const exp=b.marketExpiresAt?new Date(b.marketExpiresAt).getTime():NaN;if(Number.isFinite(exp)&&exp<=now)return false;return !date||b.pickupDate===date;})
+      .sort((a,b)=>(at(a)?.getTime()??Number.MAX_SAFE_INTEGER)-(at(b)?.getTime()??Number.MAX_SAFE_INTEGER));
   },
   async claim(id,organizationId,userId,expectedVersion){
-    const expected=Number(expectedVersion);
-    if(!Number.isInteger(expected)||expected<1) return {ok:false,error:'案件版本資訊已失效，請重新整理公開需求池'};
-    return withBookingClaimLock(id,async()=>{
-      store.refreshFromStorage();
-      const booking=this.get(id),org=Organization.get(organizationId),user=(store.state.users||[]).find(u=>u.id===userId&&u.active!==false);
-      if(!org||org.active===false||!['transport_provider','care_facility'].includes(org.type)) return {ok:false,error:'目前身分沒有可承接案件的服務組織'};
-      if(!user)return {ok:false,error:'找不到有效接案帳號'};
-      if(!bookingActorCan(userId,BOOKING_PERMISSION.MARKET_CLAIM,organizationId))return {ok:false,error:bookingPermissionError(BOOKING_PERMISSION.MARKET_CLAIM)};
-      const membership=Identity.activeMembershipForUserInOrganization(userId,organizationId);
-      if(this.isMarketExpired(booking)){
-        let expiredResult={ok:false,error:'此需求公開接案期限已到'};
-        store.mutate(db=>{const row=(db.bookings||[]).find(b=>b.id===id);if(row&&bookingMarketExpired(row)){expiredResult=this.transitionInDb(db,id,'expire',{userId:null,source:'claim_guard',reasonText:'接案時發現公開接案期限已到'});}});
-        if(expiredResult.ok)Audit.log('booking_expired',`Booking ${id} 接案時已過期`,{bookingId:id,source:'claim_guard'});
-        return {ok:false,error:'此需求公開接案期限已到，已自公開池移除'};
-      }
-      const stateCheck=bookingTransitionCheck(booking,'claim',{organizationId,userId,expectedVersion:expected});
-      if(!stateCheck.ok) return {ok:false,error:stateCheck.error||'此需求已被其他人接走或已失效'};
-      let result={ok:false,error:'接案失敗'};
-      store.mutate(db=>{ result=this.transitionInDb(db,id,'claim',{organizationId,userId,expectedVersion:expected}); });
-      if(!result.ok)return {ok:false,error:result.error||'此需求已被其他人接走或已失效'};
-      Audit.log('booking_state_changed',`Booking ${id}：${result.from} → ${result.to}`,{bookingId:id,action:'claim',fromState:result.from,toState:result.to,organizationId,actorUserId:userId,expectedVersion:expected,newVersion:this.get(id)?.version||null});
-      Audit.log('booking_claimed',`公開需求已由 ${org.name} 接案`,{bookingId:id,organizationId,actorUserId:userId,membershipId:membership.id,expectedVersion:expected,newVersion:this.get(id)?.version||null});
-      return {ok:true,booking:this.get(id),organization:org};
-    });
+    // 接案由後端 app.claim_app_state_booking 決定：組織權限、組織類型、FOR UPDATE 搶單。
+    // 本機不先改 store——那會變成一筆 state-mutate 寫入，而一般寫入管道不允許接案。
+    if(!bookingActorCan(userId,BOOKING_PERMISSION.MARKET_CLAIM,organizationId))return {ok:false,error:bookingPermissionError(BOOKING_PERMISSION.MARKET_CLAIM)};
+    const token=typeof backendAuthToken==='function'?backendAuthToken():'';
+    if(!token)return {ok:false,error:'請先登入後再接案'};
+    try{
+      const response=await fetch(APP_CONFIG.claimBookingUrl,{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${token}`},credentials:'same-origin',cache:'no-store',body:JSON.stringify({bookingId:id,organizationId,expectedVersion:Number(expectedVersion)||null})});
+      const result=await response.json().catch(()=>null);
+      if(!response.ok||!result?.ok)return {ok:false,code:result?.error?.code||null,error:result?.error?.message||`接案失敗（HTTP ${response.status}）`};
+      return {ok:true,organization:Organization.get(organizationId)||{id:organizationId,name:'目前組織'},serverVersion:result.data?.version??null};
+    }catch(error){return {ok:false,error:`接案失敗：${error?.message||error}`};}
   },
   listForUser(organizationId,userId){ return this.listForOrganization(organizationId,userId).filter(b=>b.requestedByUserId===userId).sort((a,b)=>new Date(b.submittedAt)-new Date(a.submittedAt)); },
   listForRequesterUser(userId){
@@ -4229,32 +4232,25 @@ Booking = {
     const booking=this.get(id); if(!booking||booking.requestedByUserId!==userId)return {ok:false,error:'找不到可取消的預約'};
     const state=this.stateOf(booking);
     if([BOOKING_STATE.OPEN,BOOKING_STATE.CLAIMED].includes(state))return {ok:true,state,trips:[]};
-    if([BOOKING_STATE.PARTIALLY_SCHEDULED,BOOKING_STATE.SCHEDULED].includes(state))return Trip.canCancelForBooking(booking);
+    // 已排車時行程由調度員建立，需求者本機拿不到行程資料（後端 RLS 不回傳），
+    // 無法在本機判斷行程是否已開始。改由 cancel-booking 端點在交易內驗證。
+    if([BOOKING_STATE.PARTIALLY_SCHEDULED,BOOKING_STATE.SCHEDULED].includes(state))return {ok:true,state,trips:[],serverValidated:true};
     return {ok:false,error:'此預約目前不可取消'};
   },
-  cancelOwn(id,userId,reasonCode,reasonText=''){
+  async cancelOwn(id,userId,reasonCode,reasonText=''){
     const allowed=this.canCancelOwn(id,userId); if(!allowed.ok)return allowed;
-    const booking=this.get(id),organizationId=booking.organizationId||null,preparedTripCancellation=Trip.prepareBookingCancellation(booking,{actorUserId:userId});
-    if(!preparedTripCancellation.ok)return preparedTripCancellation;
-    let result={ok:false,error:'取消失敗'},tripCancellation={ok:true,cancelledTripIds:[],repairedTripIds:[]};
-    store.mutate(db=>{
-      const row=(db.bookings||[]).find(b=>b.id===id); if(!row){result={ok:false,error:'找不到預約'};return;}
-      const transitionContext={userId,organizationId:row.organizationId||null,reasonCode,reasonText,source:'requester_app'};
-      const transitionCheck=bookingTransitionCheck(row,'cancel',transitionContext);if(!transitionCheck.ok){result=transitionCheck;return;}
-      tripCancellation=Trip.cancelForBookingInDb(db,row,{actorUserId:userId,reason:bookingReasonText(reasonCode,reasonText),prepared:preparedTripCancellation});if(!tripCancellation.ok){result=tripCancellation;return;}
-      result=this.transitionInDb(db,id,'cancel',transitionContext);
-    });
-    if(!result.ok)return result;
-    const cancelledTripIds=tripCancellation.cancelledTripIds||[],repairedTripIds=tripCancellation.repairedTripIds||[];
-    Audit.log('booking_cancelled_by_requester',`需求者取消預約 ${id}`,{bookingId:id,actorUserId:userId,organizationId,cancelledTripIds,repairedTripIds,reasonCode,reasonText});
-    cancelledTripIds.forEach(tripId=>{const trip=Trip.get(tripId),tripOrganizationId=trip?.organizationId||organizationId;Audit.log('trip_cancelled_by_booking',`因需求者取消預約而取消行程 ${tripId}`,{bookingId:id,tripId,actorUserId:userId,organizationId:tripOrganizationId,bookingOrganizationId:organizationId});});
-    repairedTripIds.forEach(tripId=>{const trip=Trip.get(tripId),tripOrganizationId=trip?.organizationId||organizationId;Audit.log('trip_route_repaired_after_booking_cancel',`共乘成員取消後重建行程 ${tripId}`,{bookingId:id,tripId,actorUserId:userId,organizationId:tripOrganizationId,bookingOrganizationId:organizationId});});
-    if(typeof Notification!=='undefined'&&Notification?.queue){
-      for(const tripId of cancelledTripIds){const trip=Trip.get(tripId),tripOrganizationId=trip?.organizationId||organizationId,driver=Organization.driver(trip?.driverId);if(driver?.userId)Notification.queue({organizationId:tripOrganizationId,recipientId:driver.userId,channel:'line',template:'trip_cancelled',eventType:'trip_cancelled',payload:{tripId,tripCode:trip?.code||'',reason:'需求者取消預約',bookingId:id,bookingOrganizationId:organizationId}});}
-      if(booking?.requestedByUserId)Notification.queue({organizationId:organizationId||APP_CONFIG.requesterOrganizationId,recipientId:booking.requestedByUserId,channel:'line',template:'booking_cancelled',eventType:'booking_cancelled',payload:{bookingId:id,reason:bookingReasonText(reasonCode,reasonText),cancelledTripIds:[...cancelledTripIds]}});
-      for(const tripId of repairedTripIds){const trip=Trip.get(tripId),tripOrganizationId=trip?.organizationId||organizationId,driver=Organization.driver(trip?.driverId);if(driver?.userId)Notification.queue({organizationId:tripOrganizationId,recipientId:driver.userId,channel:'line',template:'trip_route_repaired',eventType:'trip_route_repaired',payload:{tripId,tripCode:trip?.code||'',reason:'共乘成員取消，路線已重新計算',bookingOrganizationId:organizationId}});for(const remainingId of trip?.bookingIds||[]){const rb=Booking.get(remainingId);if(rb?.requestedByUserId)Notification.queue({organizationId:tripOrganizationId,recipientId:rb.requestedByUserId,channel:'line',template:'pool_route_updated',eventType:'pool_route_updated',payload:{tripId,tripCode:trip?.code||'',reason:'同車乘客取消，接送順序已重新計算',bookingOrganizationId:organizationId}});}}
-    }
-    return {ok:true,booking:this.get(id),cancelledTripIds,repairedTripIds};
+    if(!String(reasonCode||'').trim())return {ok:false,error:'請選擇此操作的原因'};
+    const token=typeof backendAuthToken==='function'?backendAuthToken():'';
+    if(!token)return {ok:false,error:'請先登入後再取消預約'};
+    // 預約與關聯行程由後端 app.cancel_app_state_booking 在同一交易內處理；
+    // 本機不先改 store，避免產生需求者無權寫入的行程異動。
+    try{
+      const response=await fetch(APP_CONFIG.cancelBookingUrl,{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${token}`},credentials:'same-origin',cache:'no-store',body:JSON.stringify({bookingId:id,reasonCode,reasonText})});
+      const result=await response.json().catch(()=>null);
+      if(!response.ok||!result?.ok)return {ok:false,code:result?.error?.code||null,error:result?.error?.message||`取消失敗（HTTP ${response.status}）`};
+      const refresh=await AppStateDatabase.loadAll({silent:true});
+      return {ok:true,booking:this.get(id),cancelledTripIds:result.data?.cancelledTripIds||[],repairedTripIds:[],refreshError:refresh?.ok===false?(refresh.error||'重新載入失敗'):null};
+    }catch(error){return {ok:false,error:`取消失敗：${error?.message||error}`};}
   },
   // syncFromPublishedSheet 已移除。
   // 它從一份「發布到網路」的 Google 試算表匯入預約——那種連結不需要登入，
@@ -7492,10 +7488,10 @@ function openBookingHistory(bookingId){
   const snapshotHtml=`<div class="issue-category-title">報價／補助快照</div>${snapshots.map(x=>`<div class="list-item"><div class="list-item-head"><div><h4>預約版本 ${x.bookingVersion}・${'商業快照'}</h4><p>${formatDateTime(x.capturedAt)}<br>報價：${x.quote?.estimatedFare!=null?`新臺幣 ${Number(x.quote.estimatedFare).toLocaleString('zh-TW')} 元`:escapeHTML(({ruleset_required:'待載入規則',estimated:'已估算',unavailable:'無法估算'})[x.quote?.status]||'待載入規則')}<br>補助：${x.benefit?.estimatedSubsidy!=null?`新臺幣 ${Number(x.benefit.estimatedSubsidy).toLocaleString('zh-TW')} 元`:escapeHTML(({ruleset_required:'待載入規則',eligible_estimate:'預估符合',not_eligible:'預估不符合',insufficient_data:'資料不足'})[x.benefit?.status]||'待載入規則')}<br><span class="muted">定價規則集：${escapeHTML(x.quote?.pricingRulesetVersion||'未載入')}・補助規則集：${escapeHTML(x.benefit?.rulesetVersion||'未載入')}</span></p></div><span class="pill purple">不可變更</span></div></div>`).join('')||'<div class="empty">目前沒有商業快照</div>'}`;
   $('bookingHistoryList').innerHTML=eventHtml+revisionHtml+snapshotHtml;openModal('bookingHistoryModal');
 }
-function confirmBookingAction(){
+async function confirmBookingAction(){
   const action=$('bookingActionType').value,bookingId=$('bookingActionBookingId').value,reasonCode=$('bookingActionReasonCode').value,reasonText=$('bookingActionReasonText').value.trim(),userId=Identity.currentUser()?.id;
   let result={ok:false,error:'不支援的預約操作'};
-  if(action==='cancel')result=Booking.cancelOwn(bookingId,userId,reasonCode,reasonText);
+  if(action==='cancel')result=await Booking.cancelOwn(bookingId,userId,reasonCode,reasonText);
   else if(action==='release')result=Booking.release(bookingId,userId,reasonCode,reasonText);
   else if(action==='reject')result=Booking.reject(bookingId,userId,reasonCode,reasonText);
   if(!result.ok){showToast(result.error||'操作失敗');return;}
@@ -9304,12 +9300,11 @@ function bindViewEvents(){
     btn.disabled=true;
     const organizationId=Identity.membershipOrganizationId(),expectedVersion=Number(btn.dataset.version);
     const result=await Booking.claim(btn.dataset.booking,organizationId,Identity.currentUser()?.id,expectedVersion);
-    if(!result.ok){showToast(result.error);render();return;}
-    const persisted=await store.flushAuthoritative();
-    if(!persisted?.ok){render();showToast(`接案尚未完成後端確認：${persisted?.error||'請保持網路連線後重試'}`);return;}
+    // 成功或失敗都重新載入：失敗時需求可能已被別人接走，畫面要反映後端現況。
     const cloudRefresh=await AppStateDatabase.loadAll({silent:true});
-    if(!cloudRefresh?.ok){render();showToast(`接案已寫入正式資料庫，但完整履約資訊重新載入失敗：${cloudRefresh?.error||'請重新整理'}`);return;}
-    render();showToast(`已由 ${result.organization.name} 接案，後端版本確認完成，完整履約資訊已解鎖`);
+    if(!result.ok){render();showToast(result.error);return;}
+    if(!cloudRefresh?.ok){render();showToast(`接案已完成，但完整履約資訊重新載入失敗：${cloudRefresh?.error||'請重新整理'}`);return;}
+    render();showToast(`已由 ${result.organization.name} 接案，完整履約資訊已解鎖`);
   }));
   $('requesterResumeDraftBtn')?.addEventListener('click',()=>{const d=loadRequesterDraft();editingRequesterBookingId='';requesterWizardStep=Math.max(1,Math.min(4,Number(d?.step)||1));requesterDraftDirty=false;currentView='requester-new';renderNav();render();});
   $('requesterDiscardDraftHomeBtn')?.addEventListener('click',()=>{if(!confirm('確定捨棄這筆尚未送出的預約草稿？'))return;clearRequesterDraft();render();showToast('預約草稿已捨棄');});

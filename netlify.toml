@@ -86,3 +86,18 @@
   from = "/api/v2/identity-write"
   to = "/.netlify/functions/v2-identity-write"
   status = 200
+
+[[redirects]]
+  from = "/api/v2/claim-booking"
+  to = "/.netlify/functions/v2-claim-booking"
+  status = 200
+
+[[redirects]]
+  from = "/api/v2/trip-execute"
+  to = "/.netlify/functions/v2-trip-execute"
+  status = 200
+
+[[redirects]]
+  from = "/api/v2/cancel-booking"
+  to = "/.netlify/functions/v2-cancel-booking"
+  status = 200
