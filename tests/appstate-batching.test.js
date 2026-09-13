@@ -133,4 +133,5 @@ t('中途授權失敗時整批不落地', () => {
 });
 
 console.log(`\n結果：${pass} 通過 / ${fail} 失敗`);
-process.exit(fail ? 1 : 0);
+// 不用 process.exit()：它會和 stdout 的待寫入競爭，見 tests/_exit-watchdog.js
+require('./_exit-watchdog').finishTest(fail ? 1 : 0, 'appstate-batching');

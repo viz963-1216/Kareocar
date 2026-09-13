@@ -38,4 +38,54 @@ function armExitWatchdog(ms = 5000, label = require('node:path').basename(proces
   return timer;
 }
 
-module.exports = { armExitWatchdog, STUCK_EXIT_CODE };
+/**
+ * 明顯代表「有東西沒清乾淨」的資源類型。
+ * stdio 的 PipeWrap / TTYWrap / FileHandle 不算——那是測試自己的輸出管道。
+ */
+const LEAKY_RESOURCES = new Set([
+  'Timeout', 'Immediate', 'ChildProcess', 'Process', 'Socket', 'Server',
+  'TCPWrap', 'TCPSocketWrap', 'TCPServerWrap', 'UDPWrap', 'FSWatcher',
+  'StatWatcher', 'Worker', 'MessagePort'
+]);
+
+/**
+ * 測試結束時的收尾：設定退出碼、檢查有沒有沒釋放的資源、掛上 exit watchdog。
+ *
+ * 為什麼不用 process.exit()：
+ *
+ *   process.exit() 會在 stdout 還有未完成的非同步寫入時強制結束。stdout 接到
+ *   pipe（CI 的情況）時寫入是非同步的，於是 process.exit() 與那筆寫入形成競爭。
+ *   tests/storage-quota.test.js 因此會間歇性地「印完結果卻不結束」——本機加上
+ *   同步標記重現後可以看到 `calling process.exit` 有印出來，行程卻沒有死，而
+ *   當下的活動資源只有兩個 PipeWrap（就是 stdout 與 stderr 的待寫入）。
+ *   40 輪中 1 次，與 stdout 是檔案或 pipe 無關。
+ *
+ *   改成自然退出之後，那筆待寫入會正常完成，事件迴圈清空，行程自己結束。
+ *
+ * 但「只設 exitCode」本身不足以當成修法——它不會清掉任何資源。所以這裡同時
+ * 檢查 getActiveResourcesInfo()：只要還有計時器、子行程、socket 之類的東西，
+ * 就直接判定測試失敗並印出清單，不會變成無聲的卡住。真的卡住時，watchdog 會
+ * 在 5 秒後印出資源清單並以退出碼 97 結束。
+ *
+ * @param {number} code 期望的退出碼
+ * @param {string} label 訊息裡的識別字
+ */
+function finishTest(code, label) {
+  process.exitCode = code;
+
+  const active = typeof process.getActiveResourcesInfo === 'function'
+    ? process.getActiveResourcesInfo()
+    : [];
+  const leaked = active.filter((r) => LEAKY_RESOURCES.has(r));
+  if (leaked.length) {
+    console.error('');
+    console.error(`[exit-watchdog] ${label}：測試結束時仍有未釋放的資源：${JSON.stringify(leaked)}`);
+    console.error(`[exit-watchdog] 全部活動資源：${JSON.stringify(active)}`);
+    console.error('[exit-watchdog] 判定為測試失敗——沒清乾淨的資源會讓行程無法自然結束。');
+    process.exitCode = 1;
+  }
+
+  armExitWatchdog(5000, label);
+}
+
+module.exports = { armExitWatchdog, finishTest, STUCK_EXIT_CODE, LEAKY_RESOURCES };
