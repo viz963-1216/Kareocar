@@ -1,0 +1,94 @@
+name: Isolated SQL and reset checks
+
+# 在一個用完就丟的 postgres:16 容器上，用 supabase/migrations/ 的實際 migration
+# 建庫，跑 seed 情境測試與密碼重設的交易／併發測試。
+# 全部使用合成資料，不連正式資料庫、不呼叫任何外部服務。
+
+# push 到 main 是「合併後檢查」：確認進到 main 的內容自己跑得過，不是只在 PR
+# 的合併預覽上跑得過。
+#
+# 它擋不住任何東西。GitHub Actions 與 Netlify 是兩個獨立的觸發來源，同一個
+# push 會同時啟動；這個 workflow 失敗不會阻止、也不會回復 Netlify 已經開始
+# 或完成的自動部署。要真正把部署擋在檢查之後，得靠 Netlify 端的設定
+# （關閉 auto-publish，或用 branch deploy／deploy preview 流程）。
+on:
+  pull_request:
+    paths:
+      - 'supabase/**'
+      - 'netlify/functions/**'
+      - 'tests/**'
+      - 'package.json'
+      - '.github/workflows/isolated-sql-review.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/**'
+      - 'netlify/functions/**'
+      - 'tests/**'
+      - 'package.json'
+      - '.github/workflows/isolated-sql-review.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  postgres:
+    # Netlify 的建置與 function runtime 設定為 Node 24.x，所以 24 是真正要保證
+    # 的版本；package.json 的 engines 是 >=20，所以 20 一起跑，避免只在單一版本
+    # 上綠燈。兩個版本跑的是同一套測試。
+    name: postgres (node ${{ matrix.node }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '24']
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        # 走 TCP 而不是掛載 Unix socket 目錄：socket 的權限在 runner 上容易壞，
+        # 而測試腳本本來就吃 PG* 環境變數。
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: 記錄實際 Node 版本
+        run: node --version
+
+      - name: 安裝 psql 與測試相依
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          npm install --ignore-scripts --no-audit --no-fund
+
+      - name: 確認資料庫連得上
+        run: psql -X -v ON_ERROR_STOP=1 -c 'select version()'
+
+      # tests/run.sh 會跑 tests/*.test.js，已包含 reset-transaction.test.js
+      # （記憶體 PG 替身的離線交易回歸），不需要再單獨跑一次。
+      - name: 離線回歸測試（Apps Script 層 + 離線交易回歸）
+        run: bash tests/run.sh
+
+      - name: 實際 migration + seed 情境 + 重設交易／併發測試
+        run: bash supabase/tests/run-isolated-review.sh

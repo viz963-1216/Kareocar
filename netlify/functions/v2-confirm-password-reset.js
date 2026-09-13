@@ -40,9 +40,27 @@ exports.handler = async (event) => {
         throw auth.authError('RESET_CODE_INVALID', '驗證碼無效或已失效');
       }
 
-      const verified = await reset.verifyChallenge(client, phone, code);
+      // 驗證錯誤的次數／作廢必須提交；在交易外才回報預期錯誤。
+      // 其他錯誤仍拋出，保留原本完整回滾行為。
+      let verified;
+      try {
+        verified = await reset.verifyChallenge(client, phone, code);
+      } catch (error) {
+        if (error.code === 'RESET_CODE_INVALID') return { verificationError: error };
+        throw error;
+      }
       if (String(verified.userId) !== String(user.id)) {
-        throw auth.authError('RESET_CODE_INVALID', '驗證碼無效或已失效');
+        // 挑戰綁的使用者不是這支手機現在對應的使用者（例如號碼在挑戰有效期內
+        // 被移到別的帳號）。
+        //
+        // 驗證成功的路徑不會寫回 attempts，所以光是拋錯不只會回滾錯誤次數——
+        // 挑戰本身還會留著繼續有效，同一組碼可以一直重試。這裡在同一筆交易
+        // （仍持有 verifyChallenge 取得的 advisory lock）內把挑戰作廢，提交之後
+        // 才回報一般的 RESET_CODE_INVALID。
+        //
+        // 不動任何一方的密碼與 session_version：這個分支下兩個帳號都不該被改。
+        await reset.clearChallenge(client, phone);
+        return { verificationError: auth.authError('RESET_CODE_INVALID', '驗證碼無效或已失效') };
       }
 
       await auth.setPasswordCredential(client, user.id, newPassword);
@@ -71,6 +89,7 @@ exports.handler = async (event) => {
       };
     });
 
+    if (data.verificationError) throw data.verificationError;
     return json(200, { ok: true, data });
   } catch (error) {
     return handleError(translateDbError(error));

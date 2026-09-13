@@ -10,34 +10,45 @@
  */
 
 const { Pool } = require('pg');
+// 連線字串的解析與驗證住在 _db-config.js：那個檔案不相依 pg、不做任何 I/O，
+// 所以建置階段的檢查腳本可以只載入它，連不上資料庫也沒有 Pool 可以建。
+const { resolveDbConfig } = require('./_db-config');
 
 let pool = null;
 
-function connectionString() {
-  const url = String(process.env.DATABASE_URL || '').trim();
-  if (!url) {
-    throw Object.assign(new Error('Netlify 尚未設定 DATABASE_URL'), { code: 'CONFIG_MISSING' });
-  }
-  // 擋掉最容易犯、後果也最嚴重的設定錯誤
-  if (/:\/\/postgres(?::|@)/.test(url)) {
-    throw Object.assign(
-      new Error('DATABASE_URL 不可使用 postgres 角色（會繞過所有 RLS 政策），請改用 care_ride_app'),
-      { code: 'CONFIG_INVALID' });
-  }
-  return url;
+/** resolveDbConfig 的結果轉成 pg 的 client/pool 設定。刻意不含 connectionString。 */
+function pgClientConfig(cfg) {
+  const out = {
+    host: cfg.host,
+    user: cfg.user,
+    database: cfg.database,
+    ssl: cfg.ssl
+  };
+  if (cfg.port !== undefined) out.port = cfg.port;
+  if (cfg.password !== undefined) out.password = cfg.password;
+  if (cfg.application_name !== undefined) out.application_name = cfg.application_name;
+  return out;
+}
+
+/**
+ * 交給 pg Pool 的最終設定。抽出來是為了讓測試能斷言「真正送進 Pool 的值」，
+ * 而不是在測試裡重寫一份同樣的組裝邏輯。
+ */
+function poolOptions(cfg) {
+  return {
+    ...pgClientConfig(cfg),
+    // Netlify Function 是短生命週期的，連線池開小一點，交給 Supabase 的
+    // pooler 做真正的匯聚。
+    max: 2,
+    idleTimeoutMillis: 10_000,
+    // connect_timeout=0 的語意是「不設上限」，所以只有 undefined 才套用預設值。
+    connectionTimeoutMillis: cfg.connectionTimeoutMillis ?? 8_000
+  };
 }
 
 function getPool() {
   if (!pool) {
-    pool = new Pool({
-      connectionString: connectionString(),
-      // Netlify Function 是短生命週期的，連線池開小一點，交給 Supabase 的
-      // pooler 做真正的匯聚。
-      max: 2,
-      idleTimeoutMillis: 10_000,
-      connectionTimeoutMillis: 8_000,
-      ssl: { rejectUnauthorized: false }
-    });
+    pool = new Pool(poolOptions(resolveDbConfig()));
     pool.on('error', (err) => console.error('[db] idle client error', err));
   }
   return pool;
@@ -84,4 +95,7 @@ function translateDbError(error) {
   return error;
 }
 
-module.exports = { getPool, withUser, withoutUser, translateDbError };
+module.exports = {
+  getPool, withUser, withoutUser, translateDbError,
+  resolveDbConfig, pgClientConfig, poolOptions
+};

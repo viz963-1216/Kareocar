@@ -1,6 +1,16 @@
 [build]
   publish = "."
   functions = "netlify/functions"
+  # 建置階段的連線設定唯讀檢查。DATABASE_URL 是 Secret，值只有 Netlify 系統內
+  # 執行的程式讀得到，所以只能在這裡檢查。
+  #
+  # 這支腳本只 require netlify/functions/_db-config.js——那個模組不相依 pg、
+  # 完全沒有 require、不做任何 I/O，所以不會建立連線池也連不上資料庫。
+  # 它只驗證「設定能不能被解析」，不驗證資料庫可連線、RLS、帳號或業務流程。
+  #
+  # 檢查失敗會以非零退出碼中止建置，該次建置因此不會發布；已發布的版本
+  # 繼續在線上。零相依，所以不需要 npm install 也能跑。
+  command = "node tools/check-db-config.js"
 
 [[redirects]]
   from = "/api/runtime-config"
