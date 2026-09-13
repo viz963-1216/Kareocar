@@ -106,7 +106,8 @@ exports.handler = async (event) => {
       // ---- 公開需求池（已遮蔽）----
       const pool = (await client.query(
         `select id, pickup_area, destination_area, pickup_at, trip_type,
-                passenger_count, wheelchair_slots, rideshare_consent, version, created_at
+                passenger_count, wheelchair_slots, rideshare_consent, version, created_at,
+                pickup_time, return_date, return_time, market_expires_at, aid_need, companions
            from app_state_booking_pool
           order by pickup_at nulls last
           limit 500`)).rows;

@@ -39,6 +39,9 @@ const openDemand = methodBody('  openDemand(date=null,userId=null){');
 t('Booking.openDemand 讀取 store.state.demandPool', openDemand.includes('store.state.demandPool'));
 t('Booking.openDemand 不再讀取 store.state.bookings', openDemand.length > 0 && !openDemand.includes('store.state.bookings'));
 t('demandPool 除了寫入之外確實被讀取', (html.match(/demandPool/g) || []).length >= 2);
+const stateLoad = fs.readFileSync(path.join(ROOT, 'netlify', 'functions', 'v2-state-load.js'), 'utf8');
+t('state-load 需求池查詢帶出 bookingPoolProjection 使用的欄位',
+  ['pickup_time', 'return_date', 'return_time', 'market_expires_at', 'aid_need', 'companions'].every((c) => stateLoad.includes(c)));
 
 console.log('--- 接案 ---');
 const claim = methodBody('  async claim(id,organizationId,userId,expectedVersion){');

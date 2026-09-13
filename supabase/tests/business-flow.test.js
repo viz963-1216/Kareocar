@@ -258,9 +258,11 @@ async function scenario2(t) {
   const id = 'TRP-FLOW-S2';
   const other = 'TRP-FLOW-S2-A2';
 
+  // A2 自己那趟用不同的地址：A2 看得到自己的行程是正確的，若沿用 SECRET_ADDRESS，
+  // 下面「A2 讀不到 A1 行程的門牌」的洩露檢查會被 A2 自己合法的資料誤判。
   const created = await mutateAs(t.dspA, [
     { collection: 'trips', id, record: scheduledTrip(id, DRIVER.a1) },
-    { collection: 'trips', id: other, record: scheduledTrip(other, DRIVER.a2) }
+    { collection: 'trips', id: other, record: scheduledTrip(other, DRIVER.a2, { pickupAddress: '台北市信義區松仁路1號' }) }
   ]);
   const createdRow = await row('trips', id);
   record(S, '調度員 A 建立指派給司機 A1（及另一趟給 A2）的行程', created.status === 200, outcome(created));
@@ -304,7 +306,7 @@ async function scenario2(t) {
     const l = await loadAs(tok);
     record(S, `${label} 讀不到此行程且無門牌洩露`,
       l.status === 200 && !idsIn(l, 'trips').includes(id) && !JSON.stringify(l.data.collections || {}).includes('188號'),
-      outcome(l));
+      `${outcome(l)} trips=${JSON.stringify(idsIn(l, 'trips'))}`);
     await expectRejected(S, `${label} 呼叫執行端點`, executeAs(tok, { tripId: id, action: 'start', expectedRevision: rev0 }),
       { status: 403, code: 'FORBIDDEN' }, watched);
     await expectRejected(S, `${label} 透過 state-mutate 改行程`, mutateAs(tok, [{
