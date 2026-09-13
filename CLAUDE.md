@@ -13,8 +13,11 @@
 
 - `DATABASE_URL` 必須用 `care_ride_app` 角色。用 `postgres` 會繞過全部 RLS
   政策，而且不會有任何錯誤訊息。
-- `index.html`、`netlify/functions/`、`supabase/migrations/` 必須一起更新，
-  只換其中一個會造成前後端契約不一致。
+- `index.html`、`netlify/functions/`、`supabase/migrations/` 之間有契約相依：
+  動到其中一層時，要確認另外兩層有沒有跟著改的必要，**有相依才一起改**。
+  例如改了 API 的請求／回應形狀，前端與 function 要同步；改了資料表欄位或
+  RLS，function 與 migration 要同步。純前端樣式、純測試、純文件的改動不需要
+  為了「三件一起」去動無關的檔案。
 
 ---
 
@@ -83,7 +86,9 @@ PR 描述應涵蓋以下交接資訊：
 Supabase 可能有版本庫外的 trigger、webhook、排程或外部訂閱；Netlify 可能有
 版本庫外的環境變數或建置設定。這些未經核實就不能宣稱「不可能發生」。
 
-測試未執行就寫「未執行」，不要用推導冒充驗證。
+測試未執行就寫「未執行」，不要用推導冒充驗證。但在寫「未執行」之前，先確認
+隔離 CI 是不是跑得到（見下方「SQL 與 RLS 怎麼驗證」）——跑得到卻沒跑，不算
+「無法驗證」。
 
 ## 審查與驗收
 
@@ -103,11 +108,35 @@ Supabase 可能有版本庫外的 trigger、webhook、排程或外部訂閱；Ne
   - 安裝軟體
 - 授權是逐項、逐次的。某一輪的同意不自動延伸到下一輪或相似操作。
 
-## 正式資料庫
+## 資料庫環境
 
-本專案**沒有獨立的測試環境**，`DATABASE_URL` 指向的就是正式庫。
+**不要把所有環境都當成同一個正式庫。** 目前已知的是：
+
+- Netlify 的 Production context 有自己的 `DATABASE_URL`；Deploy previews、
+  Branch deploys、Preview server 各有自己的設定。
+- **這些是否指向同一個資料庫尚未核實。** `DATABASE_URL` 設為 Secret，值無法
+  從 UI／API／CLI 讀回，遮蔽後也無從比對。在核實之前，既不要假設預覽是隔離的
+  （可能寫到正式資料），也不要斷言它們就是正式庫。
+
+規則：
 
 - 不拿正式庫試跑未驗證的 SQL。
-- 需要驗證 SQL 或 RLS 時，用 [supabase/README.md](supabase/README.md#本機測試)
-  的本機 Postgres 步驟，或 `supabase/tests/run-all.sh`（需本機 Postgres 16）。
-- 本機起不了資料庫時，測試結果一律標示「未執行」。
+- 不在預覽環境做寫入驗收，直到隔離狀況確認為止。
+- 正式庫的寫入一律另行取得同意，見上面的授權邊界。
+
+## SQL 與 RLS 怎麼驗證
+
+有隔離 CI 可以用，**不要再用「本機沒有 Postgres 所以只能標示未執行」當結論**：
+
+- `.github/workflows/isolated-sql-review.yml` 會在用完即丟的 `postgres:16`
+  容器上，用 `supabase/migrations/` 的實際 migration 建庫，跑 seed 情境、
+  密碼重設的交易與併發、連線設定解析，Node 20 與 24 各一輪。觸發條件是
+  `supabase/**`、`netlify/functions/**`、`tests/**`、`package.json` 與該
+  workflow 本身的變動，也可以手動 `workflow_dispatch`。
+- 本機若有 Postgres 16，可用 [supabase/README.md](supabase/README.md#本機測試)
+  的步驟或 `supabase/tests/run-all.sh`。
+- `tests/run.sh` 是純 Node 的離線套件，不需要資料庫。
+
+所以 SQL/RLS 改動的預設做法是**推上分支開 PR 讓隔離 CI 跑**，拿到實際執行
+證據。只有在 CI 也涵蓋不到的情況才標示「未執行」，並寫清楚是哪一部分涵蓋
+不到。
