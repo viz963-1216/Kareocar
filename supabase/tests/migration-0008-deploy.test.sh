@@ -85,7 +85,11 @@ AFTER="$(snapshot)"
 echo "    套用前：$BEFORE"
 echo "    套用後：$AFTER"
 [ "$AFTER" = "$BEFORE" ]; check "app_state 的 filenode、欄位、索引、筆數都不變（沒有整表改寫）" $?
-echo "$AFTER" | grep -q 'trip_driver_id'; [ $? -ne 0 ]; check "沒有新增 trip_driver_id 欄位" $?
+if echo "$AFTER" | grep -q 'trip_driver_id'; then
+  check "沒有新增 trip_driver_id 欄位" 1
+else
+  check "沒有新增 trip_driver_id 欄位" 0
+fi
 
 echo "--- 3. 再套用一次 ---"
 psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' -f "$M8" -c 'commit' >/dev/null 2>&1; check "重複套用成功" $?

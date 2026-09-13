@@ -195,3 +195,13 @@ jobs:
 
       - name: 瀏覽器端對端測試
         run: bash supabase/tests/run-browser-e2e.sh
+        env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/care-ride-e2e-artifacts
+
+      - name: 保存瀏覽器驗收證據
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-e2e-evidence
+          path: ${{ runner.temp }}/care-ride-e2e-artifacts
+          retention-days: 7

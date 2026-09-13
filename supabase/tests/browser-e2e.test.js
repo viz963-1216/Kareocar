@@ -41,6 +41,7 @@ const { createServer } = require('../../tools/local-dev-server');
 const F = require('../../tests/_trip-fixtures');
 
 const ARTIFACT_DIR = process.env.E2E_ARTIFACT_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'care-ride-e2e-'));
+fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
 const PASSWORD = 'E2e-Synthetic-Pass-2026';
 const ORG = 'ORG-E2E-A';
 const DRIVER_ID = 'DRV-E2E-1';
@@ -157,14 +158,22 @@ async function openPage(cdp, baseUrl, label) {
       page.consoleErrors.push(msg.params.args.map((a) => a.value ?? a.description ?? '').join(' ').slice(0, 300));
     }
     if (msg.method === 'Network.requestWillBeSent' && msg.params.request.url.includes('/api/')) {
-      page.requests.push({ path: new URL(msg.params.request.url).pathname, postData: msg.params.request.postData || '' });
+      const pathname = new URL(msg.params.request.url).pathname;
+      page.requests.push({ path: pathname, postData: /\/(state-mutate|trip-execute|claim-booking|cancel-booking)$/.test(pathname) ? msg.params.request.postData || '' : '' });
     }
   });
   await page.send('Page.enable');
   await page.send('Runtime.enable');
   await page.send('Network.enable', { maxPostDataSize: 5 * 1024 * 1024 });
+  await page.send('Network.setBlockedURLs', { urls: ['https://*'] });
   await page.send('Page.navigate', { url: baseUrl });
-  await waitFor(page, "document.readyState==='complete'&&!!document.getElementById('loginBtn')&&typeof Identity!=='undefined'", `${label} 登入畫面載入`);
+  try {
+    await waitFor(page, "document.readyState==='complete'&&!!document.getElementById('loginBtn')", `${label} 登入畫面載入`);
+  } catch (error) {
+    await screenshot(page, `${label}-startup`);
+    await finishPage(page, `${label} 啟動`);
+    throw error;
+  }
   return page;
 }
 
@@ -202,12 +211,17 @@ async function login(page, user) {
   await typeInto(page, '#loginPhone', user.phone);
   await typeInto(page, '#loginPassword', PASSWORD);
   await click(page, '#loginBtn');
-  await waitFor(page, `Identity.currentUser()?.id===${J(user.id)}&&!document.getElementById('appShell').classList.contains('hidden')`, `${user.name} 登入`);
+  await waitFor(page, `!document.getElementById('appShell').classList.contains('hidden')&&document.body.innerText.includes(${J(user.name)})`, `${user.name} 登入`);
 }
 
 async function goView(page, view) {
-  await evaluate(page, `(()=>{const b=[...document.querySelectorAll('.nav-btn[data-view=${J(view)}]')].find(x=>x.offsetParent!==null);if(b){b.click();return 'nav';}currentView=${J(view)};renderNav();render();return 'direct';})()`);
-  await waitFor(page, `currentView===${J(view)}`, `切換到 ${view}`);
+  await evaluate(page, `(()=>{const b=[...document.querySelectorAll('.nav-btn[data-view=${J(view)}]')].find(x=>x.offsetParent!==null);if(!b)throw Error('找不到可見導覽入口');b.click();})()`);
+  await waitFor(page, `!!document.querySelector('.nav-btn.active[data-view=${J(view)}]')`, `切換到 ${view}`);
+}
+
+// 只讀裝置持久化資料作為離線佇列證據，不存取應用私有函式或修改狀態。
+async function deviceRows(page, storeName) {
+  return evaluate(page, `new Promise((resolve,reject)=>{const req=indexedDB.open('careRideTripP2');req.onerror=()=>reject(Error('IndexedDB open failed'));req.onsuccess=()=>{const db=req.result;const tx=db.transaction(${J(storeName)},'readonly');const get=tx.objectStore(${J(storeName)}).getAll();get.onsuccess=()=>resolve(get.result);get.onerror=()=>reject(Error('IndexedDB read failed'));tx.oncomplete=()=>db.close();};})`);
 }
 
 // ---------------------------------------------------------------- 資料
@@ -275,7 +289,6 @@ async function flowClaim(cdp, baseUrl, tokens) {
   const page = await openPage(cdp, baseUrl, 'dispatcher');
   try {
     await login(page, U.dsp);
-    await waitFor(page, `(store.state.demandPool||[]).some(r=>r.id===${J(id)})`, '需求池載入');
     await goView(page, 'demand-market');
     if (await evaluate(page, "!!document.getElementById('clearDemandDateBtn')")) await click(page, '#clearDemandDateBtn');
     await waitFor(page, `!!document.querySelector('.demand-claim-btn[data-booking=${J(id)}]')`, '接案按鈕出現');
@@ -284,7 +297,7 @@ async function flowClaim(cdp, baseUrl, tokens) {
     const claimed = await waitForDb(async () => { const r = await row('bookings', id); return r && r.organization_id === ORG ? r : null; }, '預約綁定組織');
     record(S, '按「接案」後資料庫綁定調度員組織、狀態 claimed',
       claimed.data.state === 'claimed' && claimed.data.claimedByUserId === U.dsp.id, `organization_id=${claimed.organization_id}`);
-    await waitFor(page, `!document.querySelector('.demand-claim-btn[data-booking=${J(id)}]')&&!!Booking.get(${J(id)})`, '畫面反映接案結果');
+    await waitFor(page, `!document.querySelector('.demand-claim-btn[data-booking=${J(id)}]')`, '畫面反映接案結果');
     record(S, '接案後重新載入：需求池不再列出、組織取得完整預約', true);
     record(S, '接案走 claim-booking 端點，沒有用 state-mutate 寫這筆預約',
       page.requests.filter((r) => r.path === '/api/v2/claim-booking').length === 1
@@ -311,7 +324,6 @@ async function flowDriver(cdp, baseUrl, tokens) {
   const stepButton = (suffix) => `document.getElementById('completeStepBtn')?.dataset.step===${J(`${tripId}_${suffix}`)}&&!document.getElementById('completeStepBtn').disabled`;
   try {
     await login(page, U.drv);
-    await waitFor(page, `!!Trip.get(${J(tripId)})&&currentView==='driver-home'`, '司機工作台載入行程');
     await waitFor(page, stepButton('depart'), '「開始出發」按鈕');
 
     // ---- 出發（連線中）
@@ -325,14 +337,13 @@ async function flowDriver(cdp, baseUrl, tokens) {
     await waitFor(page, stepButton('pickup'), '「確認已接到乘客」按鈕');
     await setOffline(page, true);
     await click(page, '#completeStepBtn');
-    await waitFor(page, `Trip.get(${J(tripId)}).steps[1].status==='completed'`, '離線完成接送（本機）');
+    await waitFor(page, stepButton('dropoff'), '離線完成接送（本機）');
     await waitFor(page, "!document.getElementById('undoBtn')?.disabled", '「返回上一步」可用');
     await click(page, '#undoBtn');
-    await waitFor(page, `Trip.get(${J(tripId)}).steps[1].status==='pending'`, '離線返回上一步（本機）');
     await waitFor(page, stepButton('pickup'), '接送按鈕再次出現');
     await click(page, '#completeStepBtn');
-    await waitFor(page, `Trip.get(${J(tripId)}).steps[1].status==='completed'`, '離線再次完成接送（本機）');
-    const pending = await evaluate(page, 'Trip.offlineQueue().filter(x=>x.payload?.command).map(x=>x.payload.command)');
+    await waitFor(page, stepButton('dropoff'), '離線再次完成接送（本機）');
+    const pending = await waitForDb(async () => { const rows = (await deviceRows(page, 'offlineQueue')).filter(x=>x.payload?.command).map(x=>x.payload.command); return rows.length===3 ? rows : null; }, '離線佇列持久化');
     const stillR1 = await row('trips', tripId);
     record(S, '離線期間三個操作都留在裝置佇列、資料庫仍是 revision 1',
       JSON.stringify(pending) === J(['complete_step', 'undo_step', 'complete_step']) && stillR1.revision === 1, `佇列=${J(pending)}`);
@@ -342,7 +353,7 @@ async function flowDriver(cdp, baseUrl, tokens) {
     record(S, '恢復連線後依序同步：revision 4、接送站完成、乘客在車上',
       r4.data.steps[1].status === 'completed' && r4.data.passengers[0].status === 'onboard'
         && JSON.stringify((r4.data.mutationReceipts || []).map((x) => x.action)) === J(['complete_step', 'complete_step', 'undo_step', 'complete_step']));
-    await waitFor(page, 'Trip.offlineQueue().filter(x=>x.payload?.command).length===0', '裝置佇列清空');
+    await waitForDb(async () => !(await deviceRows(page, 'offlineQueue')).some(x=>x.payload?.command), '裝置佇列清空');
     record(S, '同步完成後裝置佇列沒有待送的行程指令', true);
 
     // ---- 回報異常
@@ -374,8 +385,8 @@ async function flowDriver(cdp, baseUrl, tokens) {
     record(S, '儲存服務證明（含照片）後行程完成',
       done.data.serviceProofs.length === 1 && proof.receiverName === '合成收受人' && Boolean(proof.photo && proof.photo.objectKey));
     record(S, '伺服器只收到照片描述資料，沒有照片內容', !JSON.stringify(done.data).includes('data:image'));
-    const local = await evaluate(page, `(async()=>{const r=await Trip.proofPhoto(${J(tripId)},${J(proof.id)});if(r.revoke)URL.revokeObjectURL(r.url);return {ok:r.ok,storage:r.storage};})()`);
-    record(S, '照片本體保存在裝置 IndexedDB、可以開啟', local.ok === true && local.storage === 'indexeddb', J(local));
+    const local = await evaluate(page, `new Promise((resolve,reject)=>{const req=indexedDB.open('careRideTripP2');req.onsuccess=()=>{const db=req.result;const tx=db.transaction('proofBlobs','readonly');const get=tx.objectStore('proofBlobs').get(${J(proof.photo && proof.photo.objectKey)});get.onsuccess=()=>resolve(!!get.result&&get.result.blob instanceof Blob&&get.result.blob.size>0);get.onerror=()=>reject(Error('photo read failed'));tx.oncomplete=()=>db.close();};req.onerror=()=>reject(Error('photo open failed'));})`);
+    record(S, '照片本體保存在裝置 IndexedDB', local === true);
 
     const stateMutateTrips = page.requests.filter((r) => r.path === '/api/v2/state-mutate'
       && /"collection":"(trips|tripEvents|issues)"/.test(r.postData));
@@ -406,7 +417,6 @@ async function flowCancel(cdp, baseUrl, tokens) {
   const page = await openPage(cdp, baseUrl, 'requester');
   try {
     await login(page, U.req);
-    await waitFor(page, `Booking.get(${J(ok.id)})&&Booking.get(${J(bad.id)})`, '需求者預約載入');
     await goView(page, 'requester-bookings');
 
     const cancelVia = async (bookingId) => {
@@ -427,8 +437,8 @@ async function flowCancel(cdp, baseUrl, tokens) {
     record(S, '取消成功後排入司機與需求者兩則通知', ntfs.length === 2
       && ntfs.some((n) => n.data.template === 'trip_cancelled' && n.data.recipientId === U.drv.id)
       && ntfs.some((n) => n.data.template === 'booking_cancelled' && n.data.recipientId === U.req.id));
-    await waitFor(page, `(store.state.notifications||[]).some(n=>n.template==='booking_cancelled'&&n.payload?.bookingId===${J(ok.id)})&&Booking.get(${J(ok.id)})?.state==='cancelled'`, '畫面載入取消結果與通知');
-    record(S, '需求者畫面重新載入後看到取消狀態與自己的取消通知', true);
+    await waitFor(page, `!document.querySelector('.requester-cancel-booking-btn[data-booking=${J(ok.id)}]')&&document.body.innerText.includes('已取消')`, '畫面載入取消結果');
+    record(S, '需求者畫面顯示已取消且不能重複取消', true);
 
     await cancelVia(bad.id);
     await waitFor(page, "(document.getElementById('toast')?.textContent||'').includes('無法')", '取消失敗提示');
