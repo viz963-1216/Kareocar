@@ -40,7 +40,10 @@ function armExitWatchdog(ms = 5000, label = require('node:path').basename(proces
 
 /**
  * 明顯代表「有東西沒清乾淨」的資源類型。
- * stdio 的 PipeWrap / TTYWrap / FileHandle 不算——那是測試自己的輸出管道。
+ * stdio 相關的 PipeWrap / TTYWrap / FileHandle 不列入。
+ *
+ * 這份清單只能抓到列出的類型，不能排除所有資源問題；沒列到的資源若卡住
+ * 行程，要靠 watchdog（rc 97）與 run.sh 的逐檔逾時（rc 124）現形。
  */
 const LEAKY_RESOURCES = new Set([
   'Timeout', 'Immediate', 'ChildProcess', 'Process', 'Socket', 'Server',
@@ -53,18 +56,22 @@ const LEAKY_RESOURCES = new Set([
  *
  * 為什麼不用 process.exit()：
  *
- *   process.exit() 會在 stdout 還有未完成的非同步寫入時強制結束。stdout 接到
- *   pipe（CI 的情況）時寫入是非同步的，於是 process.exit() 與那筆寫入形成競爭。
- *   tests/storage-quota.test.js 因此會間歇性地「印完結果卻不結束」——本機加上
- *   同步標記重現後可以看到 `calling process.exit` 有印出來，行程卻沒有死，而
- *   當下的活動資源只有兩個 PipeWrap（就是 stdout 與 stderr 的待寫入）。
- *   40 輪中 1 次，與 stdout 是檔案或 pipe 無關。
+ *   已重現強制退出路徑附近卡住；改為自然退出後，重複測試未再重現。
+ *   Node 內部機制仍未證實。
  *
- *   改成自然退出之後，那筆待寫入會正常完成，事件迴圈清空，行程自己結束。
+ *   重現方式：複製 tests/storage-quota.test.js，插入同步的 fs.writeSync(2,…)
+ *   標記（不新增計時器），Node v24.19.0 反覆執行。第 20 輪卡住時，最後印出的
+ *   標記是 `calling process.exit`，當下 getActiveResourcesInfo() 回傳
+ *   ["PipeWrap","PipeWrap"]。重現率：40 輪 1 次、12 輪 1 次；stdout 走檔案時
+ *   12 輪也卡 1 次。改為自然退出後 storage-quota 35 輪、其他四支各 30 輪，
+ *   皆未再卡住。
+ *
+ *   以上是觀察，不是機制證明：PipeWrap 不等於「待寫入」，重現與修正後的輪數
+ *   也不足以排除版本或環境因素。
  *
  * 但「只設 exitCode」本身不足以當成修法——它不會清掉任何資源。所以這裡同時
- * 檢查 getActiveResourcesInfo()：只要還有計時器、子行程、socket 之類的東西，
- * 就直接判定測試失敗並印出清單，不會變成無聲的卡住。真的卡住時，watchdog 會
+ * 檢查 getActiveResourcesInfo()：只要出現 LEAKY_RESOURCES 列出的類型，就直接
+ * 判定測試失敗並印出清單。這份清單不完整，不能排除所有資源問題。真的卡住時，watchdog 會
  * 在 5 秒後印出資源清單並以退出碼 97 結束。
  *
  * @param {number} code 期望的退出碼

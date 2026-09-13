@@ -48,5 +48,5 @@ t('錯誤驗證碼 3 次後作廢', ()=>{
 
 console.log(`\n結果：${pass} 通過 / ${fail} 失敗`);
 Date.now=realNow;
-// 不用 process.exit()：它會和 stdout 的待寫入競爭，見 tests/_exit-watchdog.js
+// 不用 process.exit()：強制退出路徑曾重現卡住，機制未證實，見 tests/_exit-watchdog.js
 require('./_exit-watchdog').finishTest(fail?1:0,'auth-ratelimit');

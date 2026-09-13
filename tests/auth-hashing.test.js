@@ -54,5 +54,5 @@ t('竄改 payload 被拒', ()=>{try{authVerifySessionToken_('x'+tok);return fals
 t('bump 版本後舊 token 失效', ()=>{authBumpSessionVersion_('USR-1');try{authVerifySessionToken_(tok);return false;}catch(e){return e.code==='SESSION_INVALID';}});
 
 console.log(`\n結果：${pass} 通過 / ${fail} 失敗`);
-// 不用 process.exit()：它會和 stdout 的待寫入競爭，見 tests/_exit-watchdog.js
+// 不用 process.exit()：強制退出路徑曾重現卡住，機制未證實，見 tests/_exit-watchdog.js
 require('./_exit-watchdog').finishTest(fail ? 1 : 0, 'auth-hashing');
