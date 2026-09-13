@@ -102,4 +102,5 @@ t('密碼欄位仍會被後端清除', ()=>{
   return !j.includes('plain123')&&!j.includes('passwordHash')&&!j.includes('sessionToken');});
 
 console.log(`\n結果：${pass} 通過 / ${fail} 失敗`);
-process.exit(fail?1:0);
+// 不用 process.exit()：強制退出路徑曾重現卡住，機制未證實，見 tests/_exit-watchdog.js
+require('./_exit-watchdog').finishTest(fail ? 1 : 0, 'appstate-authz');
