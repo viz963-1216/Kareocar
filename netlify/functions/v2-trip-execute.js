@@ -3,42 +3,69 @@
 /**
  * POST /api/v2/trip-execute  —— 被指派司機執行行程
  *
- * body: { tripId, action, expectedRevision, payload }
+ * body: {
+ *   tripId, command, idempotencyKey,
+ *   expectedRevision, expectedStepId,   // complete_step／undo_step／proof_service
+ *   trip,                               // 同上：指令完成後的行程執行欄位
+ *   samples, liveNavigation,            // location_sample
+ *   issue,                              // report_issue
+ *   events                              // 這個指令在裝置上產生的行程事件
+ * }
  *
- * action：start | interrupt | complete | step | proof
- * 允許的狀態轉換、payload 鍵與只改哪些欄位，全部由 app.execute_app_state_trip
- * （0008）決定。組織、指派司機／車輛與其他欄位都不能經由這裡修改。
+ * command：complete_step | undo_step | proof_service | location_sample | report_issue
+ * 對應前端 Trip 的既有司機操作；逐欄驗證規則在 _trip-execution-rules.js，
+ * 寫入與核心條件在 app.apply_driver_trip_execution（0008）。
  *
- * 錯誤：非指派司機 403、找不到 404、revision 不符 409 TRIP_CONFLICT、
- *       非法動作／欄位／狀態轉換 400 VALIDATION_ERROR。
+ * 流程在同一筆交易內：鎖定行程 → 驗證 → 寫入。驗證失敗整筆回滾。
+ *
+ * 錯誤：非指派司機 403、找不到 404、revision 不符／站點已變 409 TRIP_CONFLICT、
+ *       非法指令／欄位／狀態轉換 400 VALIDATION_ERROR。
+ * 重送：同一個 idempotencyKey（或同一筆異常 ID）已處理過 → 200，duplicate: true。
  */
 
 const auth = require('./_auth-pg');
 const { runAuthenticated, requireId, writeAudit } = require('./_business-rpc');
-
-const ACTIONS = new Set(['start', 'interrupt', 'complete', 'step', 'proof']);
+const rules = require('./_trip-execution-rules');
 
 exports.handler = (event) => runAuthenticated(event, async (client, body, claims) => {
   const tripId = requireId(body.tripId, '行程 ID ');
-  const action = String(body.action || '').trim();
-  if (!ACTIONS.has(action)) throw auth.authError('VALIDATION_ERROR', '不支援的執行動作');
-  if (!Number.isInteger(body.expectedRevision) || body.expectedRevision < 0) {
-    throw auth.authError('VALIDATION_ERROR', 'expectedRevision 必須是非負整數');
-  }
-  const payload = body.payload === undefined ? {} : body.payload;
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    throw auth.authError('VALIDATION_ERROR', 'payload 必須是物件');
+  const command = String(body.command || '').trim();
+  if (!rules.COMMANDS.has(command)) throw auth.authError('VALIDATION_ERROR', '不支援的執行動作');
+
+  const locked = (await client.query('select * from app.lock_driver_trip($1)', [tripId])).rows[0];
+  const plan = rules.planExecution({
+    command,
+    body,
+    current: {
+      tripId,
+      data: locked.trip_data,
+      revision: locked.trip_revision,
+      organizationId: locked.trip_organization_id,
+      blockingIssueIds: locked.blocking_issue_ids || []
+    },
+    actorUserId: claims.userId
+  });
+
+  const key = String(body.idempotencyKey).trim();
+  if (plan.duplicate) {
+    return { tripId, revision: locked.trip_revision, status: locked.trip_data.status || 'scheduled', duplicate: true };
   }
 
   const { rows } = await client.query(
-    'select * from app.execute_app_state_trip($1, $2, $3, $4::jsonb)',
-    [tripId, action, body.expectedRevision, JSON.stringify(payload)]);
+    'select * from app.apply_driver_trip_execution($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb)',
+    [tripId, command, Number.isInteger(body.expectedRevision) ? body.expectedRevision : null, key,
+     JSON.stringify(plan.patch), JSON.stringify(plan.events), plan.issue ? JSON.stringify(plan.issue) : null]);
   const result = rows[0];
 
-  await writeAudit(client, {
-    eventType: `trip.execute.${action}`, actorUserId: claims.userId,
-    entityType: 'trip', entityId: tripId, details: { revision: result.revision, status: result.status }
-  });
+  // 定位是高頻遙測，每筆都寫稽核會淹沒真正的操作紀錄
+  if (command !== 'location_sample' && !result.out_duplicate) {
+    await writeAudit(client, {
+      eventType: `trip.execute.${command}`, actorUserId: claims.userId,
+      organizationId: locked.trip_organization_id, entityType: 'trip', entityId: tripId,
+      details: { revision: result.out_revision, status: result.out_status, idempotencyKey: key,
+                 issueId: plan.issue ? plan.issue.id : null }
+    });
+  }
 
-  return { tripId: result.trip_id, revision: result.revision, status: result.status };
+  return { tripId: result.out_trip_id, revision: result.out_revision, status: result.out_status, duplicate: result.out_duplicate };
 });

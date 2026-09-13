@@ -12,6 +12,10 @@
  *   2. 讀取資料庫實際狀態，當作「有沒有真的寫進去／有沒有被改掉」的判準
  *   3. 情境 3 的狀態 fixture（把預約設為已承接並排車），理由寫在該段
  *
+ * 司機送出的請求本體由 tests/_trip-fixtures.js 依前端規則模擬產生。這裡通過代表
+ * 伺服器接受「照前端規則算出來的結果」並擋下越權變化；前端實際送出的內容由瀏覽器
+ * 端對端測試另外確認。
+ *
  * 與 PR #6（fec25cb）的關係：
  *   #6 的業務預期（調度員能接案且組織綁定、被指派司機能讀取並執行、需求者能取消
  *   已排車預約）全部保留。修正後這三件事改走專用端點，所以「怎麼送出」改了；
@@ -43,6 +47,7 @@ const mutate = require('../../netlify/functions/v2-state-mutate');
 const claimFn = require('../../netlify/functions/v2-claim-booking');
 const executeFn = require('../../netlify/functions/v2-trip-execute');
 const cancelFn = require('../../netlify/functions/v2-cancel-booking');
+const F = require('../../tests/_trip-fixtures');
 
 // ---------------------------------------------------------------- 合成身分
 const ORG_A = 'ORG-FLOW-A';
@@ -81,8 +86,9 @@ const claimAs = (token, bookingId, organizationId) =>
 const executeAs = (token, body) => call(executeFn.handler, 'POST', token, body);
 const cancelAs = (token, body) => call(cancelFn.handler, 'POST', token, body);
 
-const outcome = (r) => `HTTP ${r.status}${r.error ? ` ${r.error.code}` : ''}`;
+const outcome = (r) => `HTTP ${r.status}${r.error ? ` ${r.error.code}` : ''}${r.error && r.status >= 400 && r.status !== 403 ? ` ${r.error.message}` : ''}`;
 const idsIn = (r, collection) => ((r.data && r.data.collections && r.data.collections[collection]) || []).map((x) => x.id);
+const nowIso = () => new Date().toISOString();
 
 async function row(collection, id) {
   const { rows } = await admin.query(
@@ -91,6 +97,22 @@ async function row(collection, id) {
   return rows[0] || null;
 }
 const snapshot = async (collection, id) => JSON.stringify(await row(collection, id));
+/** 司機裝置上看到的行程：資料列 data 加上伺服器的 revision（與 state-load 相同）。 */
+async function tripState(id) {
+  const r = await row('trips', id);
+  return { ...r.data, organizationId: r.organization_id, revision: r.revision };
+}
+async function countWhere(collection, column, value) {
+  const { rows } = await admin.query(
+    `select count(*)::int as n from app_state where collection = $1 and ${column} = $2`, [collection, value]);
+  return rows[0].n;
+}
+async function notificationsFor(bookingId) {
+  const { rows } = await admin.query(
+    `select id, organization_id, owner_user_id, data from app_state
+      where collection = 'notifications' and booking_id = $1 order by id`, [bookingId]);
+  return rows;
+}
 
 /** 被拒絕的呼叫：狀態碼、錯誤碼都要對，而且指定資料列完全沒變。 */
 async function expectRejected(S, name, promise, { status, code }, watched) {
@@ -138,29 +160,23 @@ async function seedIdentities() {
 
 const token = (userId) => db.withoutUser((c) => auth.issueSessionToken(c, userId));
 
-function openBooking(id) {
+function openBooking(id, requester = U.req) {
   return {
     id, state: 'open', claimStatus: 'open', status: 'open', version: 1,
-    requestedByUserId: U.req, name: '合成需求者', phone: '0911000001',
+    requestedByUserId: requester, name: '合成需求者', phone: '0911000001',
     pickupDate: '2099-01-01', pickupTime: '09:00',
     pickupAddress: SECRET_ADDRESS, destination: '台北市中正區公園路20號',
     tripType: '單程', passengerCount: 1, wheelchairSlots: 0, rideshareConsent: true,
     aidNeed: '無', companions: '1', specialNeed: '合成特殊需求自由文字'
   };
 }
+/** 接送時間在 10 分鐘後，出發站已在可執行時間內。 */
 function scheduledTrip(id, driverId, extra = {}) {
-  return {
+  return F.makeTrip({
     id, organizationId: ORG_A, driverId, vehicleId: 'VEH-FLOW-A1',
-    status: 'scheduled', date: '2099-01-01', code: `CR-${id}`,
-    passengerSummary: '合成乘客', pickupAddress: SECRET_ADDRESS,
-    dropoffAddress: '台北市中正區公園路20號', currentStepIndex: 0,
-    steps: [
-      { id: `${id}_depart`, type: 'depart', status: 'pending' },
-      { id: `${id}_pickup`, type: 'pickup', status: 'pending', contacts: [{ name: '合成乘客', phone: '0911000001' }] },
-      { id: `${id}_dropoff`, type: 'dropoff', status: 'pending' }
-    ],
-    ...extra
-  };
+    bookingId: extra.bookingId || null, startAt: F.addMinutes(nowIso(), 10),
+    extra: { pickupAddress: SECRET_ADDRESS, ...extra }
+  });
 }
 
 /** 狀態 fixture：把預約設為「組織 A 已承接並排車」。 */
@@ -277,29 +293,45 @@ async function scenario2(t) {
   record(S, '司機 A1 取得執行所需的停靠點資料', Boolean(tripForA1) && Array.isArray(tripForA1.steps) && tripForA1.steps.length === 3);
   record(S, '司機 A1 看不到指派給 A2 的行程', loadA1.status === 200 && !idsIn(loadA1, 'trips').includes(other));
 
-  const rev0 = createdRow ? createdRow.revision : 0;
+  const t0 = await tripState(id);
+  const rev0 = t0.revision;
   const watched = [['trips', id]];
 
   // #6 原本的寫法：司機透過一般寫入管道改行程。修正後這條路仍必須被拒。
   await expectRejected(S, '[安全] 司機 A1 透過 state-mutate 直接改行程', mutateAs(t.drvA1, [{
     collection: 'trips', id, expectedRevision: rev0,
-    record: scheduledTrip(id, DRIVER.a1, { status: 'in_progress' })
+    record: { ...t0, status: 'in_progress' }
   }]), { status: 403, code: 'FORBIDDEN' }, watched);
 
-  // ---- 非法狀態轉換與欄位
-  await expectRejected(S, '尚未開始就完成行程', executeAs(t.drvA1, { tripId: id, action: 'complete', expectedRevision: rev0 }),
+  // ---- 非法指令、欄位與狀態轉換
+  const depart = F.completeStep(t0, U.drvA1, nowIso());
+  await expectRejected(S, '舊草稿的 start 指令已不存在', executeAs(t.drvA1, { tripId: id, command: 'start', expectedRevision: rev0, idempotencyKey: 'k-start' }),
     { status: 400, code: 'VALIDATION_ERROR' }, watched);
-  await expectRejected(S, 'revision 過期', executeAs(t.drvA1, { tripId: id, action: 'start', expectedRevision: rev0 + 5 }),
+  await expectRejected(S, '司機無中斷權限（interrupt 指令不存在）', executeAs(t.drvA1, { tripId: id, command: 'interrupt', expectedRevision: rev0, idempotencyKey: 'k-int' }),
+    { status: 400, code: 'VALIDATION_ERROR' }, watched);
+  await expectRejected(S, 'revision 過期', executeAs(t.drvA1, { ...depart.request, expectedRevision: rev0 + 5 }),
     { status: 409, code: 'TRIP_CONFLICT' }, watched);
-  for (const [label, payload] of [
-    ['改組織', { organizationId: ORG_B }], ['改指派司機', { driverId: DRIVER.a2 }],
-    ['改車輛', { vehicleId: 'VEH-OTHER' }], ['改任意欄位', { passengerSummary: '竄改' }]
+  for (const [label, key, value] of [
+    ['改組織', 'organizationId', ORG_B], ['改指派司機', 'driverId', DRIVER.a2],
+    ['改車輛', 'vehicleId', 'VEH-OTHER'], ['關掉服務證明規則', 'proofPolicy', { requiredPerDropoff: false }]
   ]) {
-    await expectRejected(S, `透過執行端點${label}`, executeAs(t.drvA1, { tripId: id, action: 'start', expectedRevision: rev0, payload }),
-      { status: 400, code: 'VALIDATION_ERROR' }, watched);
+    const req = F.clone(depart.request);
+    req.trip[key] = value;
+    await expectRejected(S, `透過執行端點${label}`, executeAs(t.drvA1, req), { status: 400, code: 'VALIDATION_ERROR' }, watched);
   }
-  await expectRejected(S, '不支援的動作（reassign）', executeAs(t.drvA1, { tripId: id, action: 'reassign', expectedRevision: rev0 }),
-    { status: 400, code: 'VALIDATION_ERROR' }, watched);
+  {
+    const req = F.clone(depart.request);
+    req.trip.steps[1].destination = '竄改地址';
+    await expectRejected(S, '透過執行端點改停靠點地址', executeAs(t.drvA1, req), { status: 400, code: 'VALIDATION_ERROR' }, watched);
+  }
+  {
+    const req = F.clone(depart.request);
+    req.trip.steps[0] = F.clone(t0.steps[0]);
+    Object.assign(req.trip.steps[1], { status: 'completed', completedAt: nowIso(), actualAt: nowIso(), arrivedAt: nowIso(),
+      serviceStartedAt: nowIso(), passengerBoardedAt: nowIso(), departedAt: nowIso() });
+    req.trip.steps[1].actualAt = req.trip.steps[1].completedAt;
+    await expectRejected(S, '跳站處理（先完成接送站）', executeAs(t.drvA1, req), { status: 400, code: 'VALIDATION_ERROR' }, watched);
+  }
 
   // ---- 非指派司機與他組織
   for (const [label, tok] of [['同組織其他司機 A2', t.drvA2], ['其他組織司機 B1', t.drvB1], ['其他組織調度員 B', t.dspB]]) {
@@ -307,64 +339,152 @@ async function scenario2(t) {
     record(S, `${label} 讀不到此行程且無門牌洩露`,
       l.status === 200 && !idsIn(l, 'trips').includes(id) && !JSON.stringify(l.data.collections || {}).includes('188號'),
       `${outcome(l)} trips=${JSON.stringify(idsIn(l, 'trips'))}`);
-    await expectRejected(S, `${label} 呼叫執行端點`, executeAs(tok, { tripId: id, action: 'start', expectedRevision: rev0 }),
+    await expectRejected(S, `${label} 呼叫執行端點`, executeAs(tok, depart.request),
       { status: 403, code: 'FORBIDDEN' }, watched);
     await expectRejected(S, `${label} 透過 state-mutate 改行程`, mutateAs(tok, [{
-      collection: 'trips', id, expectedRevision: rev0, record: scheduledTrip(id, DRIVER.a1, { status: 'cancelled' })
+      collection: 'trips', id, expectedRevision: rev0, record: { ...t0, status: 'cancelled' }
     }]), { status: 403, code: 'FORBIDDEN' }, watched);
   }
 
-  // ---- 合法流程
-  const start = await executeAs(t.drvA1, { tripId: id, action: 'start', expectedRevision: rev0 });
-  const afterStart = await row('trips', id);
-  record(S, '被指派司機 A1 開始執行（HTTP 200）', start.status === 200, outcome(start));
-  record(S, '開始後狀態 = in_progress，revision +1，組織／司機／車輛未變',
-    Boolean(afterStart) && afterStart.data.status === 'in_progress' && afterStart.revision === rev0 + 1
-      && afterStart.organization_id === ORG_A && afterStart.data.driverId === DRIVER.a1
-      && afterStart.data.vehicleId === 'VEH-FLOW-A1',
-    afterStart ? `status=${afterStart.data.status} revision=${afterStart.revision}` : '');
+  // ---- 合法流程：出發
+  const r1 = await executeAs(t.drvA1, depart.request);
+  const a1 = await row('trips', id);
+  record(S, '完成出發站（HTTP 200）', r1.status === 200, outcome(r1));
+  record(S, '出發後狀態 = in_progress、revision +1、組織／司機／車輛未變、伺服器寫入冪等收據',
+    Boolean(a1) && a1.data.status === 'in_progress' && a1.revision === rev0 + 1
+      && a1.organization_id === ORG_A && a1.data.driverId === DRIVER.a1 && a1.data.vehicleId === 'VEH-FLOW-A1'
+      && (a1.data.mutationReceipts || []).some((x) => x.key === depart.request.idempotencyKey && x.source === 'trip_execute_endpoint'),
+    a1 ? `status=${a1.data.status} revision=${a1.revision}` : '');
+  const eventId = depart.request.events[0].id;
+  const eventRow = await row('tripEvents', eventId);
+  record(S, '行程事件寫入且歸屬行程組織（調度端看得到）', Boolean(eventRow) && eventRow.organization_id === ORG_A,
+    eventRow ? `organization_id=${eventRow.organization_id}` : '找不到事件');
+  const loadDspA = await loadAs(t.dspA);
+  record(S, '調度員 A 的 state-load 含司機寫入的行程事件', idsIn(loadDspA, 'tripEvents').includes(eventId));
 
-  let rev = afterStart ? afterStart.revision : 0;
-  await expectRejected(S, '重複開始（in_progress → in_progress）', executeAs(t.drvA1, { tripId: id, action: 'start', expectedRevision: rev }),
-    { status: 400, code: 'VALIDATION_ERROR' }, watched);
-  await expectRejected(S, '跳站處理（先完成 pickup）', executeAs(t.drvA1, {
-    tripId: id, action: 'step', expectedRevision: rev, payload: { stepId: `${id}_pickup`, milestone: 'completed' }
-  }), { status: 400, code: 'VALIDATION_ERROR' }, watched);
-  await expectRejected(S, '停靠點未完成就完成行程', executeAs(t.drvA1, { tripId: id, action: 'complete', expectedRevision: rev }),
-    { status: 400, code: 'VALIDATION_ERROR' }, watched);
+  const eventsBefore = await countWhere('tripEvents', 'trip_id', id);
+  const retry = await executeAs(t.drvA1, depart.request);
+  const a1r = await row('trips', id);
+  record(S, '重送同一個操作：200 且標記 duplicate', retry.status === 200 && retry.data && retry.data.duplicate === true, outcome(retry));
+  record(S, '重送沒有再次寫入（revision 與事件數不變）',
+    a1r.revision === a1.revision && (await countWhere('tripEvents', 'trip_id', id)) === eventsBefore);
 
-  let stepsOk = true;
-  for (const suffix of ['depart', 'pickup', 'dropoff']) {
-    const r = await executeAs(t.drvA1, {
-      tripId: id, action: 'step', expectedRevision: rev, payload: { stepId: `${id}_${suffix}`, milestone: 'completed' }
-    });
-    if (r.status !== 200) { stepsOk = false; console.log(`      step ${suffix}: ${outcome(r)}`); break; }
-    rev = r.data.revision;
+  // ---- 定位：不動 revision
+  const loc = F.locationSample(await tripState(id), U.drvA1, nowIso());
+  const rl = await executeAs(t.drvA1, loc.request);
+  const al = await row('trips', id);
+  record(S, '回報定位（HTTP 200）且 revision 不變', rl.status === 200 && al.revision === a1.revision
+    && (al.data.locationSamples || []).length === 1, outcome(rl));
+
+  // ---- 接送
+  const pickup = F.completeStep(await tripState(id), U.drvA1, nowIso());
+  const rp = await executeAs(t.drvA1, pickup.request);
+  const ap = await row('trips', id);
+  record(S, '完成接送站：乘客在車上', rp.status === 200 && ap.data.passengers[0].status === 'onboard', outcome(rp));
+
+  // ---- 現場異常：寫入異常並讓調度看得到
+  const iss = F.reportIssue(await tripState(id), U.drvA1, nowIso(), '交通壅塞', '合成異常說明');
+  const ri = await executeAs(t.drvA1, iss.request);
+  const issueRow = await row('issues', iss.issue.id);
+  record(S, '回報一般異常（HTTP 200），異常歸屬組織 A', ri.status === 200 && Boolean(issueRow) && issueRow.organization_id === ORG_A,
+    `${outcome(ri)} ${issueRow ? `organization_id=${issueRow.organization_id}` : '找不到異常'}`);
+  const loadDspA2 = await loadAs(t.dspA);
+  const loadDspB = await loadAs(t.dspB);
+  record(S, '調度員 A 看得到司機回報的異常、組織 B 看不到',
+    idsIn(loadDspA2, 'issues').includes(iss.issue.id) && !idsIn(loadDspB, 'issues').includes(iss.issue.id));
+  const riRetry = await executeAs(t.drvA1, iss.request);
+  record(S, '重送同一筆異常：200 duplicate，不重複建立',
+    riRetry.status === 200 && riRetry.data.duplicate === true && (await countWhere('issues', 'trip_id', id)) === 1, outcome(riRetry));
+
+  // ---- 返回上一步再重做
+  const undo = F.undoStep(await tripState(id), U.drvA1, nowIso());
+  const ru = await executeAs(t.drvA1, undo.request);
+  const au = await row('trips', id);
+  record(S, '返回上一步（HTTP 200）：接送站回到未完成、乘客回到等待',
+    ru.status === 200 && au.data.steps[1].status === 'pending' && au.data.passengers[0].status === 'waiting'
+      && au.data.status === 'in_progress', outcome(ru));
+  const redo = F.completeStep(await tripState(id), U.drvA1, nowIso());
+  const rr = await executeAs(t.drvA1, redo.request);
+  record(S, '重新完成接送站', rr.status === 200, outcome(rr));
+
+  // ---- 送達：缺服務證明時不能完成
+  const dropoff = F.completeStep(await tripState(id), U.drvA1, nowIso());
+  {
+    const req = F.clone(dropoff.request);
+    req.trip.status = 'completed'; req.trip.completedAt = nowIso(); req.trip.completionPending = null;
+    await expectRejected(S, '缺服務證明卻宣稱完成行程', executeAs(t.drvA1, req), { status: 400, code: 'VALIDATION_ERROR' }, watched);
   }
-  const afterSteps = await row('trips', id);
-  record(S, '依序完成三個停靠點', stepsOk && Boolean(afterSteps)
-    && afterSteps.data.steps.every((s) => s.status === 'completed') && afterSteps.data.currentStepIndex === 3);
+  const rd = await executeAs(t.drvA1, dropoff.request);
+  const ad = await row('trips', id);
+  record(S, '完成送達站：行程仍進行中並標記待補服務證明',
+    rd.status === 200 && ad.data.status === 'in_progress' && Boolean(ad.data.completionPending), outcome(rd));
 
-  const proof = await executeAs(t.drvA1, {
-    tripId: id, action: 'proof', expectedRevision: rev,
-    payload: { stepId: `${id}_dropoff`, receiverName: '合成收受人', receiverRole: 'family' }
-  });
-  const afterProof = await row('trips', id);
-  record(S, '建立服務證明（HTTP 200）', proof.status === 200
-    && Boolean(afterProof) && Array.isArray(afterProof.data.serviceProofs) && afterProof.data.serviceProofs.length === 1,
-    outcome(proof));
-  rev = proof.status === 200 ? proof.data.revision : rev;
+  // ---- 服務證明（含照片描述資料）→ 完成
+  const proof = F.addProof(await tripState(id), U.drvA1, nowIso(),
+    { photo: { name: 'proof.jpg', type: 'image/jpeg', size: 2048, storage: 'indexeddb', objectKey: 'proofblob_synthetic' } });
+  const rpr = await executeAs(t.drvA1, proof.request);
+  const apr = await row('trips', id);
+  record(S, '建立服務證明後行程完成，指派仍保留',
+    rpr.status === 200 && apr.data.status === 'completed' && apr.data.serviceProofs.length === 1
+      && apr.data.driverId === DRIVER.a1 && apr.data.vehicleId === 'VEH-FLOW-A1', outcome(rpr));
+  record(S, '伺服器只存照片描述資料，沒有照片內容',
+    Boolean(apr.data.serviceProofs[0].photo) && !JSON.stringify(apr.data.serviceProofs[0].photo).includes('data:'));
 
-  const done = await executeAs(t.drvA1, { tripId: id, action: 'complete', expectedRevision: rev });
-  const afterDone = await row('trips', id);
-  record(S, '被指派司機 A1 完成行程（HTTP 200）', done.status === 200, outcome(done));
-  record(S, '完成後狀態 = completed，指派仍保留',
-    Boolean(afterDone) && afterDone.data.status === 'completed' && afterDone.data.driverId === DRIVER.a1
-      && afterDone.data.vehicleId === 'VEH-FLOW-A1', afterDone ? `status=${afterDone.data.status}` : '');
+  const late = F.reportIssue(await tripState(id), U.drvA1, nowIso(), '交通壅塞');
+  await expectRejected(S, '已完成的行程再回報異常', executeAs(t.drvA1, late.request),
+    { status: 400, code: 'VALIDATION_ERROR' }, watched);
 
-  await expectRejected(S, '完成後再中斷（completed → interrupted）', executeAs(t.drvA1, {
-    tripId: id, action: 'interrupt', expectedRevision: afterDone ? afterDone.revision : 0, payload: { reason: '測試' }
-  }), { status: 400, code: 'VALIDATION_ERROR' }, watched);
+  // ---- 完成後限時修正
+  const undoDone = F.undoStep(await tripState(id), U.drvA1, nowIso());
+  const rud = await executeAs(t.drvA1, undoDone.request);
+  const aud = await row('trips', id);
+  record(S, '完成後 15 分鐘內返回上一步：回到進行中、舊服務證明標記已被修正',
+    rud.status === 200 && aud.data.status === 'in_progress' && aud.data.serviceProofs[0].status === 'superseded', outcome(rud));
+  const redrop = F.completeStep(await tripState(id), U.drvA1, nowIso());
+  const rrd = await executeAs(t.drvA1, redrop.request);
+  const reproof = F.addProof(await tripState(id), U.drvA1, nowIso());
+  const rrp = await executeAs(t.drvA1, reproof.request);
+  const final = await row('trips', id);
+  record(S, '重新送達並補新服務證明後再次完成',
+    rrd.status === 200 && rrp.status === 200 && final.data.status === 'completed'
+      && final.data.serviceProofs.filter((p) => p.status === 'active').length === 1, `${outcome(rrd)} / ${outcome(rrp)}`);
+}
+
+// ================================================================ 情境 2B
+async function scenario2b(t) {
+  const S = '情境2B 異常與中斷';
+  const id = 'TRP-FLOW-S2B';
+  await mutateAs(t.dspA, [{ collection: 'trips', id, record: scheduledTrip(id, DRIVER.a1, { pickupAddress: '台北市信義區松仁路1號' }) }]);
+  const watched = [['trips', id]];
+
+  for (let i = 0; i < 2; i++) {
+    const step = F.completeStep(await tripState(id), U.drvA1, nowIso());
+    const r = await executeAs(t.drvA1, step.request);
+    if (r.status !== 200) record(S, `前置：完成第 ${i + 1} 站`, false, outcome(r));
+  }
+  const critical = F.reportIssue(await tripState(id), U.drvA1, nowIso(), '交通事故');
+  const rc = await executeAs(t.drvA1, critical.request);
+  record(S, '回報重大異常（交通事故）', rc.status === 200 && (await row('issues', critical.issue.id)).data.severity === 'critical', outcome(rc));
+
+  const drop = F.completeStep(await tripState(id), U.drvA1, nowIso(), { blocking: true });
+  const rd = await executeAs(t.drvA1, drop.request);
+  record(S, '有未結案重大異常時完成送達站（行程保持進行中）', rd.status === 200, outcome(rd));
+
+  const claimsDone = F.addProof(await tripState(id), U.drvA1, nowIso());
+  await expectRejected(S, '有未結案重大異常時宣稱完成行程', executeAs(t.drvA1, claimsDone.request),
+    { status: 400, code: 'VALIDATION_ERROR' }, watched);
+  const held = F.addProof(await tripState(id), U.drvA1, nowIso(), { blocking: true });
+  const rh = await executeAs(t.drvA1, held.request);
+  record(S, '服務證明照常保存，行程等調度結案異常', rh.status === 200 && (await row('trips', id)).data.status === 'in_progress', outcome(rh));
+
+  // 中斷是調度的權限，走既有的 state-mutate（組織 A 調度可寫）
+  const cur = await tripState(id);
+  const interrupt = await mutateAs(t.dspA, [{ collection: 'trips', id, expectedRevision: cur.revision,
+    record: { ...cur, status: 'interrupted', interruptedAt: nowIso(), interruptReason: '合成中斷' } }]);
+  record(S, '調度員 A 中斷行程（既有路徑）', interrupt.status === 200, outcome(interrupt));
+  const undo = F.undoStep(await tripState(id), U.drvA1, nowIso());
+  await expectRejected(S, '中斷中的行程司機不能返回上一步', executeAs(t.drvA1, { ...undo.request, trip: { ...undo.request.trip, status: 'in_progress' } }),
+    { status: 400, code: 'VALIDATION_ERROR' }, watched);
 }
 
 // ================================================================ 情境 3
@@ -409,6 +529,7 @@ async function scenario3(t) {
     { status: 403, code: 'FORBIDDEN' }, watched);
   await expectRejected(S, '缺少取消原因', cancelAs(t.req, { bookingId }),
     { status: 400, code: 'VALIDATION_ERROR' }, watched);
+  record(S, '失敗的取消嘗試沒有留下任何通知', (await notificationsFor(bookingId)).length === 0);
 
   const cancel = await cancelAs(t.req, { bookingId, reasonCode: 'requester_no_longer_needed', reasonText: '合成取消原因' });
   const bookingAfter = await row('bookings', bookingId);
@@ -428,9 +549,44 @@ async function scenario3(t) {
     Boolean(tripAfter) && tripAfter.revision === tripBefore.revision + 1
       && tripAfter.organization_id === tripBefore.organization_id && tripAfter.owner_user_id === tripBefore.owner_user_id);
 
+  // ---- 通知
+  const ntfs = await notificationsFor(bookingId);
+  const toDriver = ntfs.find((n) => n.data.template === 'trip_cancelled');
+  const toRequester = ntfs.find((n) => n.data.template === 'booking_cancelled');
+  record(S, '取消成功後恰好排入兩則通知（司機、需求者）', ntfs.length === 2 && Boolean(toDriver) && Boolean(toRequester),
+    `notifications=${JSON.stringify(ntfs.map((n) => n.data.template))}`);
+  record(S, '司機通知：收件人為被指派司機、歸屬行程組織、內容指向行程',
+    Boolean(toDriver) && toDriver.data.recipientId === U.drvA1 && toDriver.organization_id === ORG_A
+      && toDriver.data.payload.tripId === tripId && toDriver.data.payload.bookingId === bookingId);
+  record(S, '需求者通知：收件人為需求者、含取消原因與被取消的行程',
+    Boolean(toRequester) && toRequester.data.recipientId === U.req
+      && toRequester.data.payload.reason === '合成取消原因'
+      && JSON.stringify(toRequester.data.payload.cancelledTripIds) === JSON.stringify([tripId]));
+  record(S, '通知只是排入佇列（status = queued、未送出）',
+    ntfs.every((n) => n.data.status === 'queued' && n.data.sentAt === null && n.data.channel === 'line'));
+  record(S, '回應帶出通知 ID', cancel.status === 200 && JSON.stringify([...cancel.data.notificationIds].sort()) === JSON.stringify(ntfs.map((n) => n.id).sort()));
+  const reqLoad2 = await loadAs(t.req);
+  const dspLoad = await loadAs(t.dspA);
+  const dspBLoad = await loadAs(t.dspB);
+  record(S, '需求者讀得到自己的取消通知、調度員 A 讀得到司機通知、組織 B 都讀不到',
+    Boolean(toRequester) && Boolean(toDriver)
+      && idsIn(reqLoad2, 'notifications').includes(toRequester.id)
+      && idsIn(dspLoad, 'notifications').includes(toDriver.id)
+      && !idsIn(dspBLoad, 'notifications').some((x) => x === toDriver.id || x === toRequester.id));
+
   await expectRejected(S, '重複取消已取消的預約',
     cancelAs(t.req, { bookingId, reasonCode: 'requester_no_longer_needed' }),
     { status: 400, code: 'VALIDATION_ERROR' }, watched);
+  record(S, '重複取消不會重複通知', (await notificationsFor(bookingId)).length === 2);
+
+  // ---- 尚未承接的預約：沒有行程，只通知需求者
+  const openId = 'BKG-FLOW-S3O';
+  await mutateAs(t.req, [{ collection: 'bookings', id: openId, record: openBooking(openId) }]);
+  const openCancel = await cancelAs(t.req, { bookingId: openId, reasonCode: 'requester_no_longer_needed' });
+  const openNtfs = await notificationsFor(openId);
+  record(S, '取消尚未承接的預約：成功、只通知需求者',
+    openCancel.status === 200 && openNtfs.length === 1 && openNtfs[0].data.template === 'booking_cancelled'
+      && openCancel.data.cancelledTripIds.length === 0, outcome(openCancel));
 
   // ---- 交易中途失敗能完整回滾
   // 兩趟行程依 id 排序處理：-1 是 scheduled（會先被改成 cancelled），
@@ -448,6 +604,23 @@ async function scenario3(t) {
   await expectRejected(S, '含已開始行程時取消（中途失敗）',
     cancelAs(t.req, { bookingId: rb, reasonCode: 'requester_no_longer_needed' }),
     { status: 400, code: 'VALIDATION_ERROR' }, [['bookings', rb], ['trips', rt1], ['trips', rt2]]);
+  record(S, '中途失敗的取消沒有留下任何通知', (await notificationsFor(rb)).length === 0);
+
+  // ---- 共乘：目前一律拒絕（產品決策待定，見 PR 描述），而且不影響同車其他人
+  const p1 = 'BKG-FLOW-S3P1';
+  const p2 = 'BKG-FLOW-S3P2';
+  const pt = 'TRP-FLOW-S3P';
+  await mutateAs(t.req, [{ collection: 'bookings', id: p1, record: openBooking(p1) }]);
+  await mutateAs(t.req2, [{ collection: 'bookings', id: p2, record: openBooking(p2, U.req2) }]);
+  await fixtureScheduled(p1, pt);
+  await fixtureScheduled(p2, pt);
+  const pooled = await mutateAs(t.dspA, [{ collection: 'trips', id: pt,
+    record: scheduledTrip(pt, DRIVER.a1, { bookingIds: [p1, p2], isPooled: true }) }]);
+  record(S, '共乘 fixture：一趟行程載兩筆預約', pooled.status === 200, outcome(pooled));
+  await expectRejected(S, '[待產品決策] 需求者取消共乘中的一筆預約',
+    cancelAs(t.req, { bookingId: p1, reasonCode: 'requester_no_longer_needed' }),
+    { status: 400, code: 'VALIDATION_ERROR' }, [['bookings', p1], ['bookings', p2], ['trips', pt]]);
+  record(S, '共乘取消被拒時沒有通知', (await notificationsFor(p1)).length === 0 && (await notificationsFor(p2)).length === 0);
 }
 
 // ================================================================ 執行
@@ -460,7 +633,9 @@ async function scenario3(t) {
   await scenario1(t);
   console.log('--- 情境 2：被指派司機讀取並執行自己的行程；其他司機不能讀寫 ---');
   await scenario2(t);
-  console.log('--- 情境 3：需求者取消自己的已排車預約 ---');
+  console.log('--- 情境 2B：重大異常擋住完成、中斷中的行程司機不能執行 ---');
+  await scenario2b(t);
+  console.log('--- 情境 3：需求者取消自己的已排車預約（含通知與共乘） ---');
   await scenario3(t);
 
   const failed = results.filter((r) => !r.ok);
