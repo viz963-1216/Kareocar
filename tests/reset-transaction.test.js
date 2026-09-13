@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
+const { armExitWatchdog } = require('./_exit-watchdog');
 const root = path.join(__dirname, '../netlify/functions');
 // _db-config.js 是在真實 module 系統裡載入的（不是 vm 沙箱），所以它讀的是
 // 真實的 process.env。給一個合成的本機連線字串，這支測試不會真的連線。
@@ -59,4 +60,6 @@ async function run(kind) {
     assert.deepEqual(state,{attempts:0,password:'old',version:1,challengeCleared:false});}
   console.log('PASS reset transaction:',kind);
 }
-(async()=>{for(const kind of ['invalid','mismatch','unexpected','write-error','success'])await run(kind);})().catch(e=>{console.error(e);process.exitCode=1;});
+(async()=>{for(const kind of ['invalid','mismatch','unexpected','write-error','success'])await run(kind);})()
+  .catch(e=>{console.error(e);process.exitCode=1;})
+  .finally(()=>armExitWatchdog(5000,'reset-transaction'));

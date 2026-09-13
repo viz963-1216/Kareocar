@@ -11,6 +11,12 @@
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
 const path = require('node:path');
+const { armExitWatchdog } = require('./_exit-watchdog');
+
+// 這支測試會開 30 幾個子行程。任何一個卡住都不該把整個套件拖到 job timeout，
+// 所以每個子行程都設硬性逾時，超時直接 SIGKILL。
+const CHILD_TIMEOUT_MS = 30_000;
+const CHILD_MAX_BUFFER = 1 << 20;
 
 const ROOT = path.join(__dirname, '..');
 const CLI = path.join(ROOT, 'tools', 'check-db-config.js');
@@ -41,7 +47,8 @@ const ok = (name) => { console.log('  PASS', name); pass += 1; };
 function runCli(env) {
   try {
     const stdout = execFileSync(process.execPath, [CLI], {
-      env: { ...process.env, ...env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']
+      env: { ...process.env, ...env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: CHILD_TIMEOUT_MS, killSignal: 'SIGKILL', maxBuffer: CHILD_MAX_BUFFER
     });
     return { code: 0, stdout, stderr: '' };
   } catch (error) {
@@ -86,7 +93,7 @@ console.log('--- 純解析模組不相依 pg、不做 I/O ---');
     `require(${JSON.stringify(CONFIG_MODULE)});`
     + 'const bad=Object.keys(require.cache).filter(k=>k.includes("node_modules"));'
     + 'console.log(bad.length?"LOADED:"+bad.join(","):"CLEAN");'
-  ], { encoding: 'utf8' });
+  ], { encoding: 'utf8', timeout: CHILD_TIMEOUT_MS, killSignal: 'SIGKILL', maxBuffer: CHILD_MAX_BUFFER });
   assert.equal(out.trim(), 'CLEAN');
   ok('只載入 _db-config.js 時不會載入任何 node_modules（包含 pg）');
 
@@ -281,3 +288,7 @@ console.log('--- 解析模組本身的回傳欄位 ---');
 // --------------------------------------------------------------------------
 console.log('');
 console.log(`結果：${pass} 通過 / 0 失敗`);
+
+// 測試主體到此結束。如果行程還不肯走，5 秒後把還活著的資源印出來再強制結束，
+// 不要重演「15 分鐘沒有任何輸出然後被 job timeout 砍掉」。
+armExitWatchdog(5000, 'db-config-check');
