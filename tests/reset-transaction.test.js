@@ -60,6 +60,9 @@ async function run(kind) {
     assert.deepEqual(state,{attempts:0,password:'old',version:1,challengeCleared:false});}
   console.log('PASS reset transaction:',kind);
 }
+// watchdog 只在全部通過後才掛。掛在 finally 的話，測試失敗又剛好有東西卡住
+// 事件迴圈時，退出碼會從「失敗」(1) 變成「卡住」(97)，把真正的失敗蓋掉。
+// 失敗情況下的卡住由 tests/run.sh 的逐檔逾時接手。
 (async()=>{for(const kind of ['invalid','mismatch','unexpected','write-error','success'])await run(kind);})()
-  .catch(e=>{console.error(e);process.exitCode=1;})
-  .finally(()=>armExitWatchdog(5000,'reset-transaction'));
+  .then(()=>armExitWatchdog(5000,'reset-transaction'))
+  .catch(e=>{console.error(e);process.exitCode=1;});

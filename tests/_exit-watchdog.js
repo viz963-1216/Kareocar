@@ -28,7 +28,7 @@ function armExitWatchdog(ms = 5000, label = require('node:path').basename(proces
       ? process.getActiveResourcesInfo()
       : ['(此 Node 版本沒有 getActiveResourcesInfo)'];
     console.error('');
-    console.error(`[exit-watchdog] ${label}：測試主體已完成，但 ${ms}ms 後行程仍未結束。`);
+    console.error(`[exit-watchdog] ${label}：測試主體已完成但行程未退出（${ms}ms 後仍在執行）。`);
     console.error(`[exit-watchdog] 仍在活動的資源：${JSON.stringify(resources)}`);
     console.error(`[exit-watchdog] 強制結束，退出碼 ${STUCK_EXIT_CODE}。`);
     process.exit(STUCK_EXIT_CODE);
