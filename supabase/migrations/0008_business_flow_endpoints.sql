@@ -129,8 +129,8 @@ grant select on app_state_booking_pool to care_ride_app;
 -- 也不檢查組織。這裡另寫嚴格版本，不改動 0002。
 -- 只放行 SELECT；司機的寫入一律走下面第 4 節的函式。
 --
--- 政策用 (select app.my_active_driver_keys()) 包起來：不依賴資料列的子查詢，
--- 規劃器會做成 InitPlan，每個查詢只算一次，而不是每一列行程都查一次司機表。
+-- 政策用 in (select unnest(app.my_active_driver_keys()))：不依賴資料列的子查詢，
+-- 規劃器會做成只算一次的 SubPlan，而不是每一列行程都查一次司機表。
 -- 不新增欄位或索引（見檔頭「鎖與改寫」）。
 -- ---------------------------------------------------------------------
 create or replace function app.is_my_active_trip_driver(p_driver_id text, p_organization_id text)
@@ -174,7 +174,7 @@ drop policy if exists app_state_driver_read on app_state;
 create policy app_state_driver_read on app_state for select
   using (collection = 'trips'
          and (organization_id || '|' || coalesce(data->>'driverId', ''))
-             = any ((select app.my_active_driver_keys())));
+             in (select unnest(app.my_active_driver_keys())));
 
 
 -- ---------------------------------------------------------------------

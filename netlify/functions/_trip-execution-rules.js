@@ -223,11 +223,12 @@ function checkPassengers(ctx, { direction }) {
       if (p.status !== expected) fail(`${label}狀態與停靠點不一致`);
       return;
     }
-    // 沒有對應停靠點的舊資料：只允許依指令方向前進或後退一格
+    // 沒有對應停靠點的舊資料：完成停靠點只能前進一格；返回上一步時前端
+    // rebuildTripPassengerProjection 找不到停靠點會直接回到 waiting，所以只限制不能前進
     const order = ['waiting', 'onboard', 'dropped_off'];
     const delta = order.indexOf(p.status) - order.indexOf(oldStatus);
-    const allowed = direction === 'forward' ? [0, 1] : direction === 'backward' ? [0, -1] : [0];
-    if (order.indexOf(p.status) < 0 || !allowed.includes(delta)) fail(`${label}狀態變化不合法`);
+    const ok = direction === 'forward' ? (delta === 0 || delta === 1) : direction === 'backward' ? delta <= 0 : delta === 0;
+    if (order.indexOf(p.status) < 0 || !ok) fail(`${label}狀態變化不合法`);
   });
 }
 
