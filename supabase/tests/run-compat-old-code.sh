@@ -5,8 +5,8 @@
 #   2. 確認舊版的 0001–0007 與本分支完全相同
 #   3. 舊版 handler 分別跑三個庫，比對結果：
 #        careride_compat_old       0001–0007
-#        careride_compat_new       0001–0008（部署程式前的狀態；0009 在程式部署後才套用）
-#        careride_compat_rollback  0001–0009 → 回復 0009 → 回復 0008 並重新套用 0007
+#        careride_compat_new       0001–0008（部署程式前的狀態）
+#        careride_compat_rollback  0001–0008 → 回復 0008 並重新套用 0007
 #      old × new 只允許列出的預期差異；old × rollback 必須完全相同
 #   4. 舊版自己的隔離測試跑在含 0008 的 schema 上
 #
@@ -24,7 +24,6 @@ WORK="$(mktemp -d /tmp/care-ride-compat-XXXXXX)"
 cleanup() { git -C "$ROOT" worktree remove --force "$WORK/old" >/dev/null 2>&1 || true; rm -rf "$WORK"; }
 trap cleanup EXIT
 M8="$ROOT/supabase/migrations/0008_business_flow_endpoints.sql"
-M9="$ROOT/supabase/migrations/0009_server_only_notifications.sql"
 
 git -C "$ROOT" worktree add --detach "$WORK/old" "$OLD_REF" >/dev/null
 echo "舊程式：$OLD_REF = $(git -C "$WORK/old" rev-parse HEAD)"
@@ -43,9 +42,7 @@ createdb careride_compat_rollback
 for f in "$WORK"/old/supabase/migrations/*.sql; do apply careride_compat_old "$f"; done
 for f in "$WORK"/old/supabase/migrations/*.sql "$M8"; do apply careride_compat_new "$f"; done
 for f in "$ROOT"/supabase/migrations/*.sql; do apply careride_compat_rollback "$f"; done
-echo "--- 回復：0009 → 0008（重新套用 0007） ---"
-psql -X -q -v ON_ERROR_STOP=1 -d careride_compat_rollback -c "set lock_timeout = '5s'" -c 'begin' \
-  -f "$ROOT/supabase/rollback/0009_server_only_notifications.down.sql" -c 'commit' >/dev/null
+echo "--- 回復 0008（重新套用 0007） ---"
 psql -X -q -v ON_ERROR_STOP=1 -d careride_compat_rollback -c "set lock_timeout = '5s'" -c 'begin' \
   -f "$ROOT/supabase/rollback/0008_business_flow_endpoints.down.sql" \
   -f "$ROOT/supabase/migrations/0007_app_state.sql" -c 'commit' >/dev/null
@@ -60,7 +57,7 @@ for db in old new rollback; do
 done
 echo "--- 比對：舊庫 × 含 0008 的庫 ---"
 node "$ROOT/supabase/tests/compat-old-code.test.js" --compare "$WORK/old.json" "$WORK/new.json"
-echo "--- 比對：舊庫 × 回復 0009／0008 之後的庫（必須完全相同） ---"
+echo "--- 比對：舊庫 × 回復 0008 之後的庫（必須完全相同） ---"
 node "$ROOT/supabase/tests/compat-old-code.test.js" --compare --expect-identical "$WORK/old.json" "$WORK/rollback.json"
 
 echo "--- 舊版自己的隔離測試，跑在含 0008 的 schema 上 ---"

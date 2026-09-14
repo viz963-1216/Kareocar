@@ -16,7 +16,8 @@
 --   * 本檔「不」新增或刪除任何資料表欄位、不建立索引，所以不會改寫 app_state。
 --     早期草稿曾新增 stored generated column，會整張表改寫並長時間持有
 --     ACCESS EXCLUSIVE 鎖，已移除；隔離 CI 以 pg_relation_filenode 驗證不改寫。
---   * 仍會短暫取得的鎖：CREATE POLICY／DROP POLICY IF EXISTS 對 app_state
+--   * 仍會短暫取得的鎖：CREATE TRIGGER（SHARE ROW EXCLUSIVE）、CREATE POLICY／
+--     DROP POLICY IF EXISTS 對 app_state
 --     取 ACCESS EXCLUSIVE；CREATE OR REPLACE VIEW 對 app_state_booking_pool 取
 --     ACCESS EXCLUSIVE。都是只改系統目錄、瞬間完成，但會在鎖佇列裡等前面的長
 --     交易結束，等待期間後面所有讀寫 app_state 的請求都會排隊。部署時必須設
@@ -452,9 +453,7 @@ grant execute on function app.apply_driver_trip_execution(text, text, int, text,
 -- 外部服務。與取消在同一交易：取消失敗就沒有通知。ID 由預約與行程決定，
 -- ON CONFLICT DO NOTHING，重試不會重複。
 --
--- 寫入通知前設定交易級旗標 app.notification_writer。0009 的觸發器只接受帶這個
--- 旗標的通知寫入，一般 state-mutate 無法建立或修改通知；本檔單獨套用時旗標沒有
--- 作用，行為與舊版相同。收件人讀取政策也在 0009。
+-- 通知的完整性與收件人讀取在第 6 節。
 -- ---------------------------------------------------------------------
 create or replace function app.cancel_app_state_booking(
   p_booking_id text, p_reason_code text, p_reason_text text)
@@ -554,7 +553,6 @@ begin
 
   -- 站內通知（只寫資料列，不送出）
   perform set_config('app.state_scope_override', '1', true);
-  perform set_config('app.notification_writer', '1', true);
 
   for t in
     select s.id, s.organization_id, s.data
@@ -600,10 +598,100 @@ begin
     ntf_ids := ntf_ids || ntf_id;
   end if;
 
-  perform set_config('app.notification_writer', '0', true);
   perform set_config('app.state_scope_override', '0', true);
 
   return query select p_booking_id, trip_ids, ntf_ids;
 end $$;
 
 grant execute on function app.cancel_app_state_booking(text, text, text) to care_ride_app;
+
+
+-- ---------------------------------------------------------------------
+-- 6. 通知完整性與收件人讀取
+--
+-- 通知有兩種來源：
+--   * 後端流程：app.cancel_app_state_booking（security definer）
+--   * 前端 Notification.queue 經 state-mutate（派車、中斷、恢復、交接、完成等）；
+--     這條路徑保留，與舊版一樣寫入，可見範圍也與舊版相同（擁有者、行程組織）
+-- 收件人讀取只能開放給後端建立的通知，否則任何登入者都能寫一筆 recipientId 是別人
+-- 的通知讓對方讀到。
+--
+-- 「是不是後端建立」不看資料內容（source、eventType 都由寫入者決定），也不看工作
+-- 階段變數（care_ride_app 可以自己 set_config）。判斷的是觸發器執行時的
+-- current_user：security definer 函式內是函式擁有者，care_ride_app 直接寫入時是
+-- care_ride_app，而 care_ride_app 不是擁有者的成員，無法 SET ROLE。
+--
+-- 觸發器 app_state_guard_notifications（INSERT／UPDATE／DELETE）：
+--   * 後端建立的通知寫入 data.serverCreated = true；其他寫入者送來的
+--     serverCreated 一律移除
+--   * 非後端寫入者：不能把資料列的 collection 改成或改離 notifications、不能改 id；
+--     不能修改、軟刪除或刪除 serverCreated 的通知
+--   * 實體 DELETE 另受 0007 權限限制（care_ride_app 沒有 DELETE 權限）
+-- 收件人讀取政策只放行 serverCreated、而且在本檔安裝之後建立的通知：安裝之前的
+-- 資料列可能自帶 serverCreated（當時沒有觸發器移除），不因這條政策外露。
+-- 重複套用本檔會把安裝時間往後移，只會讓更少的通知可讀，不會擴大。
+-- ---------------------------------------------------------------------
+create or replace function app.notification_server_writer() returns name
+language sql stable set search_path = public, pg_temp
+as $$
+  select pg_get_userbyid(p.proowner)
+    from pg_proc p
+   where p.oid = 'app.cancel_app_state_booking(text, text, text)'::regprocedure
+$$;
+
+create or replace function app.app_state_guard_notifications() returns trigger
+language plpgsql set search_path = public, pg_temp
+as $$
+declare
+  server_writer boolean := current_user = app.notification_server_writer();
+begin
+  if tg_op = 'DELETE' then
+    if old.collection = 'notifications' and not server_writer then
+      raise exception '通知不能刪除' using errcode = '42501';
+    end if;
+    return old;
+  end if;
+
+  if tg_op = 'UPDATE' and not server_writer
+     and (old.collection = 'notifications' or new.collection = 'notifications') then
+    if old.collection is distinct from new.collection or old.id is distinct from new.id then
+      raise exception '通知的集合與 ID 不能修改' using errcode = '42501';
+    end if;
+    if coalesce(old.data->>'serverCreated', '') = 'true' then
+      raise exception '系統通知不能由用戶端修改或刪除' using errcode = '42501';
+    end if;
+  end if;
+
+  if new.collection = 'notifications' then
+    if server_writer then
+      if tg_op = 'INSERT' then
+        new.data := new.data || jsonb_build_object('serverCreated', true);
+      end if;
+    else
+      new.data := new.data - 'serverCreated';
+    end if;
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists app_state_guard_notifications on app_state;
+create trigger app_state_guard_notifications before insert or update or delete on app_state
+  for each row execute function app.app_state_guard_notifications();
+
+do $do$
+begin
+  execute format(
+    'create or replace function app.notification_guard_since() returns timestamptz
+       language sql stable set search_path = public, pg_temp as %L',
+    format('select %L::timestamptz', now()));
+end $do$;
+
+grant execute on function app.notification_guard_since() to care_ride_app;
+grant execute on function app.notification_server_writer() to care_ride_app;
+
+drop policy if exists app_state_notification_recipient_read on app_state;
+create policy app_state_notification_recipient_read on app_state for select
+  using (collection = 'notifications'
+         and data->>'serverCreated' = 'true'
+         and created_at >= (select app.notification_guard_since())
+         and data->>'recipientId' = (select app.current_user_id()));

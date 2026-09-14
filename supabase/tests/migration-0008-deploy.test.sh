@@ -10,7 +10,7 @@
 #   5. 回復演練：supabase/rollback 的移除 SQL + 重新套用 0007，單一交易；
 #      確認 0008 的政策與函式都不在、需求池 view 回到 0007 形狀、資料表不變，
 #      之後還能再套用 0008
-#   6. 0009（通知只能由後端建立）：lock_timeout 套用、不改寫、擋偽造、可重套、可回復
+#   6. 通知中間狀態：0008 套用前與套用後，別人寫給司機的通知（自帶系統標記）司機都讀不到
 #
 # 只允許本機隔離端點；測試庫名稱固定，已存在就失敗，不覆寫。
 set -euo pipefail
@@ -29,8 +29,9 @@ fail=0
 check() { if [ "$2" = "0" ]; then echo "  PASS $1"; else echo "  FAIL $1"; fail=1; fi; }
 
 createdb "$DB"
+# 只套用 0001–0007，建出 0008 部署前的狀態
 for migration in "$ROOT"/supabase/migrations/*.sql; do
-  [ "$migration" = "$M8" ] && continue
+  [[ "$(basename "$migration")" < "0008" ]] || continue
   psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f "$migration" >/dev/null
 done
 
@@ -116,32 +117,39 @@ psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' \
   -f "$ROOT/supabase/migrations/0007_app_state.sql" -c 'commit' >/dev/null 2>&1
 check "移除 0008 並重新套用 0007（單一交易）成功" $?
 LEFT2="$(q -c "select (select count(*) from pg_policies where policyname in ('app_state_driver_read','app_state_notification_recipient_read'))
-                + (select count(*) from pg_proc where proname in ('lock_driver_trip','apply_driver_trip_execution','my_active_driver_keys','is_my_active_trip_driver','cancel_app_state_booking'))")"
-[ "$LEFT2" = "0" ]; check "回復後沒有 0008 的政策或函式（剩 $LEFT2）" $?
+                + (select count(*) from pg_trigger where tgname = 'app_state_guard_notifications')
+                + (select count(*) from pg_proc where proname in ('lock_driver_trip','apply_driver_trip_execution','my_active_driver_keys','is_my_active_trip_driver','cancel_app_state_booking','app_state_guard_notifications','notification_guard_since','notification_server_writer'))")"
+[ "$LEFT2" = "0" ]; check "回復後沒有 0008 的政策、觸發器或函式（剩 $LEFT2）" $?
 POOLCOLS="$(q -c "select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'app_state_booking_pool'")"
 [ "$POOLCOLS" = "10" ]; check "需求池 view 回到 0007 的 10 欄（實得 $POOLCOLS）" $?
 [ "$(snapshot)" = "$BEFORE" ]; check "回復後 app_state 的 filenode、欄位、索引、筆數不變" $?
 psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' -f "$M8" -c 'commit' >/dev/null 2>&1
 check "回復後可以再次套用 0008" $?
 
-echo "--- 6. 0009 通知寫入限制 ---"
-M9="$ROOT/supabase/migrations/0009_server_only_notifications.sql"
-psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' -f "$M9" -c 'commit' >/dev/null 2>&1; check "0009 以單一交易 + lock_timeout 套用成功" $?
-[ "$(snapshot)" = "$BEFORE" ]; check "套用 0009 後 app_state 不改寫" $?
-GUARD="$(q -c "select count(*) from pg_trigger where tgname = 'app_state_guard_notifications' and tgrelid = 'app_state'::regclass")"
-[ "$GUARD" = "1" ]; check "通知寫入觸發器存在" $?
-set +e
-FORGE="$(psql -X -q -tA -v ON_ERROR_STOP=1 -d "$DB" -c "insert into app_state (collection, id, data) values ('notifications', 'NTF-MIG-FORGE', '{}')" 2>&1)"
-FORGE_RC=$?
-set -e
-if [ "$FORGE_RC" -ne 0 ] && echo "$FORGE" | grep -q '通知只能由系統流程建立'; then check "未帶後端旗標的通知 INSERT 被擋" 0; else check "未帶後端旗標的通知 INSERT 被擋" 1; fi
-psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' -f "$M9" -c 'commit' >/dev/null 2>&1; check "重複套用 0009 成功" $?
-psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' -f "$ROOT/supabase/rollback/0009_server_only_notifications.down.sql" -c 'commit' >/dev/null 2>&1; check "回復 0009 成功" $?
-LEFT9="$(q -c "select (select count(*) from pg_trigger where tgname = 'app_state_guard_notifications')
-               + (select count(*) from pg_policies where policyname = 'app_state_notification_recipient_read')
-               + (select count(*) from pg_proc where proname in ('app_state_guard_notifications','notification_guard_since'))")"
-[ "$LEFT9" = "0" ]; check "回復後沒有 0009 的觸發器、政策或函式（剩 $LEFT9）" $?
-[ "$(snapshot)" = "$BEFORE" ]; check "回復 0009 後 app_state 不改寫" $?
+echo "--- 6. 通知中間狀態 ---"
+forge_and_count() {
+  # 以 care_ride_app、非收件人的身分寫一則收件人是司機、自帶系統標記的通知，再以司機身分計數
+  local id="$1"
+  psql -X -q -tA -v ON_ERROR_STOP=1 -d "$DB" -c 'set role care_ride_app' \
+    -c "select set_config('app.user_id', 'USR-MIG-OTHER', false)" \
+    -c "insert into app_state (collection, id, data) values ('notifications', '$id', jsonb_build_object('recipientId', 'USR-MIG-DRV', 'serverCreated', true, 'source', 'cancel_booking_endpoint'))" >/dev/null
+  psql -X -q -tA -v ON_ERROR_STOP=1 -d "$DB" -c 'set role care_ride_app' \
+    -c "select set_config('app.user_id', 'USR-MIG-DRV', false)" \
+    -c "select count(*) from app_state where collection = 'notifications' and id = '$id'" | tail -1
+}
+psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' \
+  -f "$ROOT/supabase/rollback/0008_business_flow_endpoints.down.sql" \
+  -f "$ROOT/supabase/migrations/0007_app_state.sql" -c 'commit' >/dev/null 2>&1
+SEEN_BEFORE="$(forge_and_count NTF-MIG-BEFORE)"
+[ "$SEEN_BEFORE" = "0" ]; check "0008 套用前（舊程式狀態）：他人寫給司機的通知司機讀不到（實得 $SEEN_BEFORE）" $?
+psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' -f "$M8" -c 'commit' >/dev/null 2>&1
+check "重新套用 0008" $?
+SEEN_OLD_ROW="$(psql -X -q -tA -v ON_ERROR_STOP=1 -d "$DB" -c 'set role care_ride_app' -c "select set_config('app.user_id', 'USR-MIG-DRV', false)" -c "select count(*) from app_state where collection = 'notifications' and id = 'NTF-MIG-BEFORE'" | tail -1)"
+[ "$SEEN_OLD_ROW" = "0" ]; check "0008 套用後：套用前自帶系統標記的舊通知司機仍讀不到（實得 $SEEN_OLD_ROW）" $?
+SEEN_AFTER="$(forge_and_count NTF-MIG-AFTER)"
+[ "$SEEN_AFTER" = "0" ]; check "0008 套用後（舊程式或新程式寫入）：他人寫給司機的通知司機讀不到（實得 $SEEN_AFTER）" $?
+STRIPPED="$(q -c "select count(*) from app_state where collection = 'notifications' and id = 'NTF-MIG-AFTER' and data ? 'serverCreated'")"
+[ "$STRIPPED" = "0" ]; check "0008 套用後用戶端自帶的 serverCreated 被移除" $?
 
 dropdb "$DB"
 if [ "$fail" -eq 0 ]; then echo "結果：全部通過"; else echo "結果：有失敗"; fi

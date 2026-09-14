@@ -8,8 +8,10 @@
  * 做法：用舊版的 handler（COMPAT_FUNCTIONS_DIR，由 run-compat-old-code.sh 從
  * origin/main 取出）對兩個資料庫各跑一次同一組操作：
  *   careride_compat_old  只有 0001–0007
- *   careride_compat_new  0001–0008
- * 把每一步的結果寫成 JSON，最後比對。除了下面列出的預期差異，兩邊必須完全相同。
+ *   careride_compat_new       0001–0008
+ *   careride_compat_rollback  0001–0008 → 移除 0008 並重新套用 0007
+ * 把每一步的結果寫成 JSON，最後比對。old × new 只允許列出的預期差異；
+ * old × rollback 必須完全相同。
  *
  *   node compat-old-code.test.js                    執行（PGDATABASE、COMPAT_FUNCTIONS_DIR、COMPAT_RESULT_FILE）
  *   node compat-old-code.test.js --compare a.json b.json
@@ -25,7 +27,7 @@ const EXPECTED_DIFFERENCES = {
 };
 
 if (process.argv[2] === '--compare') {
-  // --expect-identical：回復 0008／0009 之後，舊程式的結果必須與從未套用時完全相同
+  // --expect-identical：回復 0008 之後，舊程式的結果必須與從未套用時完全相同
   const exact = process.argv.includes('--expect-identical');
   const [a, b] = process.argv.slice(3).filter((x) => !x.startsWith('--')).map((f) => JSON.parse(fs.readFileSync(f, 'utf8')));
   let bad = 0;
@@ -132,12 +134,14 @@ const ids = (r, c) => ((r.data && r.data.collections && r.data.collections[c]) |
     { collection: 'bookings', id: 'BKG-CMP-2', record: booking('BKG-CMP-2', { state: 'cancelled', status: 'cancelled' }) }] });
   steps['requester-cancel-open-booking-via-state-mutate'] = { status: reqCancelOpen.status, code: reqCancelOpen.code };
 
-  // 舊版前端的通知（例如派車、中斷）經 state-mutate 寫入。0008 不影響；0009 會擋，
-  // 所以 0009 必須在新程式部署之後才套用。
+  // 舊版前端的通知（例如派車、中斷）經 state-mutate 寫入，0008 之後照舊可寫；
+  // 收件司機不論有沒有 0008 都讀不到（0008 只放行後端建立的通知）。
   const oldNotification = await call(mutate.handler, 'POST', tok.dsp, { changes: [
     { collection: 'notifications', id: 'NTF-CMP-1', record: { id: 'NTF-CMP-1', organizationId: 'ORG-CMP-A', recipientId: 'USR-CMP-DRV',
       channel: 'line', template: 'trip_interrupted', eventType: 'trip_interrupted', payload: { tripId: 'TRP-CMP-1' }, status: 'queued' } }] });
   steps['dispatcher-notification-via-state-mutate'] = { status: oldNotification.status, code: oldNotification.code };
+  const drvAfterNotification = await call(load.handler, 'GET', tok.drv);
+  steps['driver-reads-notification-written-by-dispatcher'] = { sees: ids(drvAfterNotification, 'notifications').includes('NTF-CMP-1') };
 
   const reqLoad = await call(load.handler, 'GET', tok.req);
   steps['requester-load'] = { status: reqLoad.status, bookings: ids(reqLoad, 'bookings').sort(), pool: (reqLoad.data && reqLoad.data.pool || []).length };

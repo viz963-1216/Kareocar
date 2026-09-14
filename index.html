@@ -2973,8 +2973,7 @@ function authoritativeDriverExecutionChange_(change){
 }
 function authoritativeQueueChanges_(changes){
   if(!authoritativeProduction_()||!changes?.length)return;
-  // 通知只能由後端流程建立（state-mutate 會拒絕）；本機 Notification.queue 只留在畫面狀態
-  changes=changes.filter(c=>c.collection!=='notifications'&&!authoritativeDriverExecutionChange_(c));if(!changes.length)return;
+  changes=changes.filter(c=>!authoritativeDriverExecutionChange_(c));if(!changes.length)return;
   const actor=authoritativeCurrentActor_();const token=typeof backendAuthToken==='function'?backendAuthToken():'';if(!actor||!token)return;
   changes.forEach(c=>{const key=`${actor}|${c.collection}|${c.id}`,prior=authoritativeQueue.get(key),next={...c,record:authoritativeSanitizeRecord_(c.collection,c.record),previousRecord:prior?.previousRecord!==undefined?prior.previousRecord:c.previousRecord,expectedRevision:prior?.expectedRevision!==undefined?prior.expectedRevision:c.expectedRevision,actorUserId:actor,queuedAt:prior?.queuedAt||nowISO()};authoritativeQueue.set(key,next);});authoritativePersistQueue_();
   clearTimeout(authoritativeFlushTimer);authoritativeFlushTimer=setTimeout(()=>authoritativeFlush_(),25);

@@ -186,8 +186,9 @@ V12.25.79 新增／使用的 Identity API：
 
 - 不新增或刪除欄位、不建立索引，不會改寫 `app_state`（CI 以
   `pg_relation_filenode`、欄位、索引、筆數前後比對）。
-- 仍會短暫拿 ACCESS EXCLUSIVE：`CREATE POLICY`／`DROP POLICY IF EXISTS`（司機讀取、
-  通知收件人讀取兩條）對 `app_state`，`CREATE OR REPLACE VIEW` 對 `app_state_booking_pool`。只改系統目錄，
+- 仍會短暫取鎖：`CREATE TRIGGER`（通知完整性）對 `app_state` 取 SHARE ROW EXCLUSIVE；
+  `CREATE POLICY`／`DROP POLICY IF EXISTS`（司機讀取、通知收件人讀取兩條）對 `app_state`
+  取 ACCESS EXCLUSIVE，`CREATE OR REPLACE VIEW` 對 `app_state_booking_pool`。只改系統目錄，
   本身瞬間完成，但會排在任何還開著、碰過 `app_state` 的交易後面；排隊期間後面所有
   讀寫 `app_state` 的請求都會跟著卡住。所以「離峰」不夠，必須設 `lock_timeout`。
   實際持有的鎖以 CI `migration-0008-deploy` 步驟印出的清單為準。
@@ -225,7 +226,7 @@ V12.25.79 新增／使用的 Identity API：
    SQL 最前面自己加上 `set lock_timeout = '3s'; begin;`、最後加 `commit;`。
 
 5. **驗證**：第 3 步的 filenode 與筆數不變；`app_state_driver_read`、
-   `app_state_notification_recipient_read` 政策與
+   `app_state_notification_recipient_read` 政策、`app_state_guard_notifications` 觸發器與
    `app.lock_driver_trip`、`app.apply_driver_trip_execution`、
    `app.cancel_app_state_booking` 存在；線上舊版網站登入與載入正常。
 6. **部署程式**：`index.html`、`netlify.toml`、`netlify/functions/` 同一次部署。
@@ -235,29 +236,19 @@ V12.25.79 新增／使用的 Identity API：
    需求者取消），並確認沒有 5xx。取消通知目前沒有畫面列表，要以資料庫確認
    `notifications` 有司機與需求者各一列、`status = queued`。
 
-8. **套用 0009（通知只能由後端建立）**：第 6、7 步完成、確認新程式已上線之後才套用，
-   方式同第 4 步（單一交易＋`lock_timeout`）：
+### 通知來源與可見範圍
 
-   ```bash
-   psql "$MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 \
-     -c "set lock_timeout = '3s'" -c "set statement_timeout = '60s'" \
-     -c 'begin' -f supabase/migrations/0009_server_only_notifications.sql -c 'commit'
-   ```
-
-   不能提前：舊版前端在派車、中斷、恢復、交接、行程完成時會把本機產生的通知和
-   行程寫入放在同一批 state-mutate 送出；0009 會擋下通知，整批（含行程）一起回滾。
-   0009 不改寫 `app_state`；`CREATE TRIGGER` 取 SHARE ROW EXCLUSIVE、
-   `CREATE POLICY` 取 ACCESS EXCLUSIVE（隔離 CI `migration-0008-deploy` 第 6 段實測）。
-9. **0009 驗證**：`app_state_guard_notifications` 觸發器與
-   `app_state_notification_recipient_read` 政策存在；需求者取消一次，確認司機與
-   需求者各一則通知、被指派司機的 state-load 讀得到自己的那則。
-
-### 通知來源盤點（0009 前後）
-
-| 來源 | 產生位置 | 0009 前 | 新程式 + 0009 |
+| 來源 | 產生位置 | 寫入 | 收件人讀得到 |
 |---|---|---|---|
-| 需求者取消（trip_cancelled、booking_cancelled） | 後端 `app.cancel_app_state_booking` | 寫入 | 寫入（帶後端旗標） |
-| 派車建立（booking_confirmed）、行程完成（trip_completed，含服務證明補齊、異常結案自動完成）、中斷、恢復、終止、交接（三種）、路線重排、資源重派 | 前端 `Notification.queue`，經 state-mutate | 寫入；收件人多半讀不到（擁有者是操作者、組織由觸發器決定），前端也沒有通知畫面或發送程式 | **只留在本機畫面狀態，不再寫入伺服器**；要持久化需改成後端流程建立（本輪未做） |
+| 需求者取消（trip_cancelled、booking_cancelled） | 後端 `app.cancel_app_state_booking` | 是，觸發器標記 `serverCreated` | 是（0008 收件人讀取政策） |
+| 派車建立、行程完成（含服務證明補齊、異常結案自動完成）、中斷、恢復、終止、交接（三種）、路線重排、資源重派 | 前端 `Notification.queue`，經 state-mutate | 是，與舊版相同；自帶的 `serverCreated` 一律移除 | 否，與舊版相同（只有寫入者本人與行程組織營運方讀得到） |
+
+- 0008 套用前、「0008＋舊程式」、「0008＋新程式」三個狀態下，用戶端寫入、收件人是
+  別人的通知，收件人都讀不到（隔離 CI `migration-0008-deploy` 第 6 段與
+  `compat-old-code` 實測）。
+- **尚未完成的遷移範圍**：要讓前端流程的通知也被收件人讀到，必須把這 11 處改由後端
+  流程在對應交易內建立（派車建立、行程完成、中斷、恢復、終止、交接、路線重排、
+  資源重派）。本輪未做；現況與舊版相同，沒有退化。
 
 ### 部署時的已知行為
 
@@ -273,7 +264,7 @@ V12.25.79 新增／使用的 Identity API：
   - **已送出**：版本庫內未找到讀取這些資料列並對外發送的程式；正式 Supabase 是否有
     版本庫外的 trigger、webhook 或排程會處理 `notifications`，尚未核實。
 
-### 福利額度（尚無後端，本輪未修好）
+### 福利額度（原有的後端缺口，列為待辦與產品決策；本輪不修）
 
 - **現況（程式靜態推導）**：福利核定 `benefitAuthorizations`、帳本 `benefitLedger`、
   核定事件 `benefitAuthorizationEvents` 沒有資料表、RLS 或端點，不在前端同步集合，
@@ -294,18 +285,9 @@ V12.25.79 新增／使用的 Identity API：
 
 ### 回復
 
-回復順序與部署相反：**先移除 0009 → 回復程式 → 再移除 0008**。0009 還在時回復到
-舊版程式，舊版前端的通知寫入會被擋、連帶整批行程寫入失敗。
-
-```bash
-psql "$MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "set lock_timeout = '3s'" -c 'begin' \
-  -f supabase/rollback/0009_server_only_notifications.down.sql -c 'commit'
-```
-
-隔離 CI `compat-old-code` 以「0001–0009 → 移除 0009 → 移除 0008 並重新套用 0007」
-建庫後，實際以固定舊版 `6539c75` 的 handler 重跑相容性比對，結果必須與從未套用
-0008／0009 的庫完全相同。
-
+隔離 CI `compat-old-code` 以「0001–0008 → 移除 0008 並重新套用 0007」建庫後，
+實際以固定舊版 `6539c75` 的 handler 重跑相容性比對，結果必須與從未套用 0008 的庫
+完全相同。
 
 - **只回復程式**：部署回前一版即可，0008 可以留著（見上方相容性比對）。
 - **移除 0008**：先回復程式（新前端與新端點依賴 0008），再在單一交易內執行移除
@@ -320,3 +302,4 @@ psql "$MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "set lock_timeout = '3s'
   隔離 CI 的 `migration-0008-deploy` 第 5 段以同一組指令演練：0008 的政策與函式
   全部移除、需求池 view 回到 10 欄、`app_state` 不改寫，之後可再次套用 0008。
   已由 0008 寫入的行程事件、異常、通知資料列不會被刪除；舊程式仍可讀寫這些資料列。
+  回復後收件人讀取政策與通知觸發器都已移除，後端通知回到舊版的可見範圍。
