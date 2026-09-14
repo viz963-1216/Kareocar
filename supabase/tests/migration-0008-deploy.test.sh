@@ -167,17 +167,23 @@ expect "安裝後：預先寫入 serverCreated、created_at 在未來的通知�
 expect "安裝後以用戶端身分寫入偽造通知" "$(client_forge NTF-MIG-AFTER)" 0
 expect "安裝後用戶端偽造的通知：司機讀不到" "$(driver_sees NTF-MIG-AFTER)" 0
 # 合法後端通知：以函式擁有者身分寫入來源證明與通知（等同後端函式的寫入方式）
-q -q -c "insert into app.notification_provenance (notification_id, source, booking_id, template, recipient_user_id) values ('NTF-MIG-LEGIT', 'cancel_booking_endpoint', 'BKG-MIG', 'booking_cancelled', 'USR-MIG-DRV')" \
-     -c "insert into app_state (collection, id, data) values ('notifications', 'NTF-MIG-LEGIT', jsonb_build_object('recipientId', 'USR-MIG-DRV'))" >/dev/null
-expect "合法後端通知：收件司機讀得到" "$(driver_sees NTF-MIG-LEGIT)" 1
+for legit in NTF-MIG-LEGIT NTF-MIG-LEGIT2; do
+  q -q -c "insert into app.notification_provenance (notification_id, source, booking_id, template, recipient_user_id, content_hash) values ('$legit', 'cancel_booking_endpoint', 'BKG-$legit', 'booking_cancelled', 'USR-MIG-DRV', md5(jsonb_build_object('id', '$legit', 'recipientId', 'USR-MIG-DRV')::text))" \
+       -c "insert into app_state (collection, id, data) values ('notifications', '$legit', jsonb_build_object('id', '$legit', 'recipientId', 'USR-MIG-DRV'))" >/dev/null
+done
+expect "合法後端通知：收件司機讀得到" "$(driver_sees NTF-MIG-LEGIT)$(driver_sees NTF-MIG-LEGIT2)" 11
 expect "重套 0008" "$(apply8)" 0
 expect "重套 0008 後：合法通知仍讀得到" "$(driver_sees NTF-MIG-LEGIT)" 1
 expect "回復 0008" "$(rollback8)" 0
 expect "回復後：讀取政策移除，收件司機讀不到" "$(driver_sees NTF-MIG-LEGIT)" 0
-expect "回復後：來源證明保留" "$(q -c "select count(*) from app.notification_provenance where notification_id = 'NTF-MIG-LEGIT'")" 1
+expect "回復後：來源證明保留" "$(q -c "select count(*) from app.notification_provenance where notification_id in ('NTF-MIG-LEGIT','NTF-MIG-LEGIT2')")" 2
+# 回復期間觸發器不在：改動其中一則的內容
+q -q -c "update app_state set data = data || jsonb_build_object('payload', jsonb_build_object('reason', '回復期間竄改')) where collection = 'notifications' and id = 'NTF-MIG-LEGIT2'" >/dev/null
+expect "回復期間可以改動通知內容（觸發器已移除）" "$(q -c "select data->'payload'->>'reason' from app_state where collection = 'notifications' and id = 'NTF-MIG-LEGIT2'")" "回復期間竄改"
 expect "回復後再套用 0008" "$(apply8)" 0
 AGAIN="$(driver_sees NTF-MIG-LEGIT)"
-expect "再套用後：合法通知恢復可讀" "$AGAIN" 1
+expect "再套用後：未被改動的合法通知恢復可讀" "$AGAIN" 1
+expect "再套用後：回復期間被改動的通知不恢復可讀（內容雜湊不符）" "$(driver_sees NTF-MIG-LEGIT2)" 0
 [ "$AGAIN" = "1" ] || driver_diag NTF-MIG-LEGIT
 expect "再套用後：偽造通知仍讀不到" "$(driver_sees NTF-MIG-PRE)$(driver_sees NTF-MIG-AFTER)" 00
 expect "以上過程 app_state 的 filenode、欄位、索引不變" "$(snapshot | cut -d'|' -f1-3)" "$(echo "$BEFORE" | cut -d'|' -f1-3)"

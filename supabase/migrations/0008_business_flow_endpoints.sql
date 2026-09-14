@@ -469,6 +469,8 @@ declare
   trip_ids  text[] := '{}';
   ntf_ids   text[] := '{}';
   ntf_id    text;
+  ntf_data  jsonb;
+  proof_id  text;
   ntf_org   text;
   drv_user  text;
   recipient text;
@@ -563,21 +565,23 @@ begin
   loop
     select d.user_id into drv_user from drivers d where d.id = t.data->>'driverId';
     continue when drv_user is null;
-    ntf_id := null;
-    insert into app.notification_provenance (notification_id, source, booking_id, trip_id, template, recipient_user_id)
-    values ('ntf_' || replace(gen_random_uuid()::text, '-', ''), 'cancel_booking_endpoint', p_booking_id, t.id, 'trip_cancelled', drv_user)
-    on conflict (source, booking_id, trip_id, template) do nothing
-    returning notification_id into ntf_id;
-    continue when ntf_id is null;
-    insert into app_state (collection, id, trip_id, booking_id, data)
-    values ('notifications', ntf_id, t.id, p_booking_id, jsonb_build_object(
+    ntf_id := 'ntf_' || replace(gen_random_uuid()::text, '-', '');
+    ntf_data := jsonb_build_object(
               'id', ntf_id, 'organizationId', t.organization_id, 'recipientId', drv_user,
               'channel', 'line', 'template', 'trip_cancelled', 'eventType', 'trip_cancelled',
               'payload', jsonb_build_object('tripId', t.id, 'tripCode', coalesce(t.data->>'code', ''),
                                             'reason', '需求者取消預約', 'bookingId', p_booking_id,
                                             'bookingOrganizationId', b.organization_id),
               'status', 'queued', 'createdAt', now_iso, 'sentAt', null, 'error', null,
-              'source', 'cancel_booking_endpoint'));
+              'source', 'cancel_booking_endpoint');
+    proof_id := null;
+    insert into app.notification_provenance (notification_id, source, booking_id, trip_id, template, recipient_user_id, content_hash)
+    values (ntf_id, 'cancel_booking_endpoint', p_booking_id, t.id, 'trip_cancelled', drv_user, md5(ntf_data::text))
+    on conflict (source, booking_id, trip_id, template) do nothing
+    returning notification_id into proof_id;
+    continue when proof_id is null;
+    insert into app_state (collection, id, trip_id, booking_id, data)
+    values ('notifications', ntf_id, t.id, p_booking_id, ntf_data);
     update app_state s set organization_id = t.organization_id
      where s.collection = 'notifications' and s.id = ntf_id and s.organization_id is null;
     ntf_ids := ntf_ids || ntf_id;
@@ -587,13 +591,8 @@ begin
   if recipient is not null then
     ntf_id  := null;
     ntf_org := coalesce(b.organization_id, 'ORG-REQ-001');
-    insert into app.notification_provenance (notification_id, source, booking_id, trip_id, template, recipient_user_id)
-    values ('ntf_' || replace(gen_random_uuid()::text, '-', ''), 'cancel_booking_endpoint', p_booking_id, '', 'booking_cancelled', recipient)
-    on conflict (source, booking_id, trip_id, template) do nothing
-    returning notification_id into ntf_id;
-    if ntf_id is not null then
-      insert into app_state (collection, id, booking_id, data)
-      values ('notifications', ntf_id, p_booking_id, jsonb_build_object(
+    ntf_id  := 'ntf_' || replace(gen_random_uuid()::text, '-', '');
+    ntf_data := jsonb_build_object(
                 'id', ntf_id, 'organizationId', ntf_org, 'recipientId', recipient,
                 'channel', 'line', 'template', 'booking_cancelled', 'eventType', 'booking_cancelled',
                 'payload', jsonb_build_object('bookingId', p_booking_id,
@@ -601,7 +600,15 @@ begin
                                               'reasonCode', code,
                                               'cancelledTripIds', to_jsonb(trip_ids)),
                 'status', 'queued', 'createdAt', now_iso, 'sentAt', null, 'error', null,
-                'source', 'cancel_booking_endpoint'));
+                'source', 'cancel_booking_endpoint');
+    proof_id := null;
+    insert into app.notification_provenance (notification_id, source, booking_id, trip_id, template, recipient_user_id, content_hash)
+    values (ntf_id, 'cancel_booking_endpoint', p_booking_id, '', 'booking_cancelled', recipient, md5(ntf_data::text))
+    on conflict (source, booking_id, trip_id, template) do nothing
+    returning notification_id into proof_id;
+    if proof_id is not null then
+      insert into app_state (collection, id, booking_id, data)
+      values ('notifications', ntf_id, p_booking_id, ntf_data);
       update app_state s set organization_id = ntf_org
        where s.collection = 'notifications' and s.id = ntf_id and s.organization_id is null;
       ntf_ids := ntf_ids || ntf_id;
@@ -629,9 +636,13 @@ grant execute on function app.cancel_app_state_booking(text, text, text) to care
 -- set_config。依據是 app.notification_provenance：
 --   * 只由 security definer 的後端函式寫入；care_ride_app 沒有任何權限，表上啟用 RLS
 --     且沒有政策，只能透過下面兩個函式查詢「是否有證明」
---   * 記錄通知 ID 與收件人；收件人讀取政策比對的是這裡的收件人，不是 data.recipientId
---   * create table if not exists：重套 0008 不清空；回復檔也不刪這張表，回復後再套用
---     既有合法通知恢復可讀
+--   * 記錄通知 ID、收件人與建立時內容的雜湊 md5(data::text)（jsonb 文字表示是正規化的，
+--     與鍵的順序無關）；收件人讀取政策比對的是這裡的收件人，而且要求資料列目前的
+--     內容雜湊與證明相同
+--   * create table if not exists：重套 0008 不清空；回復檔也不刪這張表
+--   * 回復 0008 期間觸發器不在，資料列擁有者或營運方可以改動通知內容或收件人。再套用
+--     0008 後，被改過的通知雜湊不符，不會恢復成可信、可讀的系統通知；沒被改過的通知
+--     雜湊相符，恢復可讀
 --
 -- 觸發器 app_state_guard_notifications（INSERT／UPDATE／DELETE）對非後端寫入者
 -- （current_user 不是取消函式擁有者；care_ride_app 無法 SET ROLE 成擁有者）：
@@ -648,6 +659,7 @@ create table if not exists app.notification_provenance (
   trip_id           text not null default '',
   template          text not null,
   recipient_user_id text not null,
+  content_hash      text not null,
   created_at        timestamptz not null default now(),
   unique (source, booking_id, trip_id, template)
 );
@@ -669,17 +681,18 @@ as $$
   select exists (select 1 from app.notification_provenance p where p.notification_id = p_notification_id)
 $$;
 
-create or replace function app.is_my_server_notification(p_notification_id text) returns boolean
+create or replace function app.is_my_server_notification(p_notification_id text, p_data jsonb) returns boolean
 language sql stable security definer set search_path = public, pg_temp
 as $$
   select exists (select 1 from app.notification_provenance p
                   where p.notification_id = p_notification_id
-                    and p.recipient_user_id = app.current_user_id())
+                    and p.recipient_user_id = app.current_user_id()
+                    and p.content_hash = md5(p_data::text))
 $$;
 
 grant execute on function app.notification_server_writer() to care_ride_app;
 grant execute on function app.is_server_notification(text) to care_ride_app;
-grant execute on function app.is_my_server_notification(text) to care_ride_app;
+grant execute on function app.is_my_server_notification(text, jsonb) to care_ride_app;
 
 create or replace function app.app_state_guard_notifications() returns trigger
 language plpgsql set search_path = public, pg_temp
@@ -713,4 +726,4 @@ create trigger app_state_guard_notifications before insert or update or delete o
 
 drop policy if exists app_state_notification_recipient_read on app_state;
 create policy app_state_notification_recipient_read on app_state for select
-  using (collection = 'notifications' and app.is_my_server_notification(id));
+  using (collection = 'notifications' and app.is_my_server_notification(id, data));
