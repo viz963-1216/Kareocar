@@ -450,8 +450,8 @@ grant execute on function app.apply_driver_trip_execution(text, text, int, text,
 --
 -- 通知：沿用前端既有的 notifications 集合與資料形狀（trip_cancelled 給司機、
 -- booking_cancelled 給需求者），只寫入 status = 'queued' 的資料列，不呼叫任何
--- 外部服務。與取消在同一交易：取消失敗就沒有通知。ID 由預約與行程決定，
--- ON CONFLICT DO NOTHING，重試不會重複。
+-- 外部服務。與取消在同一交易：取消失敗就沒有通知。來源證明以（來源、預約、行程、
+-- 樣板）為唯一鍵，重試不會重複；通知 ID 隨機產生，用戶端無法預先佔用。
 --
 -- 通知的完整性與收件人讀取在第 6 節。
 -- ---------------------------------------------------------------------
@@ -552,6 +552,7 @@ begin
   end if;
 
   -- 站內通知（只寫資料列，不送出）
+  -- 先寫來源證明 app.notification_provenance，寫成功才寫通知（見第 6 節）。
   perform set_config('app.state_scope_override', '1', true);
 
   for t in
@@ -562,7 +563,12 @@ begin
   loop
     select d.user_id into drv_user from drivers d where d.id = t.data->>'driverId';
     continue when drv_user is null;
-    ntf_id := 'ntf_bc_' || md5(p_booking_id || '|trip_cancelled|' || t.id);
+    ntf_id := null;
+    insert into app.notification_provenance (notification_id, source, booking_id, trip_id, template, recipient_user_id)
+    values ('ntf_' || replace(gen_random_uuid()::text, '-', ''), 'cancel_booking_endpoint', p_booking_id, t.id, 'trip_cancelled', drv_user)
+    on conflict (source, booking_id, trip_id, template) do nothing
+    returning notification_id into ntf_id;
+    continue when ntf_id is null;
     insert into app_state (collection, id, trip_id, booking_id, data)
     values ('notifications', ntf_id, t.id, p_booking_id, jsonb_build_object(
               'id', ntf_id, 'organizationId', t.organization_id, 'recipientId', drv_user,
@@ -571,8 +577,7 @@ begin
                                             'reason', '需求者取消預約', 'bookingId', p_booking_id,
                                             'bookingOrganizationId', b.organization_id),
               'status', 'queued', 'createdAt', now_iso, 'sentAt', null, 'error', null,
-              'source', 'cancel_booking_endpoint'))
-    on conflict (collection, id) do nothing;
+              'source', 'cancel_booking_endpoint'));
     update app_state s set organization_id = t.organization_id
      where s.collection = 'notifications' and s.id = ntf_id and s.organization_id is null;
     ntf_ids := ntf_ids || ntf_id;
@@ -580,22 +585,27 @@ begin
 
   recipient := coalesce(nullif(b.data->>'requestedByUserId', ''), b.owner_user_id);
   if recipient is not null then
-    ntf_id  := 'ntf_bc_' || md5(p_booking_id || '|booking_cancelled');
+    ntf_id  := null;
     ntf_org := coalesce(b.organization_id, 'ORG-REQ-001');
-    insert into app_state (collection, id, booking_id, data)
-    values ('notifications', ntf_id, p_booking_id, jsonb_build_object(
-              'id', ntf_id, 'organizationId', ntf_org, 'recipientId', recipient,
-              'channel', 'line', 'template', 'booking_cancelled', 'eventType', 'booking_cancelled',
-              'payload', jsonb_build_object('bookingId', p_booking_id,
-                                            'reason', coalesce(nullif(reason, ''), code),
-                                            'reasonCode', code,
-                                            'cancelledTripIds', to_jsonb(trip_ids)),
-              'status', 'queued', 'createdAt', now_iso, 'sentAt', null, 'error', null,
-              'source', 'cancel_booking_endpoint'))
-    on conflict (collection, id) do nothing;
-    update app_state s set organization_id = ntf_org
-     where s.collection = 'notifications' and s.id = ntf_id and s.organization_id is null;
-    ntf_ids := ntf_ids || ntf_id;
+    insert into app.notification_provenance (notification_id, source, booking_id, trip_id, template, recipient_user_id)
+    values ('ntf_' || replace(gen_random_uuid()::text, '-', ''), 'cancel_booking_endpoint', p_booking_id, '', 'booking_cancelled', recipient)
+    on conflict (source, booking_id, trip_id, template) do nothing
+    returning notification_id into ntf_id;
+    if ntf_id is not null then
+      insert into app_state (collection, id, booking_id, data)
+      values ('notifications', ntf_id, p_booking_id, jsonb_build_object(
+                'id', ntf_id, 'organizationId', ntf_org, 'recipientId', recipient,
+                'channel', 'line', 'template', 'booking_cancelled', 'eventType', 'booking_cancelled',
+                'payload', jsonb_build_object('bookingId', p_booking_id,
+                                              'reason', coalesce(nullif(reason, ''), code),
+                                              'reasonCode', code,
+                                              'cancelledTripIds', to_jsonb(trip_ids)),
+                'status', 'queued', 'createdAt', now_iso, 'sentAt', null, 'error', null,
+                'source', 'cancel_booking_endpoint'));
+      update app_state s set organization_id = ntf_org
+       where s.collection = 'notifications' and s.id = ntf_id and s.organization_id is null;
+      ntf_ids := ntf_ids || ntf_id;
+    end if;
   end if;
 
   perform set_config('app.state_scope_override', '0', true);
@@ -607,32 +617,44 @@ grant execute on function app.cancel_app_state_booking(text, text, text) to care
 
 
 -- ---------------------------------------------------------------------
--- 6. 通知完整性與收件人讀取
+-- 6. 通知來源證明、完整性與收件人讀取
 --
 -- 通知有兩種來源：
 --   * 後端流程：app.cancel_app_state_booking（security definer）
 --   * 前端 Notification.queue 經 state-mutate（派車、中斷、恢復、交接、完成等）；
---     這條路徑保留，與舊版一樣寫入，可見範圍也與舊版相同（擁有者、行程組織）
--- 收件人讀取只能開放給後端建立的通知，否則任何登入者都能寫一筆 recipientId 是別人
--- 的通知讓對方讀到。
+--     照舊寫入，可見範圍與舊版相同（擁有者、行程組織）
 --
--- 「是不是後端建立」不看資料內容（source、eventType 都由寫入者決定），也不看工作
--- 階段變數（care_ride_app 可以自己 set_config）。判斷的是觸發器執行時的
--- current_user：security definer 函式內是函式擁有者，care_ride_app 直接寫入時是
--- care_ride_app，而 care_ride_app 不是擁有者的成員，無法 SET ROLE。
+-- 收件人讀取只能開放給後端建立的通知。判斷依據不在 app_state 資料列上：data 由寫入
+-- 者決定，0007 也不覆寫 INSERT 的 created_at；工作階段變數 care_ride_app 可以自行
+-- set_config。依據是 app.notification_provenance：
+--   * 只由 security definer 的後端函式寫入；care_ride_app 沒有任何權限，表上啟用 RLS
+--     且沒有政策，只能透過下面兩個函式查詢「是否有證明」
+--   * 記錄通知 ID 與收件人；收件人讀取政策比對的是這裡的收件人，不是 data.recipientId
+--   * create table if not exists：重套 0008 不清空；回復檔也不刪這張表，回復後再套用
+--     既有合法通知恢復可讀
 --
--- 觸發器 app_state_guard_notifications（INSERT／UPDATE／DELETE）：
---   * 後端建立的通知寫入 data.serverCreated = true；其他寫入者送來的
---     serverCreated 一律移除
---   * 非後端寫入者：不能把資料列的 collection 改成或改離 notifications、不能改 id；
---     不能修改、軟刪除或刪除 serverCreated 的通知
---   * 實體 DELETE：0002 以 default privileges 授予 care_ride_app DELETE，但 app_state
---     沒有 DELETE 政策，RLS 下刪除影響 0 列（觸發器也不會觸發）；觸發器的 DELETE 分支是
---     之後若新增 DELETE 政策時的第二道防線
--- 收件人讀取政策只放行 serverCreated、而且在本檔安裝之後建立的通知：安裝之前的
--- 資料列可能自帶 serverCreated（當時沒有觸發器移除），不因這條政策外露。
--- 重複套用本檔會把安裝時間往後移，只會讓更少的通知可讀，不會擴大。
+-- 觸發器 app_state_guard_notifications（INSERT／UPDATE／DELETE）對非後端寫入者
+-- （current_user 不是取消函式擁有者；care_ride_app 無法 SET ROLE 成擁有者）：
+--   * 不能修改、軟刪除或刪除有來源證明的通知
+--   * 不能把資料列的 collection 改成或改離 notifications、不能改通知 id
+-- 實體 DELETE：0002 以 default privileges 授予 care_ride_app DELETE，但 app_state 沒有
+-- DELETE 政策，RLS 下刪除影響 0 列、觸發器不觸發；觸發器的 DELETE 分支是將來若新增
+-- DELETE 政策時的第二道防線。
 -- ---------------------------------------------------------------------
+create table if not exists app.notification_provenance (
+  notification_id   text primary key,
+  source            text not null,
+  booking_id        text not null,
+  trip_id           text not null default '',
+  template          text not null,
+  recipient_user_id text not null,
+  created_at        timestamptz not null default now(),
+  unique (source, booking_id, trip_id, template)
+);
+alter table app.notification_provenance enable row level security;
+revoke all on app.notification_provenance from public;
+revoke all on app.notification_provenance from care_ride_app;
+
 create or replace function app.notification_server_writer() returns name
 language sql stable set search_path = public, pg_temp
 as $$
@@ -641,38 +663,47 @@ as $$
    where p.oid = 'app.cancel_app_state_booking(text, text, text)'::regprocedure
 $$;
 
+create or replace function app.is_server_notification(p_notification_id text) returns boolean
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  select exists (select 1 from app.notification_provenance p where p.notification_id = p_notification_id)
+$$;
+
+create or replace function app.is_my_server_notification(p_notification_id text) returns boolean
+language sql stable security definer set search_path = public, pg_temp
+as $$
+  select exists (select 1 from app.notification_provenance p
+                  where p.notification_id = p_notification_id
+                    and p.recipient_user_id = app.current_user_id())
+$$;
+
+grant execute on function app.notification_server_writer() to care_ride_app;
+grant execute on function app.is_server_notification(text) to care_ride_app;
+grant execute on function app.is_my_server_notification(text) to care_ride_app;
+
 create or replace function app.app_state_guard_notifications() returns trigger
 language plpgsql set search_path = public, pg_temp
 as $$
-declare
-  server_writer boolean := current_user = app.notification_server_writer();
 begin
-  if tg_op = 'DELETE' then
-    if old.collection = 'notifications' and not server_writer then
-      raise exception '通知不能刪除' using errcode = '42501';
-    end if;
-    return old;
+  if current_user = app.notification_server_writer() then
+    if tg_op = 'DELETE' then return old; end if;
+    return new;
   end if;
 
-  if tg_op = 'UPDATE' and not server_writer
-     and (old.collection = 'notifications' or new.collection = 'notifications') then
-    if old.collection is distinct from new.collection or old.id is distinct from new.id then
-      raise exception '通知的集合與 ID 不能修改' using errcode = '42501';
-    end if;
-    if coalesce(old.data->>'serverCreated', '') = 'true' then
+  if tg_op <> 'INSERT' then
+    if old.collection = 'notifications' and app.is_server_notification(old.id) then
       raise exception '系統通知不能由用戶端修改或刪除' using errcode = '42501';
     end if;
   end if;
 
-  if new.collection = 'notifications' then
-    if server_writer then
-      if tg_op = 'INSERT' then
-        new.data := new.data || jsonb_build_object('serverCreated', true);
-      end if;
-    else
-      new.data := new.data - 'serverCreated';
+  if tg_op = 'UPDATE' then
+    if (old.collection = 'notifications' or new.collection = 'notifications')
+       and (old.collection is distinct from new.collection or old.id is distinct from new.id) then
+      raise exception '通知的集合與 ID 不能修改' using errcode = '42501';
     end if;
   end if;
+
+  if tg_op = 'DELETE' then return old; end if;
   return new;
 end $$;
 
@@ -680,20 +711,6 @@ drop trigger if exists app_state_guard_notifications on app_state;
 create trigger app_state_guard_notifications before insert or update or delete on app_state
   for each row execute function app.app_state_guard_notifications();
 
-do $do$
-begin
-  execute format(
-    'create or replace function app.notification_guard_since() returns timestamptz
-       language sql stable set search_path = public, pg_temp as %L',
-    format('select %L::timestamptz', now()));
-end $do$;
-
-grant execute on function app.notification_guard_since() to care_ride_app;
-grant execute on function app.notification_server_writer() to care_ride_app;
-
 drop policy if exists app_state_notification_recipient_read on app_state;
 create policy app_state_notification_recipient_read on app_state for select
-  using (collection = 'notifications'
-         and data->>'serverCreated' = 'true'
-         and created_at >= (select app.notification_guard_since())
-         and data->>'recipientId' = (select app.current_user_id()));
+  using (collection = 'notifications' and app.is_my_server_notification(id));

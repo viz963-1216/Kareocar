@@ -226,7 +226,7 @@ V12.25.79 新增／使用的 Identity API：
    SQL 最前面自己加上 `set lock_timeout = '3s'; begin;`、最後加 `commit;`。
 
 5. **驗證**：第 3 步的 filenode 與筆數不變；`app_state_driver_read`、
-   `app_state_notification_recipient_read` 政策、`app_state_guard_notifications` 觸發器與
+   `app_state_notification_recipient_read` 政策、`app_state_guard_notifications` 觸發器、`app.notification_provenance` 表與
    `app.lock_driver_trip`、`app.apply_driver_trip_execution`、
    `app.cancel_app_state_booking` 存在；線上舊版網站登入與載入正常。
 6. **部署程式**：`index.html`、`netlify.toml`、`netlify/functions/` 同一次部署。
@@ -240,8 +240,8 @@ V12.25.79 新增／使用的 Identity API：
 
 | 來源 | 產生位置 | 寫入 | 收件人讀得到 |
 |---|---|---|---|
-| 需求者取消（trip_cancelled、booking_cancelled） | 後端 `app.cancel_app_state_booking` | 是，觸發器標記 `serverCreated` | 是（0008 收件人讀取政策） |
-| 派車建立、行程完成（含服務證明補齊、異常結案自動完成）、中斷、恢復、終止、交接（三種）、路線重排、資源重派 | 前端 `Notification.queue`，經 state-mutate | 是，與舊版相同；自帶的 `serverCreated` 一律移除 | 否，與舊版相同（只有寫入者本人與行程組織營運方讀得到） |
+| 需求者取消（trip_cancelled、booking_cancelled） | 後端 `app.cancel_app_state_booking` | 是，並寫入來源證明 `app.notification_provenance` | 是（0008 收件人讀取政策比對來源證明上的收件人） |
+| 派車建立、行程完成（含服務證明補齊、異常結案自動完成）、中斷、恢復、終止、交接（三種）、路線重排、資源重派 | 前端 `Notification.queue`，經 state-mutate | 是，與舊版相同；沒有來源證明，自帶任何欄位（`source`、`serverCreated`、`created_at`）都不影響 | 否，與舊版相同（只有寫入者本人與行程組織營運方讀得到） |
 
 - 0008 套用前、「0008＋舊程式」、「0008＋新程式」三個狀態下，用戶端寫入、收件人是
   別人的通知，收件人都讀不到（隔離 CI `migration-0008-deploy` 第 6 段與
@@ -302,4 +302,6 @@ V12.25.79 新增／使用的 Identity API：
   隔離 CI 的 `migration-0008-deploy` 第 5 段以同一組指令演練：0008 的政策與函式
   全部移除、需求池 view 回到 10 欄、`app_state` 不改寫，之後可再次套用 0008。
   已由 0008 寫入的行程事件、異常、通知資料列不會被刪除；舊程式仍可讀寫這些資料列。
-  回復後收件人讀取政策與通知觸發器都已移除，後端通知回到舊版的可見範圍。
+  回復後收件人讀取政策與通知觸發器都已移除，後端通知回到舊版的可見範圍；通知來源證明
+  `app.notification_provenance` 保留，回復後再套用 0008 時既有合法通知恢復可讀（隔離 CI
+  實測重套、回復、再套用三種狀態）。

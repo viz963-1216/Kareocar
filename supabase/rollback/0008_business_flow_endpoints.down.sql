@@ -8,15 +8,17 @@
 --     -f supabase/rollback/0008_business_flow_endpoints.down.sql \
 --     -f supabase/migrations/0007_app_state.sql -c 'commit'
 --
--- 只移除 0008 建立的政策、觸發器與函式；0008 寫入的行程事件、異常、通知資料列保留
--- （後端通知的 data.serverCreated 標記也保留，但回復後已無任何政策依它放行）。
+-- 只移除 0008 建立的政策、觸發器與函式。資料全部保留：0008 寫入的行程事件、異常、
+-- 通知資料列，以及通知來源證明 app.notification_provenance。保留來源證明是為了回復
+-- 後再套用 0008 時，既有合法通知恢復可讀；回復期間沒有任何政策讀取這張表。
 -- 演練：supabase/tests/migration-0008-deploy.test.sh 第 5 段。
 -- =====================================================================
 drop policy if exists app_state_driver_read on app_state;
 drop policy if exists app_state_notification_recipient_read on app_state;
 drop trigger if exists app_state_guard_notifications on app_state;
 drop function if exists app.app_state_guard_notifications();
-drop function if exists app.notification_guard_since();
+drop function if exists app.is_my_server_notification(text);
+drop function if exists app.is_server_notification(text);
 drop function if exists app.notification_server_writer();
 drop function if exists app.apply_driver_trip_execution(text, text, int, text, jsonb, jsonb, jsonb);
 drop function if exists app.lock_driver_trip(text);

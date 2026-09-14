@@ -10,7 +10,10 @@
 #   5. 回復演練：supabase/rollback 的移除 SQL + 重新套用 0007，單一交易；
 #      確認 0008 的政策與函式都不在、需求池 view 回到 0007 形狀、資料表不變，
 #      之後還能再套用 0008
-#   6. 通知中間狀態：0008 套用前與套用後，別人寫給司機的通知（自帶系統標記）司機都讀不到
+#   6. 通知來源證明：安裝前預先寫入 serverCreated、created_at 在未來的通知安裝後仍讀不到；
+#      合法通知在重套、回復、回復後再套用各狀態的可見性；來源證明回復後保留
+#   7. 觸發器本身（隔離情境）：交易內暫時加上 DELETE／UPDATE 政策，驗證觸發器擋下
+#      修改與刪除系統通知，交易結束即回滾
 #
 # 只允許本機隔離端點；測試庫名稱固定，已存在就失敗，不覆寫。
 set -euo pipefail
@@ -118,7 +121,7 @@ psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' \
 check "移除 0008 並重新套用 0007（單一交易）成功" $?
 LEFT2="$(q -c "select (select count(*) from pg_policies where policyname in ('app_state_driver_read','app_state_notification_recipient_read'))
                 + (select count(*) from pg_trigger where tgname = 'app_state_guard_notifications')
-                + (select count(*) from pg_proc where proname in ('lock_driver_trip','apply_driver_trip_execution','my_active_driver_keys','is_my_active_trip_driver','cancel_app_state_booking','app_state_guard_notifications','notification_guard_since','notification_server_writer'))")"
+                + (select count(*) from pg_proc where proname in ('lock_driver_trip','apply_driver_trip_execution','my_active_driver_keys','is_my_active_trip_driver','cancel_app_state_booking','app_state_guard_notifications','notification_server_writer','is_server_notification','is_my_server_notification'))")"
 [ "$LEFT2" = "0" ]; check "回復後沒有 0008 的政策、觸發器或函式（剩 $LEFT2）" $?
 POOLCOLS="$(q -c "select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'app_state_booking_pool'")"
 [ "$POOLCOLS" = "10" ]; check "需求池 view 回到 0007 的 10 欄（實得 $POOLCOLS）" $?
@@ -126,30 +129,61 @@ POOLCOLS="$(q -c "select count(*) from information_schema.columns where table_sc
 psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' -f "$M8" -c 'commit' >/dev/null 2>&1
 check "回復後可以再次套用 0008" $?
 
-echo "--- 6. 通知中間狀態 ---"
-forge_and_count() {
-  # 以 care_ride_app、非收件人的身分寫一則收件人是司機、自帶系統標記的通知，再以司機身分計數
-  local id="$1"
-  psql -X -q -tA -v ON_ERROR_STOP=1 -d "$DB" -c 'set role care_ride_app' \
-    -c "select set_config('app.user_id', 'USR-MIG-OTHER', false)" \
-    -c "insert into app_state (collection, id, data) values ('notifications', '$id', jsonb_build_object('recipientId', 'USR-MIG-DRV', 'serverCreated', true, 'source', 'cancel_booking_endpoint'))" >/dev/null
+echo "--- 6. 通知來源證明 ---"
+driver_sees() {
   psql -X -q -tA -v ON_ERROR_STOP=1 -d "$DB" -c 'set role care_ride_app' \
     -c "select set_config('app.user_id', 'USR-MIG-DRV', false)" \
-    -c "select count(*) from app_state where collection = 'notifications' and id = '$id'" | tail -1
+    -c "select count(*) from app_state where collection = 'notifications' and id = '$1'" | tail -1
 }
-psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' \
-  -f "$ROOT/supabase/rollback/0008_business_flow_endpoints.down.sql" \
-  -f "$ROOT/supabase/migrations/0007_app_state.sql" -c 'commit' >/dev/null 2>&1
-SEEN_BEFORE="$(forge_and_count NTF-MIG-BEFORE)"
-[ "$SEEN_BEFORE" = "0" ]; check "0008 套用前（舊程式狀態）：他人寫給司機的通知司機讀不到（實得 $SEEN_BEFORE）" $?
-psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' -f "$M8" -c 'commit' >/dev/null 2>&1
-check "重新套用 0008" $?
-SEEN_OLD_ROW="$(psql -X -q -tA -v ON_ERROR_STOP=1 -d "$DB" -c 'set role care_ride_app' -c "select set_config('app.user_id', 'USR-MIG-DRV', false)" -c "select count(*) from app_state where collection = 'notifications' and id = 'NTF-MIG-BEFORE'" | tail -1)"
-[ "$SEEN_OLD_ROW" = "0" ]; check "0008 套用後：套用前自帶系統標記的舊通知司機仍讀不到（實得 $SEEN_OLD_ROW）" $?
-SEEN_AFTER="$(forge_and_count NTF-MIG-AFTER)"
-[ "$SEEN_AFTER" = "0" ]; check "0008 套用後（舊程式或新程式寫入）：他人寫給司機的通知司機讀不到（實得 $SEEN_AFTER）" $?
-STRIPPED="$(q -c "select count(*) from app_state where collection = 'notifications' and id = 'NTF-MIG-AFTER' and data ? 'serverCreated'")"
-[ "$STRIPPED" = "0" ]; check "0008 套用後用戶端自帶的 serverCreated 被移除" $?
+client_forge() {
+  # 以 care_ride_app、非收件人身分寫入：收件人是司機、自帶 serverCreated、created_at 在未來
+  psql -X -q -tA -v ON_ERROR_STOP=1 -d "$DB" -c 'set role care_ride_app' \
+    -c "select set_config('app.user_id', 'USR-MIG-OTHER', false)" \
+    -c "insert into app_state (collection, id, data, created_at) values ('notifications', '$1', jsonb_build_object('recipientId', 'USR-MIG-DRV', 'serverCreated', true, 'source', 'cancel_booking_endpoint'), '2099-01-01')" >/dev/null
+}
+apply8() { psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' -f "$M8" -c 'commit' >/dev/null 2>&1; }
+rollback8() {
+  psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' \
+    -f "$ROOT/supabase/rollback/0008_business_flow_endpoints.down.sql" \
+    -f "$ROOT/supabase/migrations/0007_app_state.sql" -c 'commit' >/dev/null 2>&1
+}
+rollback8; check "回到 0008 安裝前" $?
+client_forge NTF-MIG-PRE
+[ "$(driver_sees NTF-MIG-PRE)" = "0" ]; check "安裝前預先偽造的通知：司機讀不到" $?
+apply8; check "套用 0008" $?
+[ "$(driver_sees NTF-MIG-PRE)" = "0" ]; check "安裝後：預先寫入 serverCreated、created_at 在未來的通知司機仍讀不到" $?
+client_forge NTF-MIG-AFTER
+[ "$(driver_sees NTF-MIG-AFTER)" = "0" ]; check "安裝後用戶端偽造的通知：司機讀不到" $?
+# 合法後端通知：以函式擁有者身分寫入來源證明與通知（等同後端函式的寫入方式）
+q -q -c "insert into app.notification_provenance (notification_id, source, booking_id, template, recipient_user_id) values ('NTF-MIG-LEGIT', 'cancel_booking_endpoint', 'BKG-MIG', 'booking_cancelled', 'USR-MIG-DRV')" \
+     -c "insert into app_state (collection, id, data) values ('notifications', 'NTF-MIG-LEGIT', jsonb_build_object('recipientId', 'USR-MIG-DRV'))" >/dev/null
+[ "$(driver_sees NTF-MIG-LEGIT)" = "1" ]; check "合法後端通知：收件司機讀得到" $?
+apply8; check "重套 0008" $?
+[ "$(driver_sees NTF-MIG-LEGIT)" = "1" ]; check "重套 0008 後：合法通知仍讀得到" $?
+rollback8; check "回復 0008" $?
+[ "$(driver_sees NTF-MIG-LEGIT)" = "0" ]; check "回復後：讀取政策移除，收件司機讀不到" $?
+[ "$(q -c "select count(*) from app.notification_provenance where notification_id = 'NTF-MIG-LEGIT'")" = "1" ]; check "回復後：來源證明保留" $?
+apply8; check "回復後再套用 0008" $?
+[ "$(driver_sees NTF-MIG-LEGIT)" = "1" ]; check "再套用後：合法通知恢復可讀" $?
+[ "$(driver_sees NTF-MIG-PRE)$(driver_sees NTF-MIG-AFTER)" = "00" ]; check "再套用後：偽造通知仍讀不到" $?
+[ "$(snapshot | cut -d'|' -f1-3)" = "$(echo "$BEFORE" | cut -d'|' -f1-3)" ]; check "以上過程 app_state 的 filenode、欄位、索引不變" $?
+
+echo "--- 7. 觸發器本身（隔離情境，交易結束即回滾） ---"
+guard_try() {
+  psql -X -q -tA -d "$DB" -c 'begin' \
+    -c "create policy tmp_guard_delete on app_state for delete using (true)" \
+    -c "create policy tmp_guard_update on app_state for update using (true) with check (true)" \
+    -c 'set local role care_ride_app' -c "select set_config('app.user_id', 'USR-MIG-OTHER', true)" \
+    -c "$1" -c 'rollback' 2>&1
+}
+OUT="$(guard_try "delete from app_state where collection = 'notifications' and id = 'NTF-MIG-LEGIT'")"
+echo "$OUT" | grep -q '系統通知不能由用戶端修改或刪除'; check "有 DELETE 政策時，觸發器擋下刪除系統通知" $?
+OUT="$(guard_try "update app_state set data = data || jsonb_build_object('recipientId', 'USR-MIG-OTHER') where collection = 'notifications' and id = 'NTF-MIG-LEGIT'")"
+echo "$OUT" | grep -q '系統通知不能由用戶端修改或刪除'; check "有 UPDATE 政策時，觸發器擋下修改系統通知" $?
+OUT="$(guard_try "update app_state set collection = 'tripEvents' where collection = 'notifications' and id = 'NTF-MIG-AFTER'")"
+echo "$OUT" | grep -q '通知的集合與 ID 不能修改'; check "有 UPDATE 政策時，觸發器擋下把通知改成其他集合" $?
+[ "$(q -c "select count(*) from pg_policies where policyname like 'tmp_guard_%'")" = "0" ]; check "隔離情境的暫時政策已隨交易回滾" $?
+[ "$(q -c "select count(*) from app_state where collection = 'notifications' and id in ('NTF-MIG-LEGIT','NTF-MIG-AFTER')")" = "2" ]; check "隔離情境後通知資料列都還在" $?
 
 dropdb "$DB"
 if [ "$fail" -eq 0 ]; then echo "結果：全部通過"; else echo "結果：有失敗"; fi
