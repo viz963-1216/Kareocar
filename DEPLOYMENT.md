@@ -186,8 +186,8 @@ V12.25.79 新增／使用的 Identity API：
 
 - 不新增或刪除欄位、不建立索引，不會改寫 `app_state`（CI 以
   `pg_relation_filenode`、欄位、索引、筆數前後比對）。
-- 仍會短暫拿 ACCESS EXCLUSIVE：`CREATE POLICY`／`DROP POLICY IF EXISTS` 對
-  `app_state`，`CREATE OR REPLACE VIEW` 對 `app_state_booking_pool`。只改系統目錄，
+- 仍會短暫拿 ACCESS EXCLUSIVE：`CREATE POLICY`／`DROP POLICY IF EXISTS`（司機讀取、
+  通知收件人讀取兩條）對 `app_state`，`CREATE OR REPLACE VIEW` 對 `app_state_booking_pool`。只改系統目錄，
   本身瞬間完成，但會排在任何還開著、碰過 `app_state` 的交易後面；排隊期間後面所有
   讀寫 `app_state` 的請求都會跟著卡住。所以「離峰」不夠，必須設 `lock_timeout`。
   實際持有的鎖以 CI `migration-0008-deploy` 步驟印出的清單為準。
@@ -224,36 +224,43 @@ V12.25.79 新增／使用的 Identity API：
    `care_ride_app` 的 `DATABASE_URL`。若改用 Supabase SQL Editor，要在同一段
    SQL 最前面自己加上 `set lock_timeout = '3s'; begin;`、最後加 `commit;`。
 
-5. **驗證**：第 3 步的 filenode 與筆數不變；`app_state_driver_read` 政策與
+5. **驗證**：第 3 步的 filenode 與筆數不變；`app_state_driver_read`、
+   `app_state_notification_recipient_read` 政策與
    `app.lock_driver_trip`、`app.apply_driver_trip_execution`、
    `app.cancel_app_state_booking` 存在；線上舊版網站登入與載入正常。
 6. **部署程式**：`index.html`、`netlify.toml`、`netlify/functions/` 同一次部署。
-  已確認 main 開啟 Netlify 自動發布；必須先完成正式 migration 與驗證，才可在取得發布授權後合併 PR。
+   main 已開啟 Netlify 自動發布（Codex 已在 Netlify UI 核實）：合併 PR 就等於部署，
+   所以必須先完成正式 migration 與第 5 步驗證，並另行取得發布授權後才可合併。
 7. **部署後驗收**：三個流程各實際操作一次（調度接案、司機完成停靠點與服務證明、
-   需求者取消並看到通知），並確認沒有 5xx。
+   需求者取消），並確認沒有 5xx。取消通知目前沒有畫面列表，要以資料庫確認
+   `notifications` 有司機與需求者各一列、`status = queued`。
 
 ### 部署時的已知行為
 
 - 部署前已在司機裝置離線佇列、由舊版前端產生的行程操作沒有指令快照，新版不會
   補送（舊版送 state-mutate 本來就會被拒）；同一趟行程司機需重新操作。
-- 需求者取消產生的通知只寫入 `notifications`（`status = queued`）。版本庫內未找到
-  讀取這些資料列並對外發送的程式；正式 Supabase 是否有版本庫外的 trigger、webhook
-  或排程會處理 `notifications`，尚未核實。
+- 需求者取消產生的通知只寫入 `notifications`（`status = queued`）。三件事分開看：
+  - **已排入資料列**：隔離 CI 實測（司機 `trip_cancelled`、需求者 `booking_cancelled`；
+    取消失敗、回滾、重試、同時兩次取消都不會多出通知）。
+  - **收件人讀得到**：API（state-load）層級實測：需求者讀得到自己的、被指派司機讀得到
+    自己的、承接組織調度讀得到司機那則；其他司機、其他組織讀不到。需求者因為是
+    資料列擁有者，也讀得到寫給司機的那則。**前端目前沒有通知列表畫面**，所以使用者
+    在畫面上看不到通知內容（版本庫靜態推導）。
+  - **已送出**：版本庫內未找到讀取這些資料列並對外發送的程式；正式 Supabase 是否有
+    版本庫外的 trigger、webhook 或排程會處理 `notifications`，尚未核實。
 
 ### 回復
 
 - **只回復程式**：部署回前一版即可，0008 可以留著（見上方相容性比對）。
-- **移除 0008**：以下 SQL 尚未在隔離環境演練，執行前需先演練。接案函式與需求池
-  view 要重新套用 0007 對應段落還原。
+- **移除 0008**：先回復程式（新前端與新端點依賴 0008），再在單一交易內執行移除
+  SQL 並重新套用 0007（還原接案函式與 10 欄的需求池 view）：
 
-  ```sql
-  set lock_timeout = '3s';
-  begin;
-  drop policy if exists app_state_driver_read on app_state;
-  drop function if exists app.apply_driver_trip_execution(text, text, int, text, jsonb, jsonb, jsonb);
-  drop function if exists app.lock_driver_trip(text);
-  drop function if exists app.cancel_app_state_booking(text, text, text);
-  drop function if exists app.my_active_driver_keys();
-  drop function if exists app.is_my_active_trip_driver(text, text);
-  commit;
+  ```bash
+  psql "$MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "set lock_timeout = '3s'" -c 'begin' \
+    -f supabase/rollback/0008_business_flow_endpoints.down.sql \
+    -f supabase/migrations/0007_app_state.sql -c 'commit'
   ```
+
+  隔離 CI 的 `migration-0008-deploy` 第 5 段以同一組指令演練：0008 的政策與函式
+  全部移除、需求池 view 回到 10 欄、`app_state` 不改寫，之後可再次套用 0008。
+  已由 0008 寫入的行程事件、異常、通知資料列不會被刪除；舊程式仍可讀寫這些資料列。

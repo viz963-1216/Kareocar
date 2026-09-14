@@ -573,6 +573,14 @@ async function scenario3(t) {
       && idsIn(reqLoad2, 'notifications').includes(toRequester.id)
       && idsIn(dspLoad, 'notifications').includes(toDriver.id)
       && !idsIn(dspBLoad, 'notifications').some((x) => x === toDriver.id || x === toRequester.id));
+  const drvA1Load = await loadAs(t.drvA1);
+  const drvA2Load = await loadAs(t.drvA2);
+  record(S, '被指派司機讀得到寫給自己的取消通知、讀不到寫給需求者的通知',
+    Boolean(toDriver) && Boolean(toRequester)
+      && idsIn(drvA1Load, 'notifications').includes(toDriver.id) && !idsIn(drvA1Load, 'notifications').includes(toRequester.id),
+    `driver A1 notifications=${JSON.stringify(idsIn(drvA1Load, 'notifications'))}`);
+  record(S, '同組織其他司機讀不到任何一則取消通知',
+    !idsIn(drvA2Load, 'notifications').some((x) => ntfs.some((n) => n.id === x)));
 
   await expectRejected(S, '重複取消已取消的預約',
     cancelAs(t.req, { bookingId, reasonCode: 'requester_no_longer_needed' }),
@@ -587,6 +595,16 @@ async function scenario3(t) {
   record(S, '取消尚未承接的預約：成功、只通知需求者',
     openCancel.status === 200 && openNtfs.length === 1 && openNtfs[0].data.template === 'booking_cancelled'
       && openCancel.data.cancelledTripIds.length === 0, outcome(openCancel));
+
+  // ---- 同時送出兩次取消（重複點擊、兩個分頁）
+  const cc = 'BKG-FLOW-S3CC';
+  await mutateAs(t.req, [{ collection: 'bookings', id: cc, record: openBooking(cc) }]);
+  const pair = await Promise.all([
+    cancelAs(t.req, { bookingId: cc, reasonCode: 'requester_no_longer_needed' }),
+    cancelAs(t.req, { bookingId: cc, reasonCode: 'requester_no_longer_needed' })]);
+  record(S, '同時送出兩次取消：恰好一次成功、另一次 400',
+    JSON.stringify(pair.map((r) => r.status).sort()) === JSON.stringify([200, 400]), pair.map(outcome).join(' / '));
+  record(S, '同時取消只排入一則通知', (await notificationsFor(cc)).length === 1);
 
   // ---- 交易中途失敗能完整回滾
   // 兩趟行程依 id 排序處理：-1 是 scheduled（會先被改成 cancelled），

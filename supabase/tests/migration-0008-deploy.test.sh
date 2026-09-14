@@ -7,6 +7,9 @@
 #      索引、筆數都不變（沒有整表改寫）
 #   3. 再套用一次仍成功（重試不會壞）
 #   4. 司機讀取政策的執行計畫：司機清單的子查詢只算一次，不是每列都查
+#   5. 回復演練：supabase/rollback 的移除 SQL + 重新套用 0007，單一交易；
+#      確認 0008 的政策與函式都不在、需求池 view 回到 0007 形狀、資料表不變，
+#      之後還能再套用 0008
 #
 # 只允許本機隔離端點；測試庫名稱固定，已存在就失敗，不覆寫。
 set -euo pipefail
@@ -105,6 +108,20 @@ PLAN="$(psql -X -q -tA -v ON_ERROR_STOP=1 -d "$DB" -c 'set role care_ride_app' \
   -c "explain (analyze, costs off, timing off, summary off) select id from app_state where collection = 'trips'")"
 echo "$PLAN" | sed 's/^/    /'
 echo "$PLAN" | grep -Eq 'hashed SubPlan|InitPlan'; check "司機清單子查詢是 hashed SubPlan／InitPlan（每個查詢算一次）" $?
+
+echo "--- 5. 回復演練 ---"
+psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' \
+  -f "$ROOT/supabase/rollback/0008_business_flow_endpoints.down.sql" \
+  -f "$ROOT/supabase/migrations/0007_app_state.sql" -c 'commit' >/dev/null 2>&1
+check "移除 0008 並重新套用 0007（單一交易）成功" $?
+LEFT2="$(q -c "select (select count(*) from pg_policies where policyname in ('app_state_driver_read','app_state_notification_recipient_read'))
+                + (select count(*) from pg_proc where proname in ('lock_driver_trip','apply_driver_trip_execution','my_active_driver_keys','is_my_active_trip_driver','cancel_app_state_booking'))")"
+[ "$LEFT2" = "0" ]; check "回復後沒有 0008 的政策或函式（剩 $LEFT2）" $?
+POOLCOLS="$(q -c "select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'app_state_booking_pool'")"
+[ "$POOLCOLS" = "10" ]; check "需求池 view 回到 0007 的 10 欄（實得 $POOLCOLS）" $?
+[ "$(snapshot)" = "$BEFORE" ]; check "回復後 app_state 的 filenode、欄位、索引、筆數不變" $?
+psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' -f "$M8" -c 'commit' >/dev/null 2>&1
+check "回復後可以再次套用 0008" $?
 
 dropdb "$DB"
 if [ "$fail" -eq 0 ]; then echo "結果：全部通過"; else echo "結果：有失敗"; fi

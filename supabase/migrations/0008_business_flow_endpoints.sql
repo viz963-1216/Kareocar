@@ -16,7 +16,7 @@
 --   * 本檔「不」新增或刪除任何資料表欄位、不建立索引，所以不會改寫 app_state。
 --     早期草稿曾新增 stored generated column，會整張表改寫並長時間持有
 --     ACCESS EXCLUSIVE 鎖，已移除；隔離 CI 以 pg_relation_filenode 驗證不改寫。
---   * 仍會短暫取得的鎖：CREATE POLICY／DROP POLICY IF EXISTS 對 app_state
+--   * 仍會短暫取得的鎖：CREATE POLICY／DROP POLICY IF EXISTS（兩條政策）對 app_state
 --     取 ACCESS EXCLUSIVE；CREATE OR REPLACE VIEW 對 app_state_booking_pool 取
 --     ACCESS EXCLUSIVE。都是只改系統目錄、瞬間完成，但會在鎖佇列裡等前面的長
 --     交易結束，等待期間後面所有讀寫 app_state 的請求都會排隊。部署時必須設
@@ -434,6 +434,19 @@ begin
 end $$;
 
 grant execute on function app.apply_driver_trip_execution(text, text, int, text, jsonb, jsonb, jsonb) to care_ride_app;
+
+
+-- ---------------------------------------------------------------------
+-- 5a. 通知收件人讀取
+--
+-- 取消通知由需求者的交易寫入：資料列擁有者是需求者、組織是行程組織。被指派司機
+-- 兩者都不符合，沒有這條就讀不到寫給自己的通知。只放行 SELECT、只比對收件人，
+-- 其他司機與其他組織仍讀不到。(select ...) 讓目前使用者每個查詢只算一次。
+-- ---------------------------------------------------------------------
+drop policy if exists app_state_notification_recipient_read on app_state;
+create policy app_state_notification_recipient_read on app_state for select
+  using (collection = 'notifications'
+         and data->>'recipientId' = (select app.current_user_id()));
 
 
 -- ---------------------------------------------------------------------

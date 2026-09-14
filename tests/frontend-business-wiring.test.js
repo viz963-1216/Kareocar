@@ -64,6 +64,8 @@ t('Booking.cancelOwn 呼叫 APP_CONFIG.cancelBookingUrl', cancel.includes('APP_C
 t('Booking.cancelOwn 不在本機 store.mutate', cancel.length > 0 && !cancel.includes('store.mutate'));
 t('Booking.cancelOwn 不在本機排通知（通知由後端同一交易排入）', cancel.length > 0 && !cancel.includes('Notification.queue'));
 t('confirmBookingAction 等待非同步取消', html.includes('result=await Booking.cancelOwn('));
+t('福利額度釋放的取消包裝等待非同步取消結果（否則 r.ok 永遠不成立）',
+  html.includes('Booking.cancelOwn=async function(id,userId,reasonCode,reasonText){const r=await _bookingCancelOwn('));
 
 console.log('--- 司機執行 ---');
 const queueChanges = functionBody('function authoritativeQueueChanges_(changes){');

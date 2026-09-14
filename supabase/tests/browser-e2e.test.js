@@ -147,7 +147,7 @@ async function openPage(cdp, baseUrl, label) {
   const { browserContextId } = await cdp.send('Target.createBrowserContext', { disposeOnDetach: true });
   const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank', browserContextId });
   const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
-  const page = { label, targetId, exceptions: [], consoleErrors: [], requests: [], send: (m, p = {}) => cdp.send(m, p, sessionId) };
+  const page = { label, targetId, exceptions: [], consoleErrors: [], requests: [], stateLoads: [], send: (m, p = {}) => cdp.send(m, p, sessionId) };
   cdp.on((msg) => {
     if (msg.sessionId !== sessionId) return;
     if (msg.method === 'Runtime.exceptionThrown') {
@@ -156,6 +156,13 @@ async function openPage(cdp, baseUrl, label) {
     }
     if (msg.method === 'Runtime.consoleAPICalled' && msg.params.type === 'error') {
       page.consoleErrors.push(msg.params.args.map((a) => a.value ?? a.description ?? '').join(' ').slice(0, 300));
+    }
+    if (msg.method === 'Network.loadingFinished' && page.pendingStateLoads && page.pendingStateLoads.has(msg.params.requestId)) {
+      page.pendingStateLoads.delete(msg.params.requestId);
+      page.stateLoads.push(msg.params.requestId);
+    }
+    if (msg.method === 'Network.responseReceived' && new URL(msg.params.response.url).pathname === '/api/v2/state-load') {
+      (page.pendingStateLoads = page.pendingStateLoads || new Set()).add(msg.params.requestId);
     }
     if (msg.method === 'Network.requestWillBeSent' && msg.params.request.url.includes('/api/')) {
       const pathname = new URL(msg.params.request.url).pathname;
@@ -225,6 +232,24 @@ async function login(page, user) {
   await typeInto(page, '#loginPassword', PASSWORD);
   await click(page, '#loginBtn');
   await waitFor(page, `!document.getElementById('appShell').classList.contains('hidden')&&document.body.innerText.includes(${J(user.name)})`, `${user.name} 登入`);
+}
+
+/** 瀏覽器最近一次成功載入的 state-load 回應內容（瀏覽器實際收到的，不是測試另外呼叫）。 */
+async function latestStateLoad(page, afterCount = 0) {
+  await waitFor(page, 'true', '等待回應');
+  const started = Date.now();
+  while (page.stateLoads.length <= afterCount && Date.now() - started < 25000) await sleep(150);
+  if (page.stateLoads.length <= afterCount) throw new Error('瀏覽器沒有完成新的 state-load');
+  const { body } = await page.send('Network.getResponseBody', { requestId: page.stateLoads[page.stateLoads.length - 1] });
+  return JSON.parse(body).data;
+}
+
+/** 重新整理頁面：以伺服器 session 恢復登入，不重新輸入帳密。 */
+async function reloadAs(page, user) {
+  const before = page.stateLoads.length;
+  await page.send('Page.reload', { ignoreCache: true });
+  await waitFor(page, `!document.getElementById('appShell').classList.contains('hidden')&&document.body.innerText.includes(${J(user.name)})`, `${user.name} 重新整理後恢復登入`);
+  return before;
 }
 
 async function goView(page, view) {
@@ -320,6 +345,29 @@ async function flowClaim(cdp, baseUrl, tokens) {
     record(S, '接案走 claim-booking 端點，沒有用 state-mutate 寫這筆預約',
       page.requests.filter((r) => r.path === '/api/v2/claim-booking').length === 1
         && !page.requests.some((r) => r.path === '/api/v2/state-mutate' && r.postData.includes(id)));
+
+    const dspBefore = await reloadAs(page, U.dsp);
+    const dspData = await latestStateLoad(page, dspBefore);
+    const dspBooking = (dspData.collections.bookings || []).find((b) => b.id === id);
+    await goView(page, 'demand-market');
+    record(S, '調度員重新整理後：取得完整預約（claimed、組織 A），需求池與畫面都不再列出',
+      Boolean(dspBooking) && dspBooking.state === 'claimed' && dspBooking.organizationId === ORG
+        && !(dspData.pool || []).some((r) => r.id === id)
+        && !(await evaluate(page, `!!document.querySelector('.demand-claim-btn[data-booking=${J(id)}]')`)));
+
+    const reqPage = await openPage(cdp, baseUrl, 'requester-after-claim');
+    try {
+      await login(reqPage, U.req);
+      const reqData = await latestStateLoad(reqPage, 0);
+      const reqBooking = (reqData.collections.bookings || []).find((b) => b.id === id);
+      const dbRow = await row('bookings', id);
+      record(S, '需求者載入後看到的預約狀態與組織，與調度端、資料庫一致',
+        Boolean(reqBooking) && reqBooking.state === dbRow.data.state && reqBooking.organizationId === dbRow.organization_id
+          && reqBooking.state === dspBooking.state && reqBooking.organizationId === dspBooking.organizationId,
+        reqBooking ? `state=${reqBooking.state} organizationId=${reqBooking.organizationId}` : '需求者載入結果沒有此預約');
+    } finally {
+      await finishPage(reqPage, S);
+    }
   } catch (e) {
     record(S, `流程中斷：${e.message}`, false);
     await screenshot(page, 'A-claim');
@@ -363,7 +411,7 @@ async function flowDriver(cdp, baseUrl, tokens) {
     await waitFor(page, stepButton('pickup'), '接送按鈕再次出現');
     await click(page, '#completeStepBtn');
     await waitFor(page, stepButton('dropoff'), '離線再次完成接送（本機）');
-    const pending = await waitForDb(async () => { const rows = (await deviceRows(page, 'offlineQueue')).filter(x=>x.payload?.command).map(x=>x.payload.command); return rows.length===3 ? rows : null; }, '離線佇列持久化');
+    const pending = await waitForDb(async () => { const rows = (await deviceRows(page, 'offlineQueue')).filter((x) => x.payload?.command && !['synced', 'rejected'].includes(x.status)).map((x) => x.payload.command); return rows.length === 3 ? rows : null; }, '離線佇列持久化（未同步的指令）');
     const stillR1 = await row('trips', tripId);
     record(S, '離線期間三個操作都留在裝置佇列、資料庫仍停在出發後的 revision',
       JSON.stringify(pending) === J(['complete_step', 'undo_step', 'complete_step']) && stillR1.revision === rev(1), `佇列=${J(pending)}`);
@@ -373,7 +421,7 @@ async function flowDriver(cdp, baseUrl, tokens) {
     record(S, '恢復連線後依序同步：revision +3、接送站完成、乘客在車上',
       r4.data.steps[1].status === 'completed' && r4.data.passengers[0].status === 'onboard'
         && JSON.stringify((r4.data.mutationReceipts || []).map((x) => x.action)) === J(['complete_step', 'complete_step', 'undo_step', 'complete_step']));
-    await waitForDb(async () => !(await deviceRows(page, 'offlineQueue')).some(x=>x.payload?.command), '裝置佇列清空');
+    await waitForDb(async () => !(await deviceRows(page, 'offlineQueue')).some((x) => x.payload?.command && !['synced', 'rejected'].includes(x.status)), '裝置佇列清空');
     record(S, '同步完成後裝置佇列沒有待送的行程指令', true);
 
     // ---- 回報異常
@@ -407,6 +455,20 @@ async function flowDriver(cdp, baseUrl, tokens) {
     record(S, '伺服器只收到照片描述資料，沒有照片內容', !JSON.stringify(done.data).includes('data:image'));
     const local = await evaluate(page, `new Promise((resolve,reject)=>{const req=indexedDB.open('careRideTripP2');req.onsuccess=()=>{const db=req.result;const tx=db.transaction('proofBlobs','readonly');const get=tx.objectStore('proofBlobs').get(${J(proof.photo && proof.photo.objectKey)});get.onsuccess=()=>resolve(!!get.result&&get.result.blob instanceof Blob&&get.result.blob.size>0);get.onerror=()=>reject(Error('photo read failed'));tx.oncomplete=()=>db.close();};req.onerror=()=>reject(Error('photo open failed'));})`);
     record(S, '照片本體保存在裝置 IndexedDB', local === true);
+
+    // ---- 重新整理：行程以伺服器為準、同裝置照片仍可讀
+    const drvBefore = await reloadAs(page, U.drv);
+    const drvData = await latestStateLoad(page, drvBefore);
+    const reloadedTrip = (drvData.collections.trips || []).find((t) => t.id === tripId);
+    const dbAfter = await row('trips', tripId);
+    record(S, '重新整理後司機載入的行程與資料庫一致（已完成、revision、服務證明）',
+      Boolean(reloadedTrip) && reloadedTrip.status === 'completed' && reloadedTrip.revision === dbAfter.revision
+        && (reloadedTrip.serviceProofs || []).length === 1 && reloadedTrip.serviceProofs[0].photo.objectKey === proof.photo.objectKey,
+      reloadedTrip ? `status=${reloadedTrip.status} revision=${reloadedTrip.revision}` : '司機載入結果沒有此行程');
+    const localAfterReload = await evaluate(page, `new Promise((resolve,reject)=>{const req=indexedDB.open('careRideTripP2');req.onsuccess=()=>{const db=req.result;const tx=db.transaction('proofBlobs','readonly');const get=tx.objectStore('proofBlobs').get(${J(proof.photo && proof.photo.objectKey)});get.onsuccess=()=>resolve(!!get.result&&get.result.blob instanceof Blob&&get.result.blob.size>0);get.onerror=()=>reject(Error('photo read failed'));tx.oncomplete=()=>db.close();};req.onerror=()=>reject(Error('photo open failed'));})`);
+    const pendingAfterReload = (await deviceRows(page, 'offlineQueue')).filter((x) => x.payload?.command && !['synced', 'rejected'].includes(x.status));
+    record(S, '重新整理後同裝置照片仍可讀、沒有殘留待送指令', localAfterReload === true && pendingAfterReload.length === 0,
+      `photo=${localAfterReload} pending=${pendingAfterReload.length}`);
 
     const stateMutateTrips = page.requests.filter((r) => r.path === '/api/v2/state-mutate'
       && /"collection":"(trips|tripEvents|issues)"/.test(r.postData));
@@ -460,13 +522,15 @@ async function flowCancel(cdp, baseUrl, tokens) {
     await waitFor(page, `!document.querySelector('.requester-cancel-booking-btn[data-booking=${J(ok.id)}]')&&document.body.innerText.includes('已取消')`, '畫面載入取消結果');
     record(S, '需求者畫面顯示已取消且不能重複取消', true);
 
+    const badBefore = J([await row('bookings', bad.id), await row('trips', bad.trip)]);
     await cancelVia(bad.id);
-    await waitFor(page, "(document.getElementById('toast')?.textContent||'').includes('無法')", '取消失敗提示');
-    await sleep(800);
-    const badBooking = await row('bookings', bad.id);
-    record(S, '行程已開始時取消失敗：畫面提示、預約未取消、沒有任何通知',
-      badBooking.data.state === 'scheduled' && (await notifications(bad.id)).length === 0,
-      `toast=${await evaluate(page, "document.getElementById('toast')?.textContent||''")}`);
+    await waitFor(page, "(document.getElementById('toast')?.textContent||'').includes('行程已開始或已結束')", '取消失敗提示（明確原因）');
+    const badAfter = J([await row('bookings', bad.id), await row('trips', bad.trip)]);
+    const toast = await evaluate(page, "document.getElementById('toast')?.textContent||''");
+    record(S, '行程已開始時取消失敗：畫面顯示明確原因、預約與行程資料列完全不變、沒有任何通知',
+      badAfter === badBefore && (await notifications(bad.id)).length === 0
+        && (await evaluate(page, "document.getElementById('bookingActionModal').classList.contains('open')")),
+      `toast=${toast}`);
     record(S, '取消走 cancel-booking 端點，沒有用 state-mutate 寫預約或行程',
       page.requests.filter((r) => r.path === '/api/v2/cancel-booking').length === 2
         && !page.requests.some((r) => r.path === '/api/v2/state-mutate' && (r.postData.includes(ok.id) || r.postData.includes(bad.id))));
