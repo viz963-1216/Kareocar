@@ -145,8 +145,8 @@ jobs:
           sudo apt-get install -y postgresql-client
           npm install --ignore-scripts --no-audit --no-fund
 
-      - name: 取得 main 作為舊程式
-        run: git fetch --no-tags --depth=1 origin main:refs/remotes/origin/main
+      - name: 取得 0008 前的固定發布版本作為舊程式
+        run: git fetch --no-tags --depth=1 origin 6539c75b4c4131bb2eef1304db0c21100fd888b8
 
       - name: 舊程式 × 新資料庫
         run: bash supabase/tests/run-compat-old-code.sh

@@ -15,7 +15,7 @@ esac
 export PGUSER=postgres
 : "${PGPORT:?Specify isolated Postgres port}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-OLD_REF="${COMPAT_OLD_REF:-origin/main}"
+OLD_REF="${COMPAT_OLD_REF:-6539c75b4c4131bb2eef1304db0c21100fd888b8}"
 WORK="$(mktemp -d /tmp/care-ride-compat-XXXXXX)"
 cleanup() { git -C "$ROOT" worktree remove --force "$WORK/old" >/dev/null 2>&1 || true; rm -rf "$WORK"; }
 trap cleanup EXIT

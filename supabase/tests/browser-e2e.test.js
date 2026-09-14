@@ -186,12 +186,22 @@ async function screenshot(page, name) {
   } catch (_) { /* 截圖失敗不影響結果 */ }
 }
 
-/** 真的滑鼠點擊：捲到元素、取中心座標、送 mousePressed／mouseReleased。 */
+/**
+ * 真的滑鼠點擊：捲到元素、等位置穩定、確認座標上最上層就是它，再送滑鼠事件。
+ *
+ * index.html 對 html 設了 scroll-behavior:smooth，scrollIntoView 會以動畫捲動；
+ * 動畫途中讀到的座標不是最後位置。所以連續兩個畫格位置不變才取座標。
+ * 穩定後仍被蓋住就失敗並回報是哪個元素，不改用 DOM click 繞過。
+ */
 async function click(page, selector) {
-  const box = await evaluate(page, `(()=>{const el=document.querySelector(${J(selector)});if(!el)throw new Error('找不到 '+${J(selector)});if(el.disabled)throw new Error(${J(selector)}+' 是停用狀態');el.scrollIntoView({block:'center',inline:'center'});const r=el.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2,w:r.width,h:r.height};})()`);
+  const box = await evaluate(page, `(async()=>{const sel=${J(selector)};const el=document.querySelector(sel);if(!el)throw new Error('找不到 '+sel);if(el.disabled)throw new Error(sel+' 是停用狀態');el.scrollIntoView({block:'center',inline:'center'});const frame=()=>new Promise(r=>requestAnimationFrame(()=>r()));let last=null,stable=0;for(let i=0;i<120&&stable<2;i++){await frame();const r=el.getBoundingClientRect();const k=[r.left,r.top,r.width,r.height].map(v=>Math.round(v)).join(',');stable=k===last?stable+1:0;last=k;}const r=el.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2,w:r.width,h:r.height,stable:stable>=2,scrollY:Math.round(scrollY)};})()`);
   if (!box.w || !box.h) throw new Error(`${selector} 沒有可點擊的大小（可能被隱藏）`);
-  const top = await evaluate(page, `(()=>{const el=document.elementFromPoint(${box.x},${box.y});const t=document.querySelector(${J(selector)});return !!el&&(el===t||t.contains(el));})()`);
-  if (!top) throw new Error(`${selector} 被其他元素遮住`);
+  if (!box.stable) throw new Error(`${selector} 捲動後位置持續變動，無法穩定點擊`);
+  const hit = await evaluate(page, `(()=>{const el=document.elementFromPoint(${box.x},${box.y});const t=document.querySelector(${J(selector)});const d=n=>n?(n.tagName.toLowerCase()+(n.id?'#'+n.id:'')+(typeof n.className==='string'&&n.className.trim()?'.'+n.className.trim().split(/\\s+/).join('.'):'')):'（座標在視窗外）';return {ok:!!el&&(el===t||t.contains(el)),by:d(el),parent:el&&el.parentElement?d(el.parentElement):''};})()`);
+  if (!hit.ok) {
+    await screenshot(page, `${page.label}-blocked-${selector.replace(/[^a-z0-9]+/gi, '_')}`);
+    throw new Error(`${selector} 被其他元素遮住：${hit.by}（父元素 ${hit.parent}；座標 ${Math.round(box.x)},${Math.round(box.y)}；scrollY=${box.scrollY}）`);
+  }
   for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) {
     await page.send('Input.dispatchMouseEvent', { type, x: box.x, y: box.y, button: 'left', clickCount: type === 'mouseMoved' ? 0 : 1 });
   }
@@ -277,6 +287,11 @@ async function seed() {
 }
 
 async function finishPage(page, S) {
+  await screenshot(page, page.label);
+  fs.writeFileSync(path.join(ARTIFACT_DIR, `${page.label}-errors.json`), J({
+    exceptions: page.exceptions, consoleErrors: page.consoleErrors,
+    requests: page.requests.map(({ path }) => ({ path }))
+  }));
   record(S, '頁面沒有未處理的 JavaScript 例外', page.exceptions.length === 0, page.exceptions.slice(0, 3).join(' | '));
   if (page.consoleErrors.length) console.log(`    （資訊）console.error ${page.consoleErrors.length} 則：${page.consoleErrors.slice(0, 3).join(' | ')}`);
 }
@@ -325,11 +340,13 @@ async function flowDriver(cdp, baseUrl, tokens) {
   try {
     await login(page, U.drv);
     await waitFor(page, stepButton('depart'), '「開始出發」按鈕');
+    const base = (await row('trips', tripId)).revision;
+    const rev = (n) => base + n;
 
     // ---- 出發（連線中）
     await click(page, '#completeStepBtn');
-    const r1 = await waitForDb(async () => { const r = await row('trips', tripId); return r && r.revision === 1 ? r : null; }, '出發寫入');
-    record(S, '按「開始出發」：資料庫 revision 1、出發站完成、行程進行中',
+    const r1 = await waitForDb(async () => { const r = await row('trips', tripId); return r && r.revision === rev(1) ? r : null; }, '出發寫入');
+    record(S, '按「開始出發」：資料庫 revision +1、出發站完成、行程進行中',
       r1.data.steps[0].status === 'completed' && r1.data.status === 'in_progress'
         && (r1.data.mutationReceipts || []).some((x) => x.source === 'trip_execute_endpoint'));
 
@@ -345,12 +362,12 @@ async function flowDriver(cdp, baseUrl, tokens) {
     await waitFor(page, stepButton('dropoff'), '離線再次完成接送（本機）');
     const pending = await waitForDb(async () => { const rows = (await deviceRows(page, 'offlineQueue')).filter(x=>x.payload?.command).map(x=>x.payload.command); return rows.length===3 ? rows : null; }, '離線佇列持久化');
     const stillR1 = await row('trips', tripId);
-    record(S, '離線期間三個操作都留在裝置佇列、資料庫仍是 revision 1',
-      JSON.stringify(pending) === J(['complete_step', 'undo_step', 'complete_step']) && stillR1.revision === 1, `佇列=${J(pending)}`);
+    record(S, '離線期間三個操作都留在裝置佇列、資料庫仍停在出發後的 revision',
+      JSON.stringify(pending) === J(['complete_step', 'undo_step', 'complete_step']) && stillR1.revision === rev(1), `佇列=${J(pending)}`);
 
     await setOffline(page, false);
-    const r4 = await waitForDb(async () => { const r = await row('trips', tripId); return r && r.revision === 4 ? r : null; }, '恢復連線後同步');
-    record(S, '恢復連線後依序同步：revision 4、接送站完成、乘客在車上',
+    const r4 = await waitForDb(async () => { const r = await row('trips', tripId); return r && r.revision === rev(4) ? r : null; }, '恢復連線後同步');
+    record(S, '恢復連線後依序同步：revision +3、接送站完成、乘客在車上',
       r4.data.steps[1].status === 'completed' && r4.data.passengers[0].status === 'onboard'
         && JSON.stringify((r4.data.mutationReceipts || []).map((x) => x.action)) === J(['complete_step', 'complete_step', 'undo_step', 'complete_step']));
     await waitForDb(async () => !(await deviceRows(page, 'offlineQueue')).some(x=>x.payload?.command), '裝置佇列清空');
@@ -369,7 +386,7 @@ async function flowDriver(cdp, baseUrl, tokens) {
     // ---- 送達、補服務證明（含照片）
     await waitFor(page, stepButton('dropoff'), '「確認已安全送達」按鈕');
     await click(page, '#completeStepBtn');
-    const r5 = await waitForDb(async () => { const r = await row('trips', tripId); return r && r.revision === 5 ? r : null; }, '送達寫入');
+    const r5 = await waitForDb(async () => { const r = await row('trips', tripId); return r && r.revision === rev(5) ? r : null; }, '送達寫入');
     record(S, '按「確認已安全送達」：缺服務證明，行程仍進行中', r5.data.status === 'in_progress' && Boolean(r5.data.completionPending));
 
     await waitFor(page, `!!document.querySelector('.proof-service-btn[data-trip=${J(tripId)}]')`, '「補服務證明」按鈕');

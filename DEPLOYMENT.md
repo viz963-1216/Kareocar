@@ -166,3 +166,94 @@ V12.25.79 新增／使用的 Identity API：
 - 上線最後仍需在真正 Netlify domain → Netlify Function → Apps Script `/exec` → 正式 Google Sheet → 真 SMS provider 跑一次 production E2E。
 
 本封版包的本地自動化驗證不等同於已部署 production E2E。
+
+## 7. migration 0008（接案、司機執行、需求者取消）部署順序
+
+0008 尚未部署到任何環境。正式資料庫執行 SQL 與部署都需另行取得同意（見
+[CLAUDE.md](CLAUDE.md) 授權邊界）；以下是取得同意後的操作順序。
+
+### 為什麼一定是「先 migration、後程式」
+
+- 新程式的三個端點（claim-booking、trip-execute、cancel-booking）呼叫 0008 建立
+  或更新的函式，函式不存在時會回 5xx；新版司機畫面的同步也改走 trip-execute。
+  先部署程式會讓這三個流程在 migration 套用前全部失敗。
+- 反過來「舊程式 + 已套用 0008 的資料庫」這段期間，隔離 CI 的
+  `compat-old-code` job 用固定發布版本 `6539c75` 的 handler 分別對 0001–0007 與 0001–0008 兩個庫
+  跑同一組操作並比對，main 自己的隔離測試也在含 0008 的 schema 上重跑。刻意的
+  行為差異只有一項：被指派司機讀得到自己的行程（舊庫讀不到）。
+
+### 0008 會拿哪些鎖、會不會改寫資料表
+
+- 不新增或刪除欄位、不建立索引，不會改寫 `app_state`（CI 以
+  `pg_relation_filenode`、欄位、索引、筆數前後比對）。
+- 仍會短暫拿 ACCESS EXCLUSIVE：`CREATE POLICY`／`DROP POLICY IF EXISTS` 對
+  `app_state`，`CREATE OR REPLACE VIEW` 對 `app_state_booking_pool`。只改系統目錄，
+  本身瞬間完成，但會排在任何還開著、碰過 `app_state` 的交易後面；排隊期間後面所有
+  讀寫 `app_state` 的請求都會跟著卡住。所以「離峰」不夠，必須設 `lock_timeout`。
+  實際持有的鎖以 CI `migration-0008-deploy` 步驟印出的清單為準。
+
+### 步驟
+
+1. **確認目標庫**：Production 與 Deploy preview／Branch deploy 的 `DATABASE_URL`
+   是否同一個庫尚未核實。未核實前不在預覽環境做寫入驗收。
+2. **套用前檢查長交易**（有結果就先等它結束或查明原因，不要直接套用）：
+
+   ```sql
+   select pid, now() - xact_start as age, state, left(query, 80)
+     from pg_stat_activity
+    where xact_start < now() - interval '30 seconds' and pid <> pg_backend_pid();
+   ```
+
+3. **記錄套用前狀態**（之後比對用）：
+
+   ```sql
+   select pg_relation_filenode('app_state'), count(*) from app_state;
+   select policyname from pg_policies where tablename = 'app_state' order by 1;
+   ```
+
+4. **單一交易 + lock_timeout 套用**。取不到鎖會在逾時後失敗，整份回滾、什麼都
+   不留下，等長交易結束後可以直接重試（0008 可重複套用，CI 已實測兩者）：
+
+   ```bash
+   psql "$MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+     -c "set lock_timeout = '3s'" -c "set statement_timeout = '60s'" \
+     -c 'begin' -f supabase/migrations/0008_business_flow_endpoints.sql -c 'commit'
+   ```
+
+   `MIGRATION_DATABASE_URL` 是有權建立函式與政策的管理連線，不是 Netlify 上
+   `care_ride_app` 的 `DATABASE_URL`。若改用 Supabase SQL Editor，要在同一段
+   SQL 最前面自己加上 `set lock_timeout = '3s'; begin;`、最後加 `commit;`。
+
+5. **驗證**：第 3 步的 filenode 與筆數不變；`app_state_driver_read` 政策與
+   `app.lock_driver_trip`、`app.apply_driver_trip_execution`、
+   `app.cancel_app_state_booking` 存在；線上舊版網站登入與載入正常。
+6. **部署程式**：`index.html`、`netlify.toml`、`netlify/functions/` 同一次部署。
+  已確認 main 開啟 Netlify 自動發布；必須先完成正式 migration 與驗證，才可在取得發布授權後合併 PR。
+7. **部署後驗收**：三個流程各實際操作一次（調度接案、司機完成停靠點與服務證明、
+   需求者取消並看到通知），並確認沒有 5xx。
+
+### 部署時的已知行為
+
+- 部署前已在司機裝置離線佇列、由舊版前端產生的行程操作沒有指令快照，新版不會
+  補送（舊版送 state-mutate 本來就會被拒）；同一趟行程司機需重新操作。
+- 需求者取消產生的通知只寫入 `notifications`（`status = queued`）。版本庫內未找到
+  讀取這些資料列並對外發送的程式；正式 Supabase 是否有版本庫外的 trigger、webhook
+  或排程會處理 `notifications`，尚未核實。
+
+### 回復
+
+- **只回復程式**：部署回前一版即可，0008 可以留著（見上方相容性比對）。
+- **移除 0008**：以下 SQL 尚未在隔離環境演練，執行前需先演練。接案函式與需求池
+  view 要重新套用 0007 對應段落還原。
+
+  ```sql
+  set lock_timeout = '3s';
+  begin;
+  drop policy if exists app_state_driver_read on app_state;
+  drop function if exists app.apply_driver_trip_execution(text, text, int, text, jsonb, jsonb, jsonb);
+  drop function if exists app.lock_driver_trip(text);
+  drop function if exists app.cancel_app_state_booking(text, text, text);
+  drop function if exists app.my_active_driver_keys();
+  drop function if exists app.is_my_active_trip_driver(text, text);
+  commit;
+  ```
