@@ -183,8 +183,12 @@ expect "再套用後：偽造通知仍讀不到" "$(driver_sees NTF-MIG-PRE)$(dr
 expect "以上過程 app_state 的 filenode、欄位、索引不變" "$(snapshot | cut -d'|' -f1-3)" "$(echo "$BEFORE" | cut -d'|' -f1-3)"
 
 echo "--- 7. 觸發器本身（隔離情境，交易結束即回滾） ---"
+# 暫時的 SELECT／UPDATE／DELETE 政策讓非收件人、非擁有者也看得到並能改到系統通知，
+# 這樣才會真的走到觸發器；少了 SELECT 政策，DELETE／UPDATE 會因 RLS 影響 0 列而
+# 根本不觸發觸發器（run 34798878217 即是如此）。
 guard_try() {
   psql -X -q -tA -d "$DB" -c 'begin' \
+    -c "create policy tmp_guard_select on app_state for select using (true)" \
     -c "create policy tmp_guard_delete on app_state for delete using (true)" \
     -c "create policy tmp_guard_update on app_state for update using (true) with check (true)" \
     -c 'set local role care_ride_app' -c "select set_config('app.user_id', 'USR-MIG-OTHER', true)" \
