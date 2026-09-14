@@ -71,7 +71,7 @@ sleep 1
 set +e
 TIMEOUT_OUT="$(psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '2s'" -c 'begin' -f "$M8" -c 'commit' 2>&1)"
 TIMEOUT_RC=$?
-set -e
+# 之後各段以 check／expect 自行判斷：單一斷言失敗不中止腳本，並印出實際值
 wait "$BLOCKER"
 echo "$TIMEOUT_OUT" | grep -E 'ERROR' | sed 's/^/    /'
 [ "$TIMEOUT_RC" -ne 0 ] && echo "$TIMEOUT_OUT" | grep -q 'lock timeout'; check "取不到鎖時在 lock_timeout 內失敗，而不是無限等待" $?
@@ -130,43 +130,57 @@ psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' -
 check "回復後可以再次套用 0008" $?
 
 echo "--- 6. 通知來源證明 ---"
+# 每項斷言都印出實際值；失敗不中止腳本
+expect() { if [ "$2" = "$3" ]; then check "$1" 0; else check "$1（實得 '$2'，預期 '$3'）" 1; fi; }
 driver_sees() {
   psql -X -q -tA -v ON_ERROR_STOP=1 -d "$DB" -c 'set role care_ride_app' \
     -c "select set_config('app.user_id', 'USR-MIG-DRV', false)" \
-    -c "select count(*) from app_state where collection = 'notifications' and id = '$1'" | tail -1
+    -c "select count(*) from app_state where collection = 'notifications' and id = '$1'" 2>&1 | tail -1
+}
+driver_diag() {
+  echo "    [診斷] 政策：$(q -c "select string_agg(policyname, ',' order by policyname) from pg_policies where tablename = 'app_state'")"
+  echo "    [診斷] 來源證明：$(q -c "select notification_id || '→' || recipient_user_id from app.notification_provenance where notification_id = '$1'")"
+  echo "    [診斷] 資料列：$(q -c "select collection || '/' || id || ' deleted=' || deleted || ' org=' || coalesce(organization_id, 'null') || ' owner=' || coalesce(owner_user_id, 'null') from app_state where collection = 'notifications' and id = '$1'")"
+  echo "    [診斷] 以司機身分：$(psql -X -q -tA -d "$DB" -c 'set role care_ride_app' \
+    -c "select set_config('app.user_id', 'USR-MIG-DRV', false)" \
+    -c "select 'current_user_id=' || coalesce(app.current_user_id(), 'null') || ' is_my_server_notification=' || app.is_my_server_notification('$1')" 2>&1 | tail -1)"
 }
 client_forge() {
   # 以 care_ride_app、非收件人身分寫入：收件人是司機、自帶 serverCreated、created_at 在未來
   psql -X -q -tA -v ON_ERROR_STOP=1 -d "$DB" -c 'set role care_ride_app' \
     -c "select set_config('app.user_id', 'USR-MIG-OTHER', false)" \
-    -c "insert into app_state (collection, id, data, created_at) values ('notifications', '$1', jsonb_build_object('recipientId', 'USR-MIG-DRV', 'serverCreated', true, 'source', 'cancel_booking_endpoint'), '2099-01-01')" >/dev/null
+    -c "insert into app_state (collection, id, data, created_at) values ('notifications', '$1', jsonb_build_object('recipientId', 'USR-MIG-DRV', 'serverCreated', true, 'source', 'cancel_booking_endpoint'), '2099-01-01')" >/dev/null 2>&1
+  echo $?
 }
-apply8() { psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' -f "$M8" -c 'commit' >/dev/null 2>&1; }
+apply8() { psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' -f "$M8" -c 'commit' >/dev/null 2>&1; echo $?; }
 rollback8() {
   psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' \
     -f "$ROOT/supabase/rollback/0008_business_flow_endpoints.down.sql" \
     -f "$ROOT/supabase/migrations/0007_app_state.sql" -c 'commit' >/dev/null 2>&1
+  echo $?
 }
-rollback8; check "回到 0008 安裝前" $?
-client_forge NTF-MIG-PRE
-[ "$(driver_sees NTF-MIG-PRE)" = "0" ]; check "安裝前預先偽造的通知：司機讀不到" $?
-apply8; check "套用 0008" $?
-[ "$(driver_sees NTF-MIG-PRE)" = "0" ]; check "安裝後：預先寫入 serverCreated、created_at 在未來的通知司機仍讀不到" $?
-client_forge NTF-MIG-AFTER
-[ "$(driver_sees NTF-MIG-AFTER)" = "0" ]; check "安裝後用戶端偽造的通知：司機讀不到" $?
+expect "回到 0008 安裝前" "$(rollback8)" 0
+expect "安裝前以用戶端身分寫入偽造通知" "$(client_forge NTF-MIG-PRE)" 0
+expect "安裝前預先偽造的通知：司機讀不到" "$(driver_sees NTF-MIG-PRE)" 0
+expect "套用 0008" "$(apply8)" 0
+expect "安裝後：預先寫入 serverCreated、created_at 在未來的通知司機仍讀不到" "$(driver_sees NTF-MIG-PRE)" 0
+expect "安裝後以用戶端身分寫入偽造通知" "$(client_forge NTF-MIG-AFTER)" 0
+expect "安裝後用戶端偽造的通知：司機讀不到" "$(driver_sees NTF-MIG-AFTER)" 0
 # 合法後端通知：以函式擁有者身分寫入來源證明與通知（等同後端函式的寫入方式）
 q -q -c "insert into app.notification_provenance (notification_id, source, booking_id, template, recipient_user_id) values ('NTF-MIG-LEGIT', 'cancel_booking_endpoint', 'BKG-MIG', 'booking_cancelled', 'USR-MIG-DRV')" \
      -c "insert into app_state (collection, id, data) values ('notifications', 'NTF-MIG-LEGIT', jsonb_build_object('recipientId', 'USR-MIG-DRV'))" >/dev/null
-[ "$(driver_sees NTF-MIG-LEGIT)" = "1" ]; check "合法後端通知：收件司機讀得到" $?
-apply8; check "重套 0008" $?
-[ "$(driver_sees NTF-MIG-LEGIT)" = "1" ]; check "重套 0008 後：合法通知仍讀得到" $?
-rollback8; check "回復 0008" $?
-[ "$(driver_sees NTF-MIG-LEGIT)" = "0" ]; check "回復後：讀取政策移除，收件司機讀不到" $?
-[ "$(q -c "select count(*) from app.notification_provenance where notification_id = 'NTF-MIG-LEGIT'")" = "1" ]; check "回復後：來源證明保留" $?
-apply8; check "回復後再套用 0008" $?
-[ "$(driver_sees NTF-MIG-LEGIT)" = "1" ]; check "再套用後：合法通知恢復可讀" $?
-[ "$(driver_sees NTF-MIG-PRE)$(driver_sees NTF-MIG-AFTER)" = "00" ]; check "再套用後：偽造通知仍讀不到" $?
-[ "$(snapshot | cut -d'|' -f1-3)" = "$(echo "$BEFORE" | cut -d'|' -f1-3)" ]; check "以上過程 app_state 的 filenode、欄位、索引不變" $?
+expect "合法後端通知：收件司機讀得到" "$(driver_sees NTF-MIG-LEGIT)" 1
+expect "重套 0008" "$(apply8)" 0
+expect "重套 0008 後：合法通知仍讀得到" "$(driver_sees NTF-MIG-LEGIT)" 1
+expect "回復 0008" "$(rollback8)" 0
+expect "回復後：讀取政策移除，收件司機讀不到" "$(driver_sees NTF-MIG-LEGIT)" 0
+expect "回復後：來源證明保留" "$(q -c "select count(*) from app.notification_provenance where notification_id = 'NTF-MIG-LEGIT'")" 1
+expect "回復後再套用 0008" "$(apply8)" 0
+AGAIN="$(driver_sees NTF-MIG-LEGIT)"
+expect "再套用後：合法通知恢復可讀" "$AGAIN" 1
+[ "$AGAIN" = "1" ] || driver_diag NTF-MIG-LEGIT
+expect "再套用後：偽造通知仍讀不到" "$(driver_sees NTF-MIG-PRE)$(driver_sees NTF-MIG-AFTER)" 00
+expect "以上過程 app_state 的 filenode、欄位、索引不變" "$(snapshot | cut -d'|' -f1-3)" "$(echo "$BEFORE" | cut -d'|' -f1-3)"
 
 echo "--- 7. 觸發器本身（隔離情境，交易結束即回滾） ---"
 guard_try() {
@@ -176,14 +190,12 @@ guard_try() {
     -c 'set local role care_ride_app' -c "select set_config('app.user_id', 'USR-MIG-OTHER', true)" \
     -c "$1" -c 'rollback' 2>&1
 }
-OUT="$(guard_try "delete from app_state where collection = 'notifications' and id = 'NTF-MIG-LEGIT'")"
-echo "$OUT" | grep -q '系統通知不能由用戶端修改或刪除'; check "有 DELETE 政策時，觸發器擋下刪除系統通知" $?
-OUT="$(guard_try "update app_state set data = data || jsonb_build_object('recipientId', 'USR-MIG-OTHER') where collection = 'notifications' and id = 'NTF-MIG-LEGIT'")"
-echo "$OUT" | grep -q '系統通知不能由用戶端修改或刪除'; check "有 UPDATE 政策時，觸發器擋下修改系統通知" $?
-OUT="$(guard_try "update app_state set collection = 'tripEvents' where collection = 'notifications' and id = 'NTF-MIG-AFTER'")"
-echo "$OUT" | grep -q '通知的集合與 ID 不能修改'; check "有 UPDATE 政策時，觸發器擋下把通知改成其他集合" $?
-[ "$(q -c "select count(*) from pg_policies where policyname like 'tmp_guard_%'")" = "0" ]; check "隔離情境的暫時政策已隨交易回滾" $?
-[ "$(q -c "select count(*) from app_state where collection = 'notifications' and id in ('NTF-MIG-LEGIT','NTF-MIG-AFTER')")" = "2" ]; check "隔離情境後通知資料列都還在" $?
+has() { if echo "$2" | grep -q "$3"; then check "$1" 0; else check "$1（輸出：$(echo "$2" | tr '\n' ' ' | cut -c1-200)）" 1; fi; }
+has "有 DELETE 政策時，觸發器擋下刪除系統通知" "$(guard_try "delete from app_state where collection = 'notifications' and id = 'NTF-MIG-LEGIT'")" '系統通知不能由用戶端修改或刪除'
+has "有 UPDATE 政策時，觸發器擋下修改系統通知" "$(guard_try "update app_state set data = data || jsonb_build_object('recipientId', 'USR-MIG-OTHER') where collection = 'notifications' and id = 'NTF-MIG-LEGIT'")" '系統通知不能由用戶端修改或刪除'
+has "有 UPDATE 政策時，觸發器擋下把通知改成其他集合" "$(guard_try "update app_state set collection = 'tripEvents' where collection = 'notifications' and id = 'NTF-MIG-AFTER'")" '通知的集合與 ID 不能修改'
+expect "隔離情境的暫時政策已隨交易回滾" "$(q -c "select count(*) from pg_policies where policyname like 'tmp_guard_%'")" 0
+expect "隔離情境後通知資料列都還在" "$(q -c "select count(*) from app_state where collection = 'notifications' and id in ('NTF-MIG-LEGIT','NTF-MIG-AFTER')")" 2
 
 dropdb "$DB"
 if [ "$fail" -eq 0 ]; then echo "結果：全部通過"; else echo "結果：有失敗"; fi
