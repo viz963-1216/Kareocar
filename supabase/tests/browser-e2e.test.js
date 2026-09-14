@@ -187,21 +187,24 @@ async function screenshot(page, name) {
 }
 
 /**
- * 真的滑鼠點擊：捲到元素、等位置穩定、確認座標上最上層就是它，再送滑鼠事件。
+ * 真的滑鼠點擊：捲到元素、等畫面穩定、確認座標上最上層就是它，再送滑鼠事件。
  *
- * index.html 對 html 設了 scroll-behavior:smooth，scrollIntoView 會以動畫捲動；
- * 動畫途中讀到的座標不是最後位置。所以連續兩個畫格位置不變才取座標。
- * 穩定後仍被蓋住就失敗並回報是哪個元素，不改用 DOM click 繞過。
+ * 兩個時序因素（CI run 34767209152、34795291931 的截圖與訊息）：
+ *   - html 設了 scroll-behavior:smooth，scrollIntoView 以動畫捲動
+ *   - 登入後背景載入、行程初始化、同步會重新 render，按鈕節點被整個換掉；
+ *     拿著舊節點量到的是 0×0 或舊位置
+ * 所以每個畫格重新查詢 selector，節點相同且位置連續兩格不變才取座標。
+ * 穩定後仍被蓋住就失敗並回報遮擋元素，不改用 DOM click 繞過。
  */
 async function click(page, selector) {
-  const box = await evaluate(page, `(async()=>{const sel=${J(selector)};const el=document.querySelector(sel);if(!el)throw new Error('找不到 '+sel);if(el.disabled)throw new Error(sel+' 是停用狀態');el.scrollIntoView({block:'center',inline:'center'});const frame=()=>new Promise(r=>requestAnimationFrame(()=>r()));let last=null,stable=0;for(let i=0;i<120&&stable<2;i++){await frame();const r=el.getBoundingClientRect();const k=[r.left,r.top,r.width,r.height].map(v=>Math.round(v)).join(',');stable=k===last?stable+1:0;last=k;}const r=el.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2,w:r.width,h:r.height,stable:stable>=2,scrollY:Math.round(scrollY)};})()`);
-  if (!box.w || !box.h) throw new Error(`${selector} 沒有可點擊的大小（可能被隱藏）`);
-  if (!box.stable) throw new Error(`${selector} 捲動後位置持續變動，無法穩定點擊`);
-  const hit = await evaluate(page, `(()=>{const el=document.elementFromPoint(${box.x},${box.y});const t=document.querySelector(${J(selector)});const d=n=>n?(n.tagName.toLowerCase()+(n.id?'#'+n.id:'')+(typeof n.className==='string'&&n.className.trim()?'.'+n.className.trim().split(/\\s+/).join('.'):'')):'（座標在視窗外）';return {ok:!!el&&(el===t||t.contains(el)),by:d(el),parent:el&&el.parentElement?d(el.parentElement):''};})()`);
+  const box = await evaluate(page, `(async()=>{const sel=${J(selector)};const frame=()=>new Promise(r=>requestAnimationFrame(()=>r()));let node=null,last=null,stable=0,replaced=0,scrolled=false;for(let i=0;i<240&&stable<2;i++){const el=document.querySelector(sel);if(!el){node=null;stable=0;await frame();continue;}if(node&&el!==node)replaced++;if(el!==node){node=el;scrolled=false;stable=0;}if(!scrolled){el.scrollIntoView({block:'center',inline:'center'});scrolled=true;}await frame();if(!el.isConnected){stable=0;continue;}const r=el.getBoundingClientRect();const k=[r.left,r.top,r.width,r.height].map(v=>Math.round(v)).join(',');stable=(k===last&&r.width>0&&r.height>0)?stable+1:0;last=k;}const el=document.querySelector(sel);if(!el)throw new Error('找不到 '+sel);if(el.disabled)throw new Error(sel+' 是停用狀態');const r=el.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2,w:r.width,h:r.height,stable:stable>=2,replaced,scrollY:Math.round(scrollY)};})()`);
+  if (!box.stable) throw new Error(`${selector} 等待 240 個畫格仍未穩定（節點被替換 ${box.replaced} 次，最後大小 ${Math.round(box.w)}×${Math.round(box.h)}）`);
+  const hit = await evaluate(page, `(()=>{const el=document.elementFromPoint(${box.x},${box.y});const t=document.querySelector(${J(selector)});const d=n=>n?(n.tagName.toLowerCase()+(n.id?'#'+n.id:'')+(typeof n.className==='string'&&n.className.trim()?'.'+n.className.trim().split(/\\s+/).join('.'):'')):'（座標在視窗外）';return {ok:!!el&&!!t&&(el===t||t.contains(el)),by:d(el),parent:el&&el.parentElement?d(el.parentElement):''};})()`);
   if (!hit.ok) {
     await screenshot(page, `${page.label}-blocked-${selector.replace(/[^a-z0-9]+/gi, '_')}`);
-    throw new Error(`${selector} 被其他元素遮住：${hit.by}（父元素 ${hit.parent}；座標 ${Math.round(box.x)},${Math.round(box.y)}；scrollY=${box.scrollY}）`);
+    throw new Error(`${selector} 被其他元素遮住：${hit.by}（父元素 ${hit.parent}；座標 ${Math.round(box.x)},${Math.round(box.y)}；scrollY=${box.scrollY}；等待期間節點被替換 ${box.replaced} 次）`);
   }
+  if (box.replaced) console.log(`    （資訊）${page.label} 點擊 ${selector} 前節點被重新 render 替換 ${box.replaced} 次`);
   for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) {
     await page.send('Input.dispatchMouseEvent', { type, x: box.x, y: box.y, button: 'left', clickCount: type === 'mouseMoved' ? 0 : 1 });
   }
