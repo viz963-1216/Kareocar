@@ -235,6 +235,30 @@ V12.25.79 新增／使用的 Identity API：
    需求者取消），並確認沒有 5xx。取消通知目前沒有畫面列表，要以資料庫確認
    `notifications` 有司機與需求者各一列、`status = queued`。
 
+8. **套用 0009（通知只能由後端建立）**：第 6、7 步完成、確認新程式已上線之後才套用，
+   方式同第 4 步（單一交易＋`lock_timeout`）：
+
+   ```bash
+   psql "$MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+     -c "set lock_timeout = '3s'" -c "set statement_timeout = '60s'" \
+     -c 'begin' -f supabase/migrations/0009_server_only_notifications.sql -c 'commit'
+   ```
+
+   不能提前：舊版前端在派車、中斷、恢復、交接、行程完成時會把本機產生的通知和
+   行程寫入放在同一批 state-mutate 送出；0009 會擋下通知，整批（含行程）一起回滾。
+   0009 不改寫 `app_state`；`CREATE TRIGGER` 取 SHARE ROW EXCLUSIVE、
+   `CREATE POLICY` 取 ACCESS EXCLUSIVE（隔離 CI `migration-0008-deploy` 第 6 段實測）。
+9. **0009 驗證**：`app_state_guard_notifications` 觸發器與
+   `app_state_notification_recipient_read` 政策存在；需求者取消一次，確認司機與
+   需求者各一則通知、被指派司機的 state-load 讀得到自己的那則。
+
+### 通知來源盤點（0009 前後）
+
+| 來源 | 產生位置 | 0009 前 | 新程式 + 0009 |
+|---|---|---|---|
+| 需求者取消（trip_cancelled、booking_cancelled） | 後端 `app.cancel_app_state_booking` | 寫入 | 寫入（帶後端旗標） |
+| 派車建立（booking_confirmed）、行程完成（trip_completed，含服務證明補齊、異常結案自動完成）、中斷、恢復、終止、交接（三種）、路線重排、資源重派 | 前端 `Notification.queue`，經 state-mutate | 寫入；收件人多半讀不到（擁有者是操作者、組織由觸發器決定），前端也沒有通知畫面或發送程式 | **只留在本機畫面狀態，不再寫入伺服器**；要持久化需改成後端流程建立（本輪未做） |
+
 ### 部署時的已知行為
 
 - 部署前已在司機裝置離線佇列、由舊版前端產生的行程操作沒有指令快照，新版不會
@@ -249,7 +273,39 @@ V12.25.79 新增／使用的 Identity API：
   - **已送出**：版本庫內未找到讀取這些資料列並對外發送的程式；正式 Supabase 是否有
     版本庫外的 trigger、webhook 或排程會處理 `notifications`，尚未核實。
 
+### 福利額度（尚無後端，本輪未修好）
+
+- **現況（程式靜態推導）**：福利核定 `benefitAuthorizations`、帳本 `benefitLedger`、
+  核定事件 `benefitAuthorizationEvents` 沒有資料表、RLS 或端點，不在前端同步集合，
+  state-mutate 也不接受；前端不再把整份資料存進 localStorage。扣額（建立預約）、釋放
+  （修改、取消、過期、不受理）、結算（行程完成）、重開（正式修正）都只在當次頁面的
+  記憶體裡計算，重新整理後消失。這是 PR #7 之前就存在的狀況。
+- **本 PR 只修正**：取消改為非同步後，福利包裝沒有等待結果、不會呼叫本機釋放。改為
+  `await` 後恢復呼叫，但**結果仍不持久化**，不能視為福利額度已修好。「成功只釋放一次、
+  重試不重複、失敗不釋放、重新整理後一致」均未驗證，最後一項在現況下必然不成立。
+- **最小修正範圍**：
+  1. 資料表 `benefit_authorizations`、`benefit_ledger`（只增不改，唯一鍵防同一預約
+     重複扣額或釋放）與 RLS。
+  2. 後端流程在同一交易內處理：建立預約扣額、`app.cancel_app_state_booking` 以淨額
+     釋放（淨額為 0 不寫）、行程完成結算、正式修正重開；不接受前端送來的餘額或金額。
+  3. state-load 回傳核定與帳本，前端改讀伺服器，不再以本機試算值當餘額。
+  4. 產品決定：核定資料由誰建立、是否已有正式核定資料需要匯入。
+  5. 對應的整合與瀏覽器測試。
+
 ### 回復
+
+回復順序與部署相反：**先移除 0009 → 回復程式 → 再移除 0008**。0009 還在時回復到
+舊版程式，舊版前端的通知寫入會被擋、連帶整批行程寫入失敗。
+
+```bash
+psql "$MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "set lock_timeout = '3s'" -c 'begin' \
+  -f supabase/rollback/0009_server_only_notifications.down.sql -c 'commit'
+```
+
+隔離 CI `compat-old-code` 以「0001–0009 → 移除 0009 → 移除 0008 並重新套用 0007」
+建庫後，實際以固定舊版 `6539c75` 的 handler 重跑相容性比對，結果必須與從未套用
+0008／0009 的庫完全相同。
+
 
 - **只回復程式**：部署回前一版即可，0008 可以留著（見上方相容性比對）。
 - **移除 0008**：先回復程式（新前端與新端點依賴 0008），再在單一交易內執行移除

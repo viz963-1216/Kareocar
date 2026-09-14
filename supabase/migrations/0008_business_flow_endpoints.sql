@@ -16,7 +16,7 @@
 --   * 本檔「不」新增或刪除任何資料表欄位、不建立索引，所以不會改寫 app_state。
 --     早期草稿曾新增 stored generated column，會整張表改寫並長時間持有
 --     ACCESS EXCLUSIVE 鎖，已移除；隔離 CI 以 pg_relation_filenode 驗證不改寫。
---   * 仍會短暫取得的鎖：CREATE POLICY／DROP POLICY IF EXISTS（兩條政策）對 app_state
+--   * 仍會短暫取得的鎖：CREATE POLICY／DROP POLICY IF EXISTS 對 app_state
 --     取 ACCESS EXCLUSIVE；CREATE OR REPLACE VIEW 對 app_state_booking_pool 取
 --     ACCESS EXCLUSIVE。都是只改系統目錄、瞬間完成，但會在鎖佇列裡等前面的長
 --     交易結束，等待期間後面所有讀寫 app_state 的請求都會排隊。部署時必須設
@@ -437,19 +437,6 @@ grant execute on function app.apply_driver_trip_execution(text, text, int, text,
 
 
 -- ---------------------------------------------------------------------
--- 5a. 通知收件人讀取
---
--- 取消通知由需求者的交易寫入：資料列擁有者是需求者、組織是行程組織。被指派司機
--- 兩者都不符合，沒有這條就讀不到寫給自己的通知。只放行 SELECT、只比對收件人，
--- 其他司機與其他組織仍讀不到。(select ...) 讓目前使用者每個查詢只算一次。
--- ---------------------------------------------------------------------
-drop policy if exists app_state_notification_recipient_read on app_state;
-create policy app_state_notification_recipient_read on app_state for select
-  using (collection = 'notifications'
-         and data->>'recipientId' = (select app.current_user_id()));
-
-
--- ---------------------------------------------------------------------
 -- 5. 需求者取消：同一交易內取消預約與關聯行程、保留歷史關聯、排入站內通知
 --
 -- 驗證：預約擁有者是呼叫者本人、呼叫者是需求者、原因必填、預約在可取消狀態。
@@ -464,6 +451,10 @@ create policy app_state_notification_recipient_read on app_state for select
 -- booking_cancelled 給需求者），只寫入 status = 'queued' 的資料列，不呼叫任何
 -- 外部服務。與取消在同一交易：取消失敗就沒有通知。ID 由預約與行程決定，
 -- ON CONFLICT DO NOTHING，重試不會重複。
+--
+-- 寫入通知前設定交易級旗標 app.notification_writer。0009 的觸發器只接受帶這個
+-- 旗標的通知寫入，一般 state-mutate 無法建立或修改通知；本檔單獨套用時旗標沒有
+-- 作用，行為與舊版相同。收件人讀取政策也在 0009。
 -- ---------------------------------------------------------------------
 create or replace function app.cancel_app_state_booking(
   p_booking_id text, p_reason_code text, p_reason_text text)
@@ -563,6 +554,7 @@ begin
 
   -- 站內通知（只寫資料列，不送出）
   perform set_config('app.state_scope_override', '1', true);
+  perform set_config('app.notification_writer', '1', true);
 
   for t in
     select s.id, s.organization_id, s.data
@@ -608,6 +600,7 @@ begin
     ntf_ids := ntf_ids || ntf_id;
   end if;
 
+  perform set_config('app.notification_writer', '0', true);
   perform set_config('app.state_scope_override', '0', true);
 
   return query select p_booking_id, trip_ids, ntf_ids;

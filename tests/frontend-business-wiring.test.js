@@ -67,6 +67,13 @@ t('confirmBookingAction 等待非同步取消', html.includes('result=await Book
 t('福利額度釋放的取消包裝等待非同步取消結果（否則 r.ok 永遠不成立）',
   html.includes('Booking.cancelOwn=async function(id,userId,reasonCode,reasonText){const r=await _bookingCancelOwn('));
 
+console.log('--- 通知 ---');
+const stateMutateSrc = fs.readFileSync(path.join(ROOT, 'netlify', 'functions', 'v2-state-mutate.js'), 'utf8');
+t('state-mutate 不接受 notifications（只能由後端流程建立）',
+  /SERVER_ONLY_COLLECTIONS = new Set\(\['notifications'\]\)/.test(stateMutateSrc)
+    && !/ALLOWED_COLLECTIONS = new Set\(\[[^\]]*'notifications'/.test(stateMutateSrc));
+t('前端不把本機通知排入 state-mutate', functionBody('function authoritativeQueueChanges_(changes){').includes("c.collection!=='notifications'"));
+
 console.log('--- 司機執行 ---');
 const queueChanges = functionBody('function authoritativeQueueChanges_(changes){');
 t('state-mutate 佇列排除司機執行自己行程的變更', queueChanges.includes('authoritativeDriverExecutionChange_'));

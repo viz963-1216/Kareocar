@@ -641,6 +641,74 @@ async function scenario3(t) {
   record(S, '共乘取消被拒時沒有通知', (await notificationsFor(p1)).length === 0 && (await notificationsFor(p2)).length === 0);
 }
 
+// ================================================================ 情境 4
+async function scenario4(t) {
+  const S = '情境4 通知權限';
+  const all = async () => (await admin.query(`select id, organization_id, owner_user_id, deleted, data from app_state where collection = 'notifications' order by id`)).rows;
+  const legit = await notificationsFor('BKG-FLOW-S3');
+  const toDriver = legit.find((n) => n.data.template === 'trip_cancelled');
+  record(S, '（前提）情境 3 的合法取消通知存在', legit.length === 2 && Boolean(toDriver));
+  const forged = (id, recipientId) => ({ id, organizationId: ORG_A, recipientId, channel: 'line', template: 'trip_cancelled',
+    eventType: 'trip_cancelled', payload: { tripId: 'TRP-FLOW-S3', reason: '偽造內容' }, status: 'queued',
+    source: 'cancel_booking_endpoint' });
+
+  // ---- API：state-mutate 一律拒絕，不看 source／eventType
+  let n = 0;
+  for (const [label, tok, recipient] of [
+    ['需求者偽造給司機', t.req, U.drvA1], ['調度員 A 偽造給組織內司機', t.dspA, U.drvA1],
+    ['調度員 B 跨組織偽造給組織 A 司機', t.dspB, U.drvA1], ['司機 A1 偽造給其他司機', t.drvA1, U.drvA2]
+  ]) {
+    const before = JSON.stringify(await all());
+    const id = `NTF-FORGE-API-${++n}`;
+    const r = await mutateAs(tok, [{ collection: 'notifications', id, record: forged(id, recipient) }]);
+    record(S, `${label}（帶後端 source）：被拒絕`, r.status === 403 && r.error && r.error.code === 'COLLECTION_FORBIDDEN', outcome(r));
+    record(S, `${label}：通知資料完全不變`, JSON.stringify(await all()) === before);
+  }
+  for (const [label, tok, change] of [
+    ['需求者（資料列擁有者）把合法通知收件人改成其他司機', t.req, { recipientId: U.drvA2 }],
+    ['調度員 A（行程組織）把合法通知收件人改成其他司機', t.dspA, { recipientId: U.drvA2 }],
+    ['需求者竄改合法通知內容', t.req, { payload: { reason: '竄改' } }]
+  ]) {
+    await expectRejected(S, `經 state-mutate ${label}`, mutateAs(tok, [{ collection: 'notifications', id: toDriver.id,
+      record: { ...toDriver.data, ...change } }]), { status: 403, code: 'COLLECTION_FORBIDDEN' }, [['notifications', toDriver.id]]);
+  }
+  await expectRejected(S, '經 state-mutate 需求者軟刪除合法通知', mutateAs(t.req, [{ collection: 'notifications', id: toDriver.id,
+    deleted: true, record: toDriver.data }]), { status: 403, code: 'COLLECTION_FORBIDDEN' }, [['notifications', toDriver.id]]);
+
+  // ---- 資料庫層：模擬舊版 handler 或其他以 care_ride_app 直接寫入的路徑（0009 觸發器）
+  const asUser = (uid, sql, params) => db.withUser(uid, (c) => c.query(sql, params))
+    .then((res) => ({ ok: true, rowCount: res.rowCount }), (e) => ({ ok: false, code: e.code }));
+  for (const [label, uid, sql, params] of [
+    ['需求者直接 INSERT 偽造通知', U.req, `insert into app_state (collection, id, data) values ('notifications', 'NTF-FORGE-DB-1', $1::jsonb)`, [JSON.stringify(forged('NTF-FORGE-DB-1', U.drvA1))]],
+    ['需求者直接 UPDATE 合法通知收件人', U.req, `update app_state set data = jsonb_set(data, '{recipientId}', to_jsonb($1::text)) where collection = 'notifications' and id = $2`, [U.drvA2, toDriver.id]],
+    ['調度員 A 直接 UPDATE 合法通知收件人', U.dspA, `update app_state set data = jsonb_set(data, '{recipientId}', to_jsonb($1::text)) where collection = 'notifications' and id = $2`, [U.drvA2, toDriver.id]],
+    ['需求者直接軟刪除合法通知', U.req, `update app_state set deleted = true where collection = 'notifications' and id = $1`, [toDriver.id]]
+  ]) {
+    const before = JSON.stringify(await all());
+    const r = await asUser(uid, sql, params);
+    record(S, `[資料庫層] ${label}：被拒絕`, !r.ok && r.code === '42501', JSON.stringify(r));
+    record(S, `[資料庫層] ${label}：通知資料完全不變`, JSON.stringify(await all()) === before);
+  }
+
+  // ---- 收件人讀取只看 0009 安裝後由後端建立的通知
+  const c = await admin.connect();
+  try {
+    await c.query('begin');
+    await c.query(`select set_config('app.notification_writer','1',true), set_config('app.state_scope_override','1',true)`);
+    await c.query(`insert into app_state (collection, id, data, created_at) values ('notifications', 'NTF-LEGACY-1', $1::jsonb, '2000-01-01')`,
+      [JSON.stringify(forged('NTF-LEGACY-1', U.drvA2))]);
+    await c.query(`update app_state set organization_id = $1 where collection = 'notifications' and id = 'NTF-LEGACY-1'`, [ORG_A]);
+    await c.query('commit');
+  } finally { c.release(); }
+  const drvA1 = await loadAs(t.drvA1);
+  const drvA2 = await loadAs(t.drvA2);
+  record(S, '0009 之前建立、收件人為司機 A2 的舊通知：A2 讀不到', !idsIn(drvA2, 'notifications').includes('NTF-LEGACY-1'));
+  record(S, '合法取消通知：收件司機 A1 讀得到、其他司機 A2 讀不到',
+    idsIn(drvA1, 'notifications').includes(toDriver.id) && !idsIn(drvA2, 'notifications').includes(toDriver.id));
+  record(S, '合法取消通知在所有嘗試後仍只有兩則且收件人、刪除狀態未變',
+    JSON.stringify((await notificationsFor('BKG-FLOW-S3')).map((x) => [x.id, x.data.recipientId, x.deleted])) === JSON.stringify(legit.map((x) => [x.id, x.data.recipientId, x.deleted])));
+}
+
 // ================================================================ 執行
 (async () => {
   await seedIdentities();
@@ -655,6 +723,8 @@ async function scenario3(t) {
   await scenario2b(t);
   console.log('--- 情境 3：需求者取消自己的已排車預約（含通知與共乘） ---');
   await scenario3(t);
+  console.log('--- 情境 4：通知只能由後端流程建立；偽造、竄改、軟刪除都被拒 ---');
+  await scenario4(t);
 
   const failed = results.filter((r) => !r.ok);
   console.log('');

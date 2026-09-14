@@ -10,6 +10,7 @@
 #   5. 回復演練：supabase/rollback 的移除 SQL + 重新套用 0007，單一交易；
 #      確認 0008 的政策與函式都不在、需求池 view 回到 0007 形狀、資料表不變，
 #      之後還能再套用 0008
+#   6. 0009（通知只能由後端建立）：lock_timeout 套用、不改寫、擋偽造、可重套、可回復
 #
 # 只允許本機隔離端點；測試庫名稱固定，已存在就失敗，不覆寫。
 set -euo pipefail
@@ -122,6 +123,25 @@ POOLCOLS="$(q -c "select count(*) from information_schema.columns where table_sc
 [ "$(snapshot)" = "$BEFORE" ]; check "回復後 app_state 的 filenode、欄位、索引、筆數不變" $?
 psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' -f "$M8" -c 'commit' >/dev/null 2>&1
 check "回復後可以再次套用 0008" $?
+
+echo "--- 6. 0009 通知寫入限制 ---"
+M9="$ROOT/supabase/migrations/0009_server_only_notifications.sql"
+psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' -f "$M9" -c 'commit' >/dev/null 2>&1; check "0009 以單一交易 + lock_timeout 套用成功" $?
+[ "$(snapshot)" = "$BEFORE" ]; check "套用 0009 後 app_state 不改寫" $?
+GUARD="$(q -c "select count(*) from pg_trigger where tgname = 'app_state_guard_notifications' and tgrelid = 'app_state'::regclass")"
+[ "$GUARD" = "1" ]; check "通知寫入觸發器存在" $?
+set +e
+FORGE="$(psql -X -q -tA -v ON_ERROR_STOP=1 -d "$DB" -c "insert into app_state (collection, id, data) values ('notifications', 'NTF-MIG-FORGE', '{}')" 2>&1)"
+FORGE_RC=$?
+set -e
+if [ "$FORGE_RC" -ne 0 ] && echo "$FORGE" | grep -q '通知只能由系統流程建立'; then check "未帶後端旗標的通知 INSERT 被擋" 0; else check "未帶後端旗標的通知 INSERT 被擋" 1; fi
+psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' -f "$M9" -c 'commit' >/dev/null 2>&1; check "重複套用 0009 成功" $?
+psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "set lock_timeout = '5s'" -c 'begin' -f "$ROOT/supabase/rollback/0009_server_only_notifications.down.sql" -c 'commit' >/dev/null 2>&1; check "回復 0009 成功" $?
+LEFT9="$(q -c "select (select count(*) from pg_trigger where tgname = 'app_state_guard_notifications')
+               + (select count(*) from pg_policies where policyname = 'app_state_notification_recipient_read')
+               + (select count(*) from pg_proc where proname in ('app_state_guard_notifications','notification_guard_since'))")"
+[ "$LEFT9" = "0" ]; check "回復後沒有 0009 的觸發器、政策或函式（剩 $LEFT9）" $?
+[ "$(snapshot)" = "$BEFORE" ]; check "回復 0009 後 app_state 不改寫" $?
 
 dropdb "$DB"
 if [ "$fail" -eq 0 ]; then echo "結果：全部通過"; else echo "結果：有失敗"; fi

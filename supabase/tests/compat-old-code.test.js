@@ -25,13 +25,15 @@ const EXPECTED_DIFFERENCES = {
 };
 
 if (process.argv[2] === '--compare') {
-  const [a, b] = process.argv.slice(3).map((f) => JSON.parse(fs.readFileSync(f, 'utf8')));
+  // --expect-identical：回復 0008／0009 之後，舊程式的結果必須與從未套用時完全相同
+  const exact = process.argv.includes('--expect-identical');
+  const [a, b] = process.argv.slice(3).filter((x) => !x.startsWith('--')).map((f) => JSON.parse(fs.readFileSync(f, 'utf8')));
   let bad = 0;
-  console.log(`舊庫（0001–0007）：${a.database}　新庫（0001–0008）：${b.database}　舊程式：${a.functionsDir}`);
+  console.log(`比對 ${a.database} × ${b.database}${exact ? '（必須完全相同）' : ''}　舊程式：${a.functionsDir}`);
   const names = [...new Set([...Object.keys(a.steps), ...Object.keys(b.steps)])];
   for (const name of names) {
     const same = JSON.stringify(a.steps[name]) === JSON.stringify(b.steps[name]);
-    const expected = Object.prototype.hasOwnProperty.call(EXPECTED_DIFFERENCES, name);
+    const expected = !exact && Object.prototype.hasOwnProperty.call(EXPECTED_DIFFERENCES, name);
     const serverError = [a.steps[name], b.steps[name]].some((s) => s && s.status >= 500);
     const ok = !serverError && (same ? !expected : expected);
     if (!ok) bad++;
@@ -44,8 +46,8 @@ if (process.argv[2] === '--compare') {
 
 const host = process.env.PGHOST;
 const dbName = process.env.PGDATABASE;
-if (!['localhost', '127.0.0.1'].includes(host) || !['careride_compat_old', 'careride_compat_new'].includes(dbName)) {
-  throw Error('Requires local endpoint and careride_compat_old/new database');
+if (!['localhost', '127.0.0.1'].includes(host) || !['careride_compat_old', 'careride_compat_new', 'careride_compat_rollback'].includes(dbName)) {
+  throw Error('Requires local endpoint and careride_compat_old/new/rollback database');
 }
 const functionsDir = path.resolve(process.env.COMPAT_FUNCTIONS_DIR || '');
 const resultFile = process.env.COMPAT_RESULT_FILE;
@@ -129,6 +131,13 @@ const ids = (r, c) => ((r.data && r.data.collections && r.data.collections[c]) |
   const reqCancelOpen = await call(mutate.handler, 'POST', tok.req, { changes: [
     { collection: 'bookings', id: 'BKG-CMP-2', record: booking('BKG-CMP-2', { state: 'cancelled', status: 'cancelled' }) }] });
   steps['requester-cancel-open-booking-via-state-mutate'] = { status: reqCancelOpen.status, code: reqCancelOpen.code };
+
+  // 舊版前端的通知（例如派車、中斷）經 state-mutate 寫入。0008 不影響；0009 會擋，
+  // 所以 0009 必須在新程式部署之後才套用。
+  const oldNotification = await call(mutate.handler, 'POST', tok.dsp, { changes: [
+    { collection: 'notifications', id: 'NTF-CMP-1', record: { id: 'NTF-CMP-1', organizationId: 'ORG-CMP-A', recipientId: 'USR-CMP-DRV',
+      channel: 'line', template: 'trip_interrupted', eventType: 'trip_interrupted', payload: { tripId: 'TRP-CMP-1' }, status: 'queued' } }] });
+  steps['dispatcher-notification-via-state-mutate'] = { status: oldNotification.status, code: oldNotification.code };
 
   const reqLoad = await call(load.handler, 'GET', tok.req);
   steps['requester-load'] = { status: reqLoad.status, bookings: ids(reqLoad, 'bookings').sort(), pool: (reqLoad.data && reqLoad.data.pool || []).length };

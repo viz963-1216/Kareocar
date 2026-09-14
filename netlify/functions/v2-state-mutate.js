@@ -29,11 +29,16 @@ const ALLOWED_COLLECTIONS = new Set([
   'membershipEvents', 'vehicles', 'careRecipients', 'careRecipientRelations',
   'careRecipientEvents', 'careRecipientMergeEvents',
   'bookings', 'bookingEvents', 'bookingRevisions', 'dispatchPlans',
-  'trips', 'tripEvents', 'issues', 'systemReports', 'notifications',
+  'trips', 'tripEvents', 'issues', 'systemReports',
   'benefitRulesets', 'benefitRulesetEvents', 'benefitAssessments',
   'benefitAssessmentEvents', 'benefitLatestEstimateRuns',
   'serviceProofs', 'quoteSnapshots', 'cancellations', 'telemetryEvents'
 ]);
+
+// 通知只能由後端流程建立（目前是 app.cancel_app_state_booking）。收件人是誰、內容是
+// 什麼都不能由用戶端決定，否則任何人都能投遞內容給別人讀；0009 的觸發器在資料庫層
+// 另外擋一次。
+const SERVER_ONLY_COLLECTIONS = new Set(['notifications']);
 
 // 這些欄位絕對不進資料庫，即使前端不小心送上來
 const NEVER_STORE = ['password', 'passwordHash', 'passwordUpdatedAt', 'credential',
@@ -87,6 +92,9 @@ exports.handler = async (event) => {
         if (IDENTITY_COLLECTIONS.has(collection)) {
           throw auth.authError('COLLECTION_FORBIDDEN',
             `${collection} 由身分管理端點負責，不接受從這裡寫入`);
+        }
+        if (SERVER_ONLY_COLLECTIONS.has(collection)) {
+          throw auth.authError('COLLECTION_FORBIDDEN', `${collection} 只能由系統流程建立，不接受從這裡寫入`);
         }
         if (!ALLOWED_COLLECTIONS.has(collection)) {
           throw auth.authError('COLLECTION_FORBIDDEN', `不允許寫入此資料集合：${collection}`);
