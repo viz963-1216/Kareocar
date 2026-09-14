@@ -712,7 +712,11 @@ async function scenario4(t) {
   ]) {
     const before = await state();
     const r = await asUser(uid, [[sql, params]]);
-    record(S, `[資料庫層] ${label}：被拒絕`, !r.ok && r.code === '42501', JSON.stringify(r));
+    // 實體 DELETE：app_state 沒有 DELETE 政策，RLS 下刪除影響 0 列而不報錯（觸發器也不會觸發）；
+    // 以「權限錯誤，或 0 列且資料不變」判定被擋，並在結果中寫明是哪一種
+    const isDelete = /^delete /.test(sql);
+    const blocked = (!r.ok && r.code === '42501') || (isDelete && r.ok && r.rowCount === 0);
+    record(S, `[資料庫層] ${label}：被拒絕${isDelete ? '或未刪除任何資料列' : ''}`, blocked, JSON.stringify(r));
     record(S, `[資料庫層] ${label}：資料完全不變`, (await state()) === before);
   }
 

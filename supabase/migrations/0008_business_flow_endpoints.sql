@@ -626,7 +626,9 @@ grant execute on function app.cancel_app_state_booking(text, text, text) to care
 --     serverCreated 一律移除
 --   * 非後端寫入者：不能把資料列的 collection 改成或改離 notifications、不能改 id；
 --     不能修改、軟刪除或刪除 serverCreated 的通知
---   * 實體 DELETE 另受 0007 權限限制（care_ride_app 沒有 DELETE 權限）
+--   * 實體 DELETE：0002 以 default privileges 授予 care_ride_app DELETE，但 app_state
+--     沒有 DELETE 政策，RLS 下刪除影響 0 列（觸發器也不會觸發）；觸發器的 DELETE 分支是
+--     之後若新增 DELETE 政策時的第二道防線
 -- 收件人讀取政策只放行 serverCreated、而且在本檔安裝之後建立的通知：安裝之前的
 -- 資料列可能自帶 serverCreated（當時沒有觸發器移除），不因這條政策外露。
 -- 重複套用本檔會把安裝時間往後移，只會讓更少的通知可讀，不會擴大。
