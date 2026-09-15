@@ -307,3 +307,31 @@ V12.25.79 新增／使用的 Identity API：
   通知內容或收件人；來源證明記錄了建立時的內容雜湊，再套用 0008 後，**被改動過的通知
   不會恢復可讀**，未被改動的才恢復（隔離 CI 實測：以原本有權修改的 care_ride_app 使用者
   在回復期間改內容與收件人）。
+
+## 8. migration 0009（需求者看得到承接單位名稱）部署順序
+
+0009 尚未部署。正式資料庫執行 SQL 與部署都需另行取得同意。
+
+- **內容**：只新增 security definer 函式 `app.my_booking_service_orgs()`，回傳目前使用者
+  擁有、未刪除、已綁定承接組織的預約所對應組織的 id 與名稱。不改資料表、政策或既有函式，
+  不取資料表的強鎖；不放寬 `organizations` 讀取政策。
+- **順序**：先套用 0009，再部署程式。新版 `v2-state-load` 以 savepoint 呼叫這個函式；函式
+  尚未存在時（SQLSTATE 42883）回傳空清單，需求者畫面暫時顯示「尚未指定承接單位」，不會讓
+  整個載入失敗。舊版程式不呼叫這個函式（隔離 CI `compat-old-code` 以含 0009 的庫比對）。
+- **套用**：
+
+  ```bash
+  psql "$MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+    -c "set lock_timeout = '3s'" -c 'begin' \
+    -f supabase/migrations/0009_requester_booking_service_orgs.sql -c 'commit'
+  ```
+
+- **驗證**：函式存在且 `care_ride_app` 有 EXECUTE；需求者載入後已接案預約顯示承接單位名稱。
+- **回復**：先回復程式或直接移除函式皆可（新版程式在函式不存在時退回空清單）：
+
+  ```bash
+  psql "$MIGRATION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "set lock_timeout = '3s'" -c 'begin' \
+    -f supabase/rollback/0009_requester_booking_service_orgs.down.sql -c 'commit'
+  ```
+
+  若同時要回復 0008，先移除 0009 再依第 7 節回復 0008。

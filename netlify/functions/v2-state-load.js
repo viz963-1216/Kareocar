@@ -112,9 +112,25 @@ exports.handler = async (event) => {
           order by pickup_at nulls last
           limit 500`)).rows;
 
+      // ---- 本人預約的承接單位名稱（0009）----
+      // organizations 只放行成員讀取，需求者讀不到承接組織；這裡只取「本人擁有、已接案」
+      // 預約所綁定組織的 id 與名稱。函式尚未套用時（部署空窗）回傳空清單，不讓整個
+      // 載入失敗；用 savepoint 讓錯誤不會中止外層交易。
+      let bookingServiceOrgs = [];
+      await client.query('savepoint booking_service_orgs');
+      try {
+        bookingServiceOrgs = (await client.query(
+          'select id, name from app.my_booking_service_orgs() order by id')).rows;
+        await client.query('release savepoint booking_service_orgs');
+      } catch (error) {
+        await client.query('rollback to savepoint booking_service_orgs');
+        if (error.code !== '42883') throw error;
+      }
+
       return {
         collections,
         pool,
+        bookingServiceOrgs,
         counts: Object.fromEntries(Object.entries(collections).map(([k, v]) => [k, v.length])),
         truncated: rows.length >= MAX_ROWS,
         loadedAt: new Date().toISOString()

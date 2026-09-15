@@ -104,5 +104,15 @@ t('rejected 佇列列不再被當成待同步', html.includes("TRIP_QUEUE_SETTLE
 t('司機畫面沒有新增中斷行程的入口（中斷仍限 trip.manage）',
   !/interrupt[^\n]{0,80}trip\.execute/.test(html) && methodBody('  interrupt(tripId,actorUserId,').includes("'trip.manage'"));
 
+console.log('--- 需求者預約狀態與承接單位 ---');
+t('需求者首頁與列表以 state 顯示狀態，不再用舊 status 徽章',
+  functionBody('function requesterHome(){').includes('bookingStatePill(bookingStateOf(next))')
+    && functionBody('function requesterHome(){').includes('bookingStatePill(bookingStateOf(b))')
+    && functionBody('function requesterBookings(){').includes('bookingStatePill(bookingStateOf(b))')
+    && !/bookingStatusPill\(b\.status\)|bookingStatusPill\(next\.status\)/.test(functionBody('function requesterHome(){') + functionBody('function requesterBookings(){')));
+t('承接單位名稱會讀 state-load 的 bookingServiceOrgs', html.includes("(store.state.bookingServiceOrgs||[]).find(o=>o.id===orgId)")
+  && html.includes('db.bookingServiceOrgs=Array.isArray(result.data?.bookingServiceOrgs)'));
+t('state-load 帶出 bookingServiceOrgs（來自 app.my_booking_service_orgs）', stateLoad.includes('app.my_booking_service_orgs()') && stateLoad.includes('bookingServiceOrgs,'));
+
 console.log(`\n結果：${pass} 通過 / ${fail} 失敗`);
 require('./_exit-watchdog').finishTest(fail ? 1 : 0, 'frontend-business-wiring');

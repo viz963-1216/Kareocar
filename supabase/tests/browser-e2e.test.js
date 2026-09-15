@@ -328,7 +328,28 @@ async function finishPage(page, S) {
 async function flowClaim(cdp, baseUrl, tokens) {
   const S = 'A 調度接案';
   const id = 'BKG-E2E-CLAIM';
-  record(S, '（資料準備）需求者建立公開預約', (await apiMutate(tokens.req, [{ collection: 'bookings', id, record: openBooking(id) }])) === 200);
+  const ORG_NAME = '合成承運 E2E';
+  record(S, '（資料準備）合成預約（舊 status=open）', (await apiMutate(tokens.req, [{ collection: 'bookings', id, record: openBooking(id) }])) === 200);
+
+  // ---- 需求者以前端正常建立路徑新增一筆預約（Booking.createForRequester，與預約精靈送出相同的輸入欄位）
+  const reqPage = await openPage(cdp, baseUrl, 'requester-claim');
+  let frontendId = null;
+  try {
+    await login(reqPage, U.req);
+    const created = await evaluate(reqPage, `(()=>{const r=Booking.createForRequester({pickupDate:${J(dayOffset(2))},pickupTime:'14:30',pickupAddress:'台北市信義區松仁路1號',pickupAccessNote:'',destination:'台北市大安區仁愛路四段1號',destinationAccessNote:'',tripType:'單程',returnDate:'',returnTime:'',aidNeed:'',companions:'0',specialNeed:'',poolingConsent:'no',note:''},Identity.currentUser()?.id);return r.ok?{ok:true,id:r.booking.id}:{ok:false,error:r.error};})()`);
+    record(S, '（資料準備）需求者以前端建立路徑新增預約', created.ok, created.ok ? created.id : created.error);
+    if (created.ok) {
+      frontendId = created.id;
+      const saved = await waitForDb(async () => row('bookings', frontendId), '前端建立的預約寫入資料庫');
+      record(S, '前端建立的預約在資料庫為 state=open、舊 status=pending、未綁定組織',
+        saved.data.state === 'open' && saved.data.status === 'pending' && !saved.organization_id,
+        `state=${saved.data.state} status=${saved.data.status}`);
+    }
+  } catch (e) {
+    record(S, `需求者建立預約中斷：${e.message}`, false);
+    await screenshot(reqPage, 'A-requester-create');
+  }
+
   const page = await openPage(cdp, baseUrl, 'dispatcher');
   try {
     await login(page, U.dsp);
@@ -342,9 +363,16 @@ async function flowClaim(cdp, baseUrl, tokens) {
       claimed.data.state === 'claimed' && claimed.data.claimedByUserId === U.dsp.id, `organization_id=${claimed.organization_id}`);
     await waitFor(page, `!document.querySelector('.demand-claim-btn[data-booking=${J(id)}]')`, '畫面反映接案結果');
     record(S, '接案後重新載入：需求池不再列出、組織取得完整預約', true);
-    record(S, '接案走 claim-booking 端點，沒有用 state-mutate 寫這筆預約',
-      page.requests.filter((r) => r.path === '/api/v2/claim-booking').length === 1
-        && !page.requests.some((r) => r.path === '/api/v2/state-mutate' && r.postData.includes(id)));
+    if (frontendId) {
+      await waitFor(page, `!!document.querySelector('.demand-claim-btn[data-booking=${J(frontendId)}]')`, '前端建立預約的接案按鈕出現');
+      await click(page, `.demand-claim-btn[data-booking=${J(frontendId)}]`);
+      const fClaimed = await waitForDb(async () => { const r = await row('bookings', frontendId); return r && r.organization_id === ORG ? r : null; }, '前端建立的預約綁定組織');
+      record(S, '按「接案」接下前端建立的預約：state=claimed、舊 status 維持 pending',
+        fClaimed.data.state === 'claimed' && fClaimed.data.status === 'pending', `status=${fClaimed.data.status}`);
+    }
+    record(S, '接案走 claim-booking 端點，沒有用 state-mutate 寫這些預約',
+      page.requests.filter((r) => r.path === '/api/v2/claim-booking').length === (frontendId ? 2 : 1)
+        && !page.requests.some((r) => r.path === '/api/v2/state-mutate' && (r.postData.includes(id) || (frontendId && r.postData.includes(frontendId)))));
 
     const dspBefore = await reloadAs(page, U.dsp);
     const dspData = await latestStateLoad(page, dspBefore);
@@ -355,23 +383,50 @@ async function flowClaim(cdp, baseUrl, tokens) {
         && !(dspData.pool || []).some((r) => r.id === id)
         && !(await evaluate(page, `!!document.querySelector('.demand-claim-btn[data-booking=${J(id)}]')`)));
 
-    const reqPage = await openPage(cdp, baseUrl, 'requester-after-claim');
-    try {
-      await login(reqPage, U.req);
-      const reqData = await latestStateLoad(reqPage, 0);
+    // ---- 需求者畫面：重新整理後看到「已接案」與承接單位名稱，再重新整理仍一致
+    const cardText = (bookingId) => evaluate(reqPage, `[...document.querySelectorAll('[data-booking-card=${J(bookingId)}]')].map(x=>x.innerText).join(' | ')`);
+    const checkRequester = async (round) => {
+      const before = await reloadAs(reqPage, U.req);
+      const reqData = await latestStateLoad(reqPage, before);
       const reqBooking = (reqData.collections.bookings || []).find((b) => b.id === id);
       const dbRow = await row('bookings', id);
-      record(S, '需求者載入後看到的預約狀態與組織，與調度端、資料庫一致',
+      record(S, `[${round}] 需求者載入的預約狀態與組織，與調度端、資料庫一致`,
         Boolean(reqBooking) && reqBooking.state === dbRow.data.state && reqBooking.organizationId === dbRow.organization_id
           && reqBooking.state === dspBooking.state && reqBooking.organizationId === dspBooking.organizationId,
         reqBooking ? `state=${reqBooking.state} organizationId=${reqBooking.organizationId}` : '需求者載入結果沒有此預約');
-    } finally {
-      await finishPage(reqPage, S);
-    }
+      const svc = reqData.bookingServiceOrgs || [];
+      record(S, `[${round}] 需求者收到的承接單位名稱只含本人預約綁定的組織（id 與名稱）`,
+        svc.length === 1 && svc[0].id === ORG && svc[0].name === ORG_NAME && JSON.stringify(Object.keys(svc[0]).sort()) === '["id","name"]'
+          && !(reqData.collections.organizations || []).some((o) => o.id === ORG),
+        JSON.stringify(svc));
+
+      await goView(reqPage, 'requester-bookings');
+      for (const [label, bookingId] of [['合成預約', id], ['前端建立預約', frontendId]]) {
+        if (!bookingId) continue;
+        await waitFor(reqPage, `!!document.querySelector('[data-booking-card=${J(bookingId)}]')`, `${label}卡片出現`);
+        const text = await cardText(bookingId);
+        record(S, `[${round}] 「我的預約」${label}顯示「已接案」與承接單位「${ORG_NAME}」`,
+          text.includes('已接案') && text.includes(ORG_NAME) && !text.includes('尚未指定承接單位') && !/\bopen\b|待處理/.test(text),
+          text.replace(/\s+/g, ' ').slice(0, 160));
+      }
+      await goView(reqPage, 'requester-home');
+      for (const [label, bookingId] of [['合成預約', id], ['前端建立預約', frontendId]]) {
+        if (!bookingId) continue;
+        await waitFor(reqPage, `!!document.querySelector('[data-booking-card=${J(bookingId)}]')`, `首頁${label}卡片出現`);
+        const text = await cardText(bookingId);
+        record(S, `[${round}] 需求者首頁${label}顯示「已接案」與承接單位「${ORG_NAME}」`,
+          text.includes('已接案') && text.includes(ORG_NAME) && !text.includes('尚未指定承接單位') && !/\bopen\b|待處理/.test(text),
+          text.replace(/\s+/g, ' ').slice(0, 160));
+      }
+    };
+    await checkRequester('接案後重新整理');
+    await checkRequester('再次重新整理');
   } catch (e) {
     record(S, `流程中斷：${e.message}`, false);
     await screenshot(page, 'A-claim');
+    await screenshot(reqPage, 'A-requester');
   }
+  await finishPage(reqPage, S);
   await finishPage(page, S);
 }
 

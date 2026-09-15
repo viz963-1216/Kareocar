@@ -251,6 +251,39 @@ async function scenario1(t) {
     loadA2.status === 200 && idsIn(loadA2, 'bookings').includes(id)
       && !((loadA2.data.pool || []).some((x) => x.id === id)), outcome(loadA2));
 
+  // ---- 需求者畫面需要的承接單位名稱（0009）
+  const reqAfterClaim = await loadAs(t.req);
+  const reqBooking = ((reqAfterClaim.data && reqAfterClaim.data.collections && reqAfterClaim.data.collections.bookings) || []).find((b) => b.id === id);
+  const svcOrgs = (reqAfterClaim.data && reqAfterClaim.data.bookingServiceOrgs) || [];
+  record(S, '需求者載入：自己的預約為 claimed、承接組織 A',
+    Boolean(reqBooking) && reqBooking.state === 'claimed' && reqBooking.claimStatus === 'claimed' && reqBooking.organizationId === ORG_A,
+    reqBooking ? `state=${reqBooking.state} organizationId=${reqBooking.organizationId}` : '沒有此預約');
+  record(S, '需求者載入：取得承接單位名稱（只有 id 與名稱）',
+    svcOrgs.some((o) => o.id === ORG_A && o.name === '合成承運 A') && svcOrgs.every((o) => JSON.stringify(Object.keys(o).sort()) === '["id","name"]'),
+    JSON.stringify(svcOrgs));
+  record(S, '需求者載入：承接單位名稱只含自己預約綁定的組織，organizations 集合沒有因此多出非成員組織',
+    svcOrgs.every((o) => o.id === ORG_A) && !idsIn(reqAfterClaim, 'organizations').includes(ORG_A)
+      && !idsIn(reqAfterClaim, 'memberships').some((m) => m.startsWith('M-FLOW-DSP')),
+    `organizations=${JSON.stringify(idsIn(reqAfterClaim, 'organizations'))}`);
+  const req2Load = await loadAs(t.req2);
+  const dspBSvc = await loadAs(t.dspB);
+  record(S, '其他需求者、其他組織調度的承接單位名稱清單不含此預約的組織',
+    !((req2Load.data.bookingServiceOrgs || []).some((o) => o.id === ORG_A))
+      && !((dspBSvc.data.bookingServiceOrgs || []).some((o) => o.id === ORG_A)));
+
+  // ---- 前端正常建立的預約形狀：syncBookingLegacyLifecycleFields 會把舊 status 設為 pending
+  const fid = 'BKG-FLOW-S1F';
+  const frontendShape = { ...openBooking(fid), status: 'pending', state: 'open', claimStatus: 'open', organizationId: null, claimedByUserId: null, claimedAt: null, tripId: null };
+  const fCreated = await mutateAs(t.req, [{ collection: 'bookings', id: fid, record: frontendShape }]);
+  const fClaim = await claimAs(t.dspA, fid, ORG_A);
+  const fLoad = await loadAs(t.req);
+  const fBooking = ((fLoad.data.collections || {}).bookings || []).find((b) => b.id === fid);
+  record(S, '前端建立形狀（status=pending）的預約接案後：state=claimed、承接組織 A、舊 status 維持原值',
+    fCreated.status === 200 && fClaim.status === 200 && Boolean(fBooking)
+      && fBooking.state === 'claimed' && fBooking.organizationId === ORG_A && fBooking.status === 'pending'
+      && (fLoad.data.bookingServiceOrgs || []).some((o) => o.id === ORG_A),
+    fBooking ? `state=${fBooking.state} status=${fBooking.status} org=${fBooking.organizationId}` : outcome(fClaim));
+
   const loadB = await loadAs(t.dspB);
   record(S, '組織 B 的 state-load 看不到完整門牌',
     loadB.status === 200 && !JSON.stringify(loadB.data || {}).includes('188號'), outcome(loadB));
