@@ -107,7 +107,7 @@ authMigrateCredentialsToSheet_()
 
 用 `authPropertiesUsage_()` 確認用量，遷移後 `percentUsed` 應該掉到個位數。
 
-詳見 [MIGRATION_12_26_1.md](../MIGRATION_12_26_1.md)。
+此操作說明屬早期 Apps Script 架構；該版本的獨立遷移文件已不在版本庫。歷史部署背景見[封存文件](../docs/archive/DEPLOYMENT_LEGACY.md)，正式操作前請先確認目前使用路徑與資料狀態。
 
 ### 4. 確認健康檢查
 

@@ -1,8 +1,12 @@
-# 安心接送 V12.26.1｜正式上線部署說明
+# 舊版部署筆記（V12.26 系列）
 
-> V12.26.0 移除全部 demo 程式碼，並修正 7 項安全問題（詳見 [SECURITY_HARDENING.md](SECURITY_HARDENING.md)）。
+> **歷史文件，不是目前部署手冊。** 內容描述早期 Apps Script／Google Sheets 與 Netlify 的部署步驟，部分架構及版本已過時。不要直接照此操作正式環境。現行資料庫 migration 以 `supabase/migrations/` 為準；正式部署前須核對目標環境、目前程式與授權。
 >
-> V12.26.1 另外改了資料存放位置（密碼憑證改存工作表、暫時狀態改用 CacheService），部署步驟見 [MIGRATION_12_26_1.md](MIGRATION_12_26_1.md)。
+> 原文件引用的 `MIGRATION_12_26_1.md` 不在版本庫，因此相關步驟無法由此文件完整還原。
+
+> V12.26.0 移除全部 demo 程式碼，並修正 7 項安全問題（詳見 [安全強化紀錄](SECURITY_HARDENING_12.26.md)）。
+>
+> V12.26.1 另外改了資料存放位置（密碼憑證改存工作表、暫時狀態改用 CacheService）。
 >
 > **本輪改了前後端契約，必須整包部署**：`/identity/update-account` 新增 `currentPassword`、gateway envelope 新增 `clientIp`。只替換 `index.html` 會導致帳號更新失敗。
 
@@ -170,7 +174,7 @@ V12.25.79 新增／使用的 Identity API：
 ## 7. migration 0008（接案、司機執行、需求者取消）部署順序
 
 0008 尚未部署到任何環境。正式資料庫執行 SQL 與部署都需另行取得同意（見
-[CLAUDE.md](CLAUDE.md) 授權邊界）；以下是取得同意後的操作順序。
+[CLAUDE.md](../../CLAUDE.md) 授權邊界）；以下是取得同意後的操作順序。
 
 ### 為什麼一定是「先 migration、後程式」
 

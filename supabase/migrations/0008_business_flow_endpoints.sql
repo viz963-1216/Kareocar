@@ -12,7 +12,7 @@
 -- 做法：一般寫入管道（state-mutate）的權限維持不變；三個流程改走 security
 -- definer 函式，由函式自己驗證身分、狀態與允許的欄位，只改必要的鍵。
 --
--- 鎖與改寫（部署前必讀，細節見 PR 描述與 DEPLOYMENT.md）：
+-- 鎖與改寫（部署前必讀，細節見 PR 描述與 docs/archive/DEPLOYMENT_LEGACY.md）：
 --   * 本檔「不」新增或刪除任何資料表欄位、不建立索引，所以不會改寫 app_state。
 --     早期草稿曾新增 stored generated column，會整張表改寫並長時間持有
 --     ACCESS EXCLUSIVE 鎖，已移除；隔離 CI 以 pg_relation_filenode 驗證不改寫。

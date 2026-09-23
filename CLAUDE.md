@@ -4,10 +4,12 @@
 
 專案本身的技術規則不在這裡重複，見：
 
-- [README.md](README.md) — 架構、測試指令、版本紀錄
+- [README.md](README.md) — 專案概覽與測試指令
 - [supabase/README.md](supabase/README.md) — schema、RLS、本機測試環境
-- [DEPLOYMENT.md](DEPLOYMENT.md) — 部署與正式上線檢查
-- [SECURITY_HARDENING.md](SECURITY_HARDENING.md) — 安全強化紀錄
+- [docs/specification/v1/](docs/specification/v1/) — 第一版需求與驗收基準
+- [docs/archive/](docs/archive/) — 舊版部署與安全紀錄，只供追溯
+
+舊部署文件含有早期 Apps Script／Netlify 操作步驟，並非目前核准的部署手冊；正式操作前須以當前程式、migration 及環境設定重新確認。
 
 其中兩條最容易踩、且後果最嚴重的，在這裡再提一次：
 
