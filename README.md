@@ -6,6 +6,16 @@
 - 展示網站：https://care-ride-commercial-readiness.netlify.app
 - 私有原始碼：https://github.com/viz963-1216/care-ride-commercial-readiness
 
+## 產品規格與交付計畫
+
+Kareocar 第一版收斂文件：
+
+- [正式需求基準](docs/specification/v1/PRODUCT_SPEC.md)
+- [程式完成度核對](docs/specification/v1/IMPLEMENTATION_STATUS.md)
+- [開發順序與驗收清單](docs/specification/v1/DEVELOPMENT_ACCEPTANCE.md)
+
+規格文件記錄產品需求與目前核對狀態；其中的需求不代表功能已實作或通過正式驗收。
+
 ## 架構
 
 ```
