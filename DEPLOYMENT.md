@@ -196,7 +196,9 @@ V12.25.79 新增／使用的 Identity API：
 ### 步驟
 
 1. **確認目標庫**：Production 與 Deploy preview／Branch deploy 的 `DATABASE_URL`
-   是否同一個庫尚未核實。未核實前不在預覽環境做寫入驗收。
+   是否同一個庫尚未核實。未核實前不在預覽環境做寫入驗收。設定了
+   `PRODUCTION_SUPABASE_PROJECT_REF` 之後，非 production 的建置若指向正式專案會在
+   建置檢查失敗（`reason=NONPROD_TARGETS_PRODUCTION`），見 supabase/README.md。
 2. **套用前檢查長交易**（有結果就先等它結束或查明原因，不要直接套用）：
 
    ```sql

@@ -6,7 +6,9 @@
   #
   # 這支腳本只 require netlify/functions/_db-config.js——那個模組不相依 pg、
   # 完全沒有 require、不做任何 I/O，所以不會建立連線池也連不上資料庫。
-  # 它只驗證「設定能不能被解析」，不驗證資料庫可連線、RLS、帳號或業務流程。
+  # 它只驗證「設定能不能被解析」，以及非 production 的建置沒有指向正式 Supabase
+  # 專案（比對非機密變數 PRODUCTION_SUPABASE_PROJECT_REF），不驗證資料庫可連線、
+  # RLS、帳號或業務流程。非 production context 若沒有設定這個變數，建置會失敗。
   #
   # 檢查失敗會以非零退出碼中止建置，該次建置因此不會發布；已發布的版本
   # 繼續在線上。零相依，所以不需要 npm install 也能跑。

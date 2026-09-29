@@ -125,7 +125,13 @@ PGHOST=/tmp/pgrun PGPORT=5433 bash supabase/tests/rls.test.sh
 `?pool=1` 讀公開需求池。舊的 `/api/*` 路由完全沒動，兩套可以並存。
 
 需要的 Netlify 環境變數：`DATABASE_URL`、`AUTH_SESSION_SECRET`、`AUTH_PASSWORD_PEPPER`、
-選用的 `AUTH_PBKDF2_ITERATIONS`。
+`PRODUCTION_SUPABASE_PROJECT_REF`，選用的 `AUTH_PBKDF2_ITERATIONS`。
+
+`PRODUCTION_SUPABASE_PROJECT_REF` 是正式 Supabase 專案的 ref（主控台網址
+`/project/<ref>` 那一段），不是機密，所有 deploy context 設同一個值。建置檢查
+用它擋下「非 production 的建置連到正式資料庫」：pooler 連線比對使用者名後綴
+（`care_ride_app.<ref>`），直連比對主機名（`db.<ref>.supabase.co`）。非 production
+context 沒設定這個變數時，建置會失敗，因為無從判斷。
 
 ## 已知還沒處理
 
