@@ -30,7 +30,6 @@ process.env.DATABASE_URL = `postgresql://care_ride_app@${host}:${process.env.PGP
 process.env.AUTH_SESSION_SECRET = 'synthetic-session-secret-e2e-0123456789';
 process.env.AUTH_PASSWORD_PEPPER = 'synthetic-password-pepper-e2e-0123456789';
 process.env.AUTH_PBKDF2_ITERATIONS = '1000';
-process.env.GOOGLE_CLIENT_ID = 'synthetic-e2e.apps.googleusercontent.com';
 
 const { Pool } = require('pg');
 const admin = new Pool({ host, port: Number(process.env.PGPORT), database: 'careride_e2e_test', user: 'postgres' });

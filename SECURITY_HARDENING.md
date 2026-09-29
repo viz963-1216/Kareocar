@@ -104,6 +104,8 @@
 
 ### 1. Apps Script 有 6 支函式未納入版本控制
 
+> **已不適用**：Apps Script 與 Google Sheets 已整個移除（#15）。以下保留為歷史紀錄。
+
 `getSpreadsheet_`、`readTable_`、`writeAudit_`、`requireConfig_`、`createBooking_`、`updateBooking_` 被呼叫但不在 repo 內。
 
 影響：**repo 目前不是完整的後端來源**，Apps Script 專案若出問題無法從 GitHub 復原。也因為看不到 `readTable_` 是否有快取，下面第 3 點的實際嚴重程度無法評估。

@@ -10,7 +10,7 @@
  * 的殘骸——Apps Script 版是靠手動補償刪除來達成這件事的。
  */
 
-const { json, parseBody, handleError, clientIp } = require('./_apps-script');
+const { json, parseBody, handleError, clientIp } = require('./_http');
 const { withoutUser, withUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
 

@@ -1190,10 +1190,10 @@ button:focus-visible,.btn:focus-visible,.nav-btn:focus-visible,input:focus-visib
 @media(max-width:639px){
   #revokeMembershipModal,#organizationStatusModal,#vehicleLifecycleModal{align-items:center;padding:18px}
   #revokeMembershipModal .modal-panel,#organizationStatusModal .modal-panel,#vehicleLifecycleModal .modal-panel{width:100%;max-width:430px;border-radius:20px;max-height:80dvh}
-  #createTripModal,#careRecipientEditModal,#benefitRulesetModal,#benefitAssessmentModal,#benefitImportModal,#oauthConfigModal{align-items:stretch;padding:0}
-  #createTripModal .modal-panel,#careRecipientEditModal .modal-panel,#benefitRulesetModal .modal-panel,#benefitAssessmentModal .modal-panel,#benefitImportModal .modal-panel,#oauthConfigModal .modal-panel{width:100%;max-width:none;height:100dvh;max-height:100dvh;border-radius:0;padding:18px 16px calc(24px + env(safe-area-inset-bottom))}
-  #createTripModal .modal-head,#careRecipientEditModal .modal-head,#benefitRulesetModal .modal-head,#benefitAssessmentModal .modal-head,#benefitImportModal .modal-head,#oauthConfigModal .modal-head{position:sticky;top:-18px;z-index:3;background:#fff;padding:16px 0 12px;border-bottom:1px solid var(--line)}
-  #createTripModal .modal-actions,#careRecipientEditModal .modal-actions,#benefitRulesetModal .modal-actions,#benefitAssessmentModal .modal-actions,#benefitImportModal .modal-actions,#oauthConfigModal .modal-actions{position:sticky;bottom:-1px;background:linear-gradient(180deg,rgba(255,255,255,.82),#fff 32%);padding-top:14px;padding-bottom:max(2px,env(safe-area-inset-bottom));z-index:4}
+  #createTripModal,#careRecipientEditModal,#benefitRulesetModal,#benefitAssessmentModal,#benefitImportModal{align-items:stretch;padding:0}
+  #createTripModal .modal-panel,#careRecipientEditModal .modal-panel,#benefitRulesetModal .modal-panel,#benefitAssessmentModal .modal-panel,#benefitImportModal .modal-panel .modal-panel{width:100%;max-width:none;height:100dvh;max-height:100dvh;border-radius:0;padding:18px 16px calc(24px + env(safe-area-inset-bottom))}
+  #createTripModal .modal-head,#careRecipientEditModal .modal-head,#benefitRulesetModal .modal-head,#benefitAssessmentModal .modal-head,#benefitImportModal .modal-head .modal-head{position:sticky;top:-18px;z-index:3;background:#fff;padding:16px 0 12px;border-bottom:1px solid var(--line)}
+  #createTripModal .modal-actions,#careRecipientEditModal .modal-actions,#benefitRulesetModal .modal-actions,#benefitAssessmentModal .modal-actions,#benefitImportModal .modal-actions .modal-actions{position:sticky;bottom:-1px;background:linear-gradient(180deg,rgba(255,255,255,.82),#fff 32%);padding-top:14px;padding-bottom:max(2px,env(safe-area-inset-bottom));z-index:4}
 }
 
 
@@ -1915,20 +1915,6 @@ body.driver-mode .route-row.active{border-color:#9AC5F5;background:var(--cr-blue
       <button class="btn outline sm block" id="forgotPasswordBtn" type="button">忘記密碼</button>
       <button class="btn secondary sm block" id="openRegisterBtn" type="button">新增帳號</button>
     </div>
-    <!-- 社群登入暫時停用。Google 登入原本由 Apps Script 簽發 session token，
-     身分系統移到 Postgres 之後兩邊的密鑰對不上，按下去只會失敗；Apple 與
-     Facebook 從商用化那一輪起就沒有開放。與其留著三顆按不動的按鈕讓使用者
-     卡在登入頁，先整區隱藏。程式都留著，等 Google 登入改接 Postgres 之後
-     把 hidden 拿掉即可。 -->
-    <div hidden data-disabled-reason="social-login-pending-postgres-migration">
-<div class="social-login-divider">或使用其他帳號</div>
-    <div class="social-login-grid">
-      <button class="social-btn" id="googleLoginBtn" type="button"><svg class="social-logo google" viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.35 12.2c0-.69-.06-1.2-.19-1.74H12v3.48h5.38a4.6 4.6 0 0 1-2 3.02v2.5h3.23c1.89-1.74 2.74-4.31 2.74-7.26Z"/><path fill="#34A853" d="M12 21.7c2.62 0 4.82-.86 6.43-2.34l-3.23-2.5c-.86.58-1.97.98-3.2.98-2.52 0-4.66-1.7-5.43-4.02H3.24v2.58A9.7 9.7 0 0 0 12 21.7Z"/><path fill="#FBBC05" d="M6.57 13.82A5.8 5.8 0 0 1 6.27 12c0-.63.11-1.24.3-1.82V7.6H3.24A9.7 9.7 0 0 0 2.3 12c0 1.57.38 3.05.94 4.4l3.33-2.58Z"/><path fill="#EA4335" d="M12 6.16c1.43 0 2.7.49 3.72 1.46l2.78-2.78A9.4 9.4 0 0 0 12 2.3 9.7 9.7 0 0 0 3.24 7.6l3.33 2.58C7.34 7.86 9.48 6.16 12 6.16Z"/></svg><span>使用 Google 登入</span></button>
-      <button class="social-btn apple" id="appleLoginBtn" type="button"><svg class="social-logo apple-mark" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M16.8 12.6c0-2 1.65-3 1.72-3.05-.93-1.36-2.38-1.55-2.9-1.57-1.23-.13-2.4.72-3.02.72-.63 0-1.58-.7-2.6-.68-1.33.02-2.56.77-3.25 1.96-1.39 2.4-.35 5.95 1 7.9.66.96 1.45 2.03 2.48 1.99 1-.04 1.38-.64 2.59-.64 1.2 0 1.54.64 2.6.62 1.07-.02 1.75-.96 2.41-1.92.76-1.1 1.07-2.17 1.09-2.23-.02 0-2.12-.82-2.12-3.1ZM14.81 6.68c.55-.67.92-1.6.82-2.53-.8.03-1.77.53-2.34 1.2-.51.59-.96 1.53-.84 2.43.9.07 1.81-.45 2.36-1.1Z"/></svg><span>使用 Apple 登入</span></button>
-      <button class="social-btn" id="facebookLoginBtn" type="button"><svg class="social-logo facebook" viewBox="0 0 24 24" aria-hidden="true"><path fill="#1877F2" d="M12 2.25a9.75 9.75 0 1 0 0 19.5c.55 0 1.1-.05 1.62-.14v-6.83h2.27l.36-2.78h-2.63v-1.78c0-.8.22-1.36 1.38-1.36h1.47V6.38c-.25-.03-1.12-.11-2.13-.11-2.1 0-3.54 1.28-3.54 3.64V12H8.42v2.78h2.38v6.97A9.75 9.75 0 0 0 12 2.25Z"/></svg><span>使用 Facebook 登入</span></button>
-    </div>
-    <div class="privacy-minimal">社群登入僅建立必要的 帳號身分欄位：<strong>姓名、電子信箱、手機號碼</strong>。不要求生日、性別、好友、相片、聯絡人或其他社群資料。手機號碼若登入服務沒有提供，會由本人自行填寫。</div>
-    </div>
 <div id="loginReleaseVersion" class="app-version-note">版本 V12.25.81｜正式版</div>
 <div class="login-note">補助資訊與試算會優先使用可追溯的官方公開來源；若暫時無法更新，系統會保留最近成功資料或規則快照。試算結果僅供參考，正式資格與額度仍以主管機關核定為準。</div>
   </div>
@@ -1963,39 +1949,6 @@ body.driver-mode .route-row.active{border-color:#9AC5F5;background:var(--cr-blue
 
   <nav class="mobile-nav" id="mobileNav"></nav>
 </div>
-
-<div class="modal" id="googleIdentityModal"><div class="modal-panel small">
-  <div class="modal-head"><div><h3>使用 Google 登入</h3><p class="small muted">由 Google 官方登入，並由安心接送伺服器端驗證身分。</p></div><button class="icon-btn" data-close="googleIdentityModal" type="button" aria-label="關閉視窗">×</button></div>
-  <div id="googleIdentityStatus" class="smart-modal-hint">正在載入安全登入設定…</div>
-  <div id="googleIdentityButton" style="display:flex;justify-content:center;min-height:46px;margin:18px 0"></div>
-  <div class="privacy-minimal">Google ID Token 只會傳到本站的安全登入端點；瀏覽器不直接呼叫 Apps Script，也不保存 Client Secret。</div>
-</div></div>
-
-<div class="modal" id="socialLoginModal"><div class="modal-panel small">
-  <div class="modal-head"><h3 id="socialLoginTitle">社群登入</h3><button class="icon-btn" data-close="socialLoginModal" type="button" aria-label="關閉視窗">×</button></div>
-  <p class="small muted" id="socialLoginDescription">使用者本人完成社群帳號驗證後，系統會自動建立或綁定使用者，只補齊本系統需要的姓名、電子信箱與手機號碼。</p>
-  <div class="social-demo-fields">
-    <div class="form-field"><label for="socialNameInput">姓名</label><input id="socialNameInput" autocomplete="name" placeholder="例如：王小明" /></div>
-    <div class="form-field"><label for="socialEmailInput">電子信箱</label><input id="socialEmailInput" type="email" autocomplete="email" placeholder="請輸入電子信箱" /></div>
-    <div class="form-field"><label for="socialPhoneInput">手機號碼 <span class="field-optional">登入服務未提供時由本人填寫</span></label><input id="socialPhoneInput" inputmode="tel" autocomplete="tel" placeholder="請輸入手機號碼" /></div>
-  </div>
-  <div class="privacy-minimal">系統只保存姓名、電子信箱與手機號碼，以及社群平台提供的不可讀取個資之帳號識別碼（服務提供者使用者識別碼）用來安全綁定同一個使用者。使用者不需要由 平台超級管理者預先新增；谷歌／蘋果／臉書 未提供手機時，由本人自行補填。</div>
-  <div class="modal-actions"><button type="button" class="btn secondary" data-close="socialLoginModal">取消</button><button class="btn primary" id="confirmSocialLoginBtn" type="button">完成登入</button></div>
-</div></div>
-
-<div class="modal" id="oauthConfigModal"><div class="modal-panel small">
-  <div class="modal-head"><h3>社群登入設定</h3><button class="icon-btn" data-close="oauthConfigModal" type="button" aria-label="關閉視窗">×</button></div>
-  <p class="small muted">只填各平台公開的 用戶端識別碼／應用程式識別碼；不要把任何 用戶端密鑰、私密金鑰 放進這個 網頁檔案。</p>
-  <div class="form-grid">
-    <div class="form-field"><label for="oauthGoogleClientId">Google Client ID</label><input id="oauthGoogleClientId" disabled placeholder="正式版由 Netlify 環境變數 GOOGLE_CLIENT_ID 管理" /></div>
-    <div class="form-field"><label for="oauthAppleClientId">蘋果服務識別碼</label><input id="oauthAppleClientId" placeholder="請輸入蘋果服務識別碼" /></div>
-    <div class="form-field"><label for="oauthAppleRedirectURI">蘋果重新導向網址</label><input id="oauthAppleRedirectURI" placeholder="請輸入重新導向網址" /></div>
-    <div class="form-field"><label for="oauthFacebookAppId">臉書應用程式識別碼</label><input id="oauthFacebookAppId" inputmode="numeric" placeholder="請輸入臉書應用程式識別碼" /></div>
-    <div class="form-field"><label for="oauthFacebookApiVersion">臉書資料介面版本</label><input id="oauthFacebookApiVersion" placeholder="請輸入版本號" /></div>
-  </div>
-  <div class="privacy-minimal">谷歌僅要求 <strong>登入識別／電子信箱／基本資料</strong>；蘋果僅要求 <strong>姓名／電子信箱</strong>；臉書僅要求 <strong>電子信箱</strong> 與預設公開基本資料。手機號碼都由本系統本人補填，不另外要求社群平台權限。Google 登入已改由 Netlify Function 以 Google 官方驗證函式庫驗證 ID Token，再連接 Apps Script 使用者／組織身分資料；Apple／Facebook 目前仍保留既有流程。</div>
-  <div class="modal-actions"><button type="button" class="btn secondary" data-close="oauthConfigModal">取消</button><button class="btn primary" id="saveOauthConfigBtn" type="button">儲存設定</button></div>
-</div></div>
 
 <div class="modal" id="registerRequesterModal"><div class="modal-panel small">
   <div class="modal-head"><h3>新增需求者身分</h3><button class="icon-btn" data-close="registerRequesterModal" type="button" aria-label="關閉視窗">×</button></div>
@@ -2426,16 +2379,12 @@ const APP_CONFIG = Object.freeze({
   schemaVersion: 44,
   storageKey: 'careRideV122579ReportDemoDB',
   sessionKey: 'careRideV122579ReportDemoSession',
-  oauthConfigKey: 'careRideV1213OAuthConfig',
   loginSecurityKey: 'careRideV122579ReportDemoLoginSecurity',
   defaultOrganizationId: 'org_demo_1',
   requesterOrganizationId: 'org_requesters',
-  authProxyUrl: '/api/google-auth',
-  runtimeConfigUrl: '/api/runtime-config',
   identityRegisterUrl: '/api/v2/register-requester',
   identityPasswordLoginUrl: '/api/v2/password-login',
   identityCreateStaffUrl: '/api/v2/create-staff',
-  identityCompleteSocialProfileUrl: '/api/identity/complete-social-profile',
   identitySessionUrl: '/api/v2/session',
   backendHealthUrl: '/api/health',
   authSessionTokenKey: 'careRideV122579ReportDemoAuthSessionToken',
@@ -3075,7 +3024,7 @@ function updateStorageHealthUI(){
 }
 setTimeout(updateStorageHealthUI,0);
 
-let Audit, SystemReport, Identity, SocialAuth, CloudIdentity, LoginSecurity, Organization, CareRecipient, Booking, Dispatch, Trip, Notification, Benefit, Analytics;
+let Audit, SystemReport, Identity, CloudIdentity, LoginSecurity, Organization, CareRecipient, Booking, Dispatch, Trip, Notification, Benefit, Analytics;
 
 
 function sharedBookingEffectiveNeeds(booking){
@@ -3318,33 +3267,6 @@ CareRecipient = {
 
 
 {
-function parseCSV(text){
-  const rows=[]; let row=[],cell='',quoted=false;
-  for(let i=0;i<text.length;i++){
-    const ch=text[i],next=text[i+1];
-    if(ch==='"'&&quoted&&next==='"'){ cell+='"'; i++; }
-    else if(ch==='"') quoted=!quoted;
-    else if(ch===','&&!quoted){ row.push(cell); cell=''; }
-    else if((ch==='\n'||ch==='\r')&&!quoted){
-      if(ch==='\r'&&next==='\n') i++;
-      row.push(cell); cell='';
-      if(row.some(v=>String(v).trim()!=='')) rows.push(row);
-      row=[];
-    } else cell+=ch;
-  }
-  if(cell.length||row.length){ row.push(cell); if(row.some(v=>String(v).trim()!=='')) rows.push(row); }
-  return rows;
-}
-function pickField(obj,names){ for(const name of names){ if(Object.prototype.hasOwnProperty.call(obj,name)&&String(obj[name]).trim()!=='') return String(obj[name]).trim(); } return ''; }
-function normalizeDateText(value){
-  const s=String(value||'').trim();
-  const m=s.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
-  if(m) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
-  const short=s.match(/(\d{1,2})[\/\-](\d{1,2})/);
-  if(short) return `${new Date().getFullYear()}-${String(short[1]).padStart(2,'0')}-${String(short[2]).padStart(2,'0')}`;
-  return s;
-}
-function normalizeTimeText(value){ const m=String(value||'').trim().match(/(\d{1,2}):(\d{2})/); return m?`${String(m[1]).padStart(2,'0')}:${m[2]}`:String(value||'').trim(); }
 
 
 // ============================================================================
@@ -3452,27 +3374,6 @@ const AppStateDatabase={
 };
 window.AppStateDatabase=AppStateDatabase;
 
-function canonicalExternalBookingId(value=''){
-  return String(value||'').trim().replace(/\s+/g,' ').slice(0,160);
-}
-function stableHash(value=''){
-  let h=2166136261;
-  const text=String(value||'');
-  for(let i=0;i<text.length;i++){ h^=text.charCodeAt(i); h=Math.imul(h,16777619); }
-  return (h>>>0).toString(36);
-}
-function googleSheetExternalBookingId(obj,b){
-  const explicit=canonicalExternalBookingId(pickField(obj,[
-    '預約編號','預約ID','預約 ID','Booking ID','BookingID','booking_id','externalBookingId','External Booking ID','表單回覆編號','回覆編號'
-  ]));
-  if(explicit) return `sheet:${explicit}`;
-  const submitted=canonicalExternalBookingId(b.submittedAt);
-  if(submitted) return `form_timestamp:${submitted}`;
-  return '';
-}
-function googleSheetInternalBookingId(organizationId,externalBookingId){
-  return `booking_gs_${stableHash(`${organizationId||'no_org'}|${externalBookingId}`)}`;
-}
 const BOOKING_STATE = Object.freeze({
   OPEN:'open',
   CLAIMED:'claimed',
@@ -6721,14 +6622,6 @@ const ROLE_PERMISSIONS = Object.freeze({
   ])
 });
 
-const OAUTH_DEFAULTS=Object.freeze({
-  googleClientId:'',
-  appleClientId:'',
-  appleRedirectURI:'',
-  facebookAppId:'',
-  facebookApiVersion:'v23.0'
-});
-
 function membershipStatus(membership){ return membership?.status||'active'; }
 function isActiveMembership(membership){ return membershipStatus(membership)==='active'; }
 function permissionsForRole(role){ return ROLE_PERMISSIONS[role]||[]; }
@@ -6803,9 +6696,6 @@ function verifyOtpChallenge(type,phone,code){
   if(String(code)!==challenge.code) return {ok:false,error:'驗證碼錯誤'};
   return {ok:true,challenge};
 }
-function externalIdentity(provider,providerUserId){
-  return (store.state.externalIdentities||[]).find(x=>x.provider===provider&&x.providerUserId===String(providerUserId));
-}
 function ensureRequesterMembership(userId,preferredMembershipId=null){
   const reqOrg=requesterOrganization(); if(!reqOrg) return {ok:false,error:'需求者組織尚未建立'};
   const rows=store.state.memberships.filter(m=>m.userId===userId&&m.organizationId===reqOrg.id&&m.role==='requester').sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0));
@@ -6820,19 +6710,6 @@ function ensureRequesterMembership(userId,preferredMembershipId=null){
   recordMembershipEvent({membershipId:membership.id,eventType:'created',fromStatus:null,toStatus:'active',fromRole:null,toRole:'requester',actorUserId:null,note:'需求者自行建立／社群登入建立 Membership'});
   return {ok:true,membership,created:true};
 }
-function resolveUserByEmailPhone(email,phone){
-  const cleanEmail=normalizeIdentityEmail(email),cleanPhone=digitsOnly(phone);
-  const emailUser=cleanEmail?store.state.users.find(u=>normalizeIdentityEmail(u.email)===cleanEmail):null;
-  const phoneUser=cleanPhone?store.state.users.find(u=>digitsOnly(u.phone)===cleanPhone):null;
-  if(emailUser&&phoneUser&&emailUser.id!==phoneUser.id) return {ok:false,error:'電子信箱與手機分別屬於不同帳號，請聯絡 平台超級管理者處理帳號合併'};
-  return {ok:true,user:emailUser||phoneUser||null,emailUser,phoneUser};
-}
-function createExternalIdentity({provider,providerUserId,userId,email}){
-  const existing=externalIdentity(provider,providerUserId);if(existing)return existing;
-  const row={id:uid('extid'),provider,providerUserId:String(providerUserId),userId,emailAtLink:normalizeIdentityEmail(email),linkedAt:nowISO(),lastLoginAt:nowISO()};
-  store.mutate(db=>{db.externalIdentities=db.externalIdentities||[];db.externalIdentities.push(row);});return row;
-}
-function touchExternalIdentity(id){ store.mutate(db=>{const x=(db.externalIdentities||[]).find(r=>r.id===id);if(x)x.lastLoginAt=nowISO();}); }
 function startMembershipSession(user,membership,provider='password'){
   session={userId:user.id,membershipId:membership.id,organizationId:membership.organizationId,loginAt:nowISO(),loginProvider:provider};persistSession();
 }
@@ -7005,55 +6882,6 @@ Identity = {
     Audit.log('identity.requester_identity_revoked',`撤銷需求者身分：${user.name}`,{actorUserId:this.currentUser()?.id,targetUserId:userId,organizationId:reqOrg.id,membershipId:live.id});
     return {ok:true,removed:true};
   },
-  prepareSocialLogin({provider,providerUserId,name,email}){
-    if(!['google','apple','facebook'].includes(provider)||!providerUserId)return {ok:false,error:'無效的社群登入識別'};
-    const linked=externalIdentity(provider,providerUserId);
-    if(linked){
-      const user=store.state.users.find(u=>u.id===linked.userId&&u.active);if(!user)return {ok:false,error:'此社群帳號綁定的 User 已停用'};if(isPlatformSuperAdmin(user))return {ok:false,error:'平台超級管理者請使用平台帳號登入'};
-      if(validIdentityPhone(user.phone)){
-        const req=ensureRequesterMembership(user.id);if(!req.ok)return req;touchExternalIdentity(linked.id);startMembershipSession(user,req.membership,provider);
-        Audit.log('identity.social_login_success',`${provider} 登入 ${user.name}`,{actorUserId:user.id,organizationId:req.membership.organizationId,membershipId:req.membership.id,provider,linked:true});
-        return {ok:true,loggedIn:true,user,membership:req.membership};
-      }
-      return {ok:true,needsProfile:true,linkedUserId:user.id,profile:{provider,providerUserId,name:user.name||name||'',email:user.email||email||'',phone:user.phone||''}};
-    }
-    const cleanEmail=normalizeIdentityEmail(email),emailUser=cleanEmail?store.state.users.find(u=>normalizeIdentityEmail(u.email)===cleanEmail):null;
-    if(emailUser){
-      if(isPlatformSuperAdmin(emailUser))return {ok:false,error:'平台超級管理者請使用平台帳號登入'};
-      if(validIdentityPhone(emailUser.phone)){
-        const ext=createExternalIdentity({provider,providerUserId,userId:emailUser.id,email:cleanEmail}),req=ensureRequesterMembership(emailUser.id);if(!req.ok)return req;touchExternalIdentity(ext.id);startMembershipSession(emailUser,req.membership,provider);
-        Audit.log('identity.social_identity_linked',`${provider} 綁定既有 User ${emailUser.name}`,{actorUserId:emailUser.id,organizationId:req.membership.organizationId,membershipId:req.membership.id,provider});
-        return {ok:true,loggedIn:true,user:emailUser,membership:req.membership,identityAdded:req.created};
-      }
-      return {ok:true,needsProfile:true,linkedUserId:emailUser.id,profile:{provider,providerUserId,name:emailUser.name||name||'',email:cleanEmail,phone:emailUser.phone||''}};
-    }
-    return {ok:true,needsProfile:true,profile:{provider,providerUserId,name:name||'',email:cleanEmail,phone:''}};
-  },
-  completeSocialLogin({provider,providerUserId,name,email,phone,backendUserId=null,backendMemberships=[]}){
-    if(!['google','apple','facebook'].includes(provider)||!providerUserId)return {ok:false,error:'無效的社群登入識別'};
-    const cleanName=String(name||'').trim(),cleanEmail=normalizeIdentityEmail(email),cleanPhone=digitsOnly(phone);
-    if(!cleanName)return {ok:false,error:'請提供姓名'};if(!validIdentityEmail(cleanEmail))return {ok:false,error:'請提供正確電子信箱'};if(!validIdentityPhone(cleanPhone))return {ok:false,error:'請輸入 09 開頭共 10 位手機號碼'};
-    let linked=externalIdentity(provider,providerUserId),user=linked?store.state.users.find(u=>u.id===linked.userId):null;
-    if(!user){const resolved=resolveUserByEmailPhone(cleanEmail,cleanPhone);if(!resolved.ok)return resolved;user=resolved.user;}
-    if(isPlatformSuperAdmin(user))return {ok:false,error:'平台超級管理者請使用平台帳號登入'};
-    if(user&&user.phone&&digitsOnly(user.phone)!==cleanPhone)return {ok:false,error:'此社群帳號對應的既有 User 使用不同手機，請聯絡 平台超級管理者處理帳號綁定'};
-    let createdUser=false;
-    if(!user){
-      const preferredBackendId=String(backendUserId||'').trim();
-      if(preferredBackendId&&store.state.users.some(u=>u.id===preferredBackendId))return {ok:false,error:'後端使用者識別碼已被其他帳號使用'};
-      user={id:preferredBackendId||uid('usr'),name:cleanName,email:cleanEmail,phone:cleanPhone,password:'',active:true,createdAt:nowISO()};
-      createdUser=true;
-    }
-    store.mutate(db=>{
-      if(createdUser)db.users.push(user);
-      const u=db.users.find(x=>x.id===user.id);if(!u.name)u.name=cleanName;if(!u.email)u.email=cleanEmail;if(!u.phone)u.phone=cleanPhone;u.updatedAt=nowISO();
-    });
-    if(!linked)linked=createExternalIdentity({provider,providerUserId,userId:user.id,email:cleanEmail});else touchExternalIdentity(linked.id);
-    const backendRequesterMembership=(Array.isArray(backendMemberships)?backendMemberships:[]).find(m=>String(m.role||'').toLowerCase()==='requester'&&String(m.status||'').toLowerCase()==='active');
-    const req=ensureRequesterMembership(user.id,backendRequesterMembership?.membershipId||null);if(!req.ok)return req;startMembershipSession(store.state.users.find(u=>u.id===user.id),req.membership,provider);
-    Audit.log('identity.social_login_success',`${provider} 登入 ${user.name}`,{actorUserId:user.id,organizationId:req.membership.organizationId,membershipId:req.membership.id,provider,createdUser,identityAdded:req.created});
-    return {ok:true,user:store.state.users.find(u=>u.id===user.id),membership:req.membership,createdUser,identityAdded:req.created};
-  },
   updateMemberProfile(membershipId,{name,phone}){
     if(!this.can('platform.membership.manage'))return {ok:false,error:'只有 平台超級管理者可以修改組織成員資料'};
     const membership=store.state.memberships.find(m=>m.id===membershipId);if(!membership)return {ok:false,error:'找不到 Membership'};
@@ -7163,51 +6991,6 @@ Identity = {
   }
 };
 
-function oauthConfig(){
-  try{return {...OAUTH_DEFAULTS,...JSON.parse(LocalStore.getItem(APP_CONFIG.oauthConfigKey)||'{}')};}catch{return {...OAUTH_DEFAULTS};}
-}
-function persistOauthConfig(input){const next={...OAUTH_DEFAULTS,...input};LocalStore.setItem(APP_CONFIG.oauthConfigKey,JSON.stringify(next));return next;}
-let productionRuntimeConfigPromise=null;
-async function productionRuntimeConfig(){
-  if(productionRuntimeConfigPromise)return productionRuntimeConfigPromise;
-  productionRuntimeConfigPromise=(async()=>{
-    const response=await fetch(APP_CONFIG.runtimeConfigUrl,{
-      method:'GET',
-      headers:{'Accept':'application/json'},
-      credentials:'same-origin',
-      cache:'no-store'
-    });
-    const result=await response.json().catch(()=>null);
-    if(response.status===404)throw new Error('Netlify Functions 尚未部署；請部署完整專案，不要只替換 index.html');
-    if(!response.ok||!result?.ok)throw new Error(result?.error?.message||'無法載入 Google 登入設定');
-    const googleClientId=String(result?.data?.googleClientId||'').trim();
-    if(!googleClientId.endsWith('.apps.googleusercontent.com'))throw new Error('正式環境尚未設定有效的 Google Client ID');
-    return Object.freeze({googleClientId});
-  })().catch(error=>{
-    productionRuntimeConfigPromise=null;
-    throw error;
-  });
-  return productionRuntimeConfigPromise;
-}
-function loadExternalScript(id,src){
-  return new Promise((resolve,reject)=>{if(document.getElementById(id)){resolve();return;}const script=document.createElement('script');script.id=id;script.src=src;script.async=true;script.defer=true;script.onload=()=>resolve();script.onerror=()=>reject(new Error('無法載入登入服務 SDK'));document.head.appendChild(script);});
-}
-function randomAuthValue(){const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);return Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');}
-function base64UrlBytes(value=''){const base=value.replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(value.length/4)*4,'=');const raw=atob(base);return Uint8Array.from(raw,c=>c.charCodeAt(0));}
-async function verifyAppleIdentityToken(idToken,clientId,expectedNonce){
-  const [h,p,sig]=String(idToken||'').split('.');if(!h||!p||!sig)throw new Error('Apple identity token 格式錯誤');
-  const header=JSON.parse(new TextDecoder().decode(base64UrlBytes(h))),payload=JSON.parse(new TextDecoder().decode(base64UrlBytes(p)));
-  const response=await fetch('https://appleid.apple.com/auth/keys');if(!response.ok)throw new Error('無法取得 Apple 驗證金鑰');
-  const keys=await response.json(),jwk=(keys.keys||[]).find(k=>k.kid===header.kid);if(!jwk)throw new Error('找不到 Apple token 對應金鑰');
-  const key=await crypto.subtle.importKey('jwk',jwk,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'},false,['verify']);
-  const valid=await crypto.subtle.verify({name:'RSASSA-PKCS1-v1_5'},key,base64UrlBytes(sig),new TextEncoder().encode(`${h}.${p}`));
-  if(!valid)throw new Error('Apple identity token 簽章驗證失敗');
-  if(payload.iss!=='https://appleid.apple.com')throw new Error('Apple identity token issuer 不正確');
-  const aud=Array.isArray(payload.aud)?payload.aud:[payload.aud];if(!aud.includes(clientId))throw new Error('Apple identity token audience 不正確');
-  if(Number(payload.exp||0)*1000<=Date.now())throw new Error('Apple identity token 已過期');
-  if(expectedNonce&&payload.nonce&&payload.nonce!==expectedNonce)throw new Error('Apple identity token nonce 不一致');
-  return payload;
-}
 
 
 function backendAuthToken(){return String(SessionStore.getItem(APP_CONFIG.authSessionTokenKey)||'');}
@@ -7249,11 +7032,6 @@ CloudIdentity=Object.freeze({
     const result=await backendJsonPost(APP_CONFIG.identitySessionUrl,{sessionToken:token});
     const data=result?.data||{};if(data.sessionToken)this.saveSessionToken(data.sessionToken);return data;
   },
-  async completeSocialProfile({phone,name,email}){
-    const token=this.token();if(!token)throw backendApiError('登入工作階段已遺失，請重新使用 Google 登入','SESSION_REQUIRED');
-    const result=await backendJsonPost(APP_CONFIG.identityCompleteSocialProfileUrl,{sessionToken:token,phone:String(phone||'').replace(/\D/g,''),name:String(name||'').trim(),email:String(email||'').trim()});
-    const data=result?.data||{};if(data.sessionToken)this.saveSessionToken(data.sessionToken);return data;
-  },
   async createStaff({organizationId,name,phone,password,role,alsoRequester=false}){
     const token=this.token();if(!token)throw backendApiError('登入工作階段已遺失，請重新登入','SESSION_REQUIRED');
     const result=await backendJsonPost(APP_CONFIG.identityCreateStaffUrl,{sessionToken:token,organizationId,name:String(name||'').trim(),phone:String(phone||'').replace(/\D/g,''),password:String(password||''),role:String(role||''),alsoRequester:!!alsoRequester});
@@ -7272,137 +7050,6 @@ CloudIdentity=Object.freeze({
   }
 });
 
-SocialAuth={
-  config:oauthConfig,
-  saveConfig:persistOauthConfig,
-  async start(provider){
-    
-    if(location.protocol==='file:')throw new Error('真實社群登入不能從 file:// 直接執行；請部署到 HTTPS 正式網站');
-    // 社群登入尚未移轉到 Postgres：Google 那條路會由 Apps Script 簽發 token，
-    // 而 session 現在由 Postgres 驗證，驗不過。先明確擋下，不要讓使用者撞到
-    // 看不懂的「簽章無效」。
-    throw new Error('社群登入整修中，請改用手機號碼與密碼登入');
-    if(provider==='google')return this.google();
-    throw new Error('正式版目前先開放 Google 與手機密碼登入');
-  },
-  async google(){
-    await loadExternalScript('google-gis-sdk','https://accounts.google.com/gsi/client');
-    if(!window.google?.accounts?.id)throw new Error('Google Identity Services 載入失敗');
-
-    const runtime=await productionRuntimeConfig();
-    const clientId=runtime.googleClientId;
-
-    return new Promise((resolve,reject)=>{
-      const modal=$('googleIdentityModal');
-      const button=$('googleIdentityButton');
-      const status=$('googleIdentityStatus');
-      if(!modal||!button||!status){reject(new Error('Google 登入元件不存在'));return;}
-
-      let settled=false;
-      const fail=(error)=>{
-        if(settled)return;
-        settled=true;
-        closeModal('googleIdentityModal');
-        reject(error instanceof Error?error:new Error(String(error||'Google 登入失敗')));
-      };
-
-      button.innerHTML='';
-      status.textContent='請使用 Google 官方按鈕完成登入。';
-
-      try{
-        window.google.accounts.id.initialize({
-          client_id:clientId,
-          auto_select:false,
-          cancel_on_tap_outside:false,
-          callback:async credentialResponse=>{
-            try{
-              const idToken=credentialResponse?.credential;
-              if(!idToken)throw new Error('Google 未回傳 ID Token');
-
-              status.textContent='正在由伺服器驗證 Google 身分…';
-
-              const response=await fetch(APP_CONFIG.authProxyUrl,{
-                method:'POST',
-                headers:{
-                  'Content-Type':'application/json',
-                  'Accept':'application/json'
-                },
-                credentials:'same-origin',
-                cache:'no-store',
-                body:JSON.stringify({id_token:idToken})
-              });
-
-              const result=await response.json().catch(()=>null);
-              if(response.status===404){
-                throw new Error('Netlify Google 登入 Function 尚未部署；請部署完整專案');
-              }
-              if(!response.ok||!result?.ok){
-                throw new Error(result?.error?.message||`Google 登入驗證失敗（HTTP ${response.status}）`);
-              }
-
-              const identity=result?.identity||{};
-              const backendUser=result?.data?.user||{};
-
-              if(!identity.sub)throw new Error('後端未回傳 Google 使用者識別碼');
-
-              if(settled)return;
-              settled=true;
-              closeModal('googleIdentityModal');
-              resolve({
-                provider:'google',
-                providerUserId:String(identity.sub),
-                name:backendUser.displayName||identity.name||'',
-                email:backendUser.email||identity.email||'',
-                backendVerified:true,
-                backendUserId:backendUser.userId||null,
-                backendMemberships:Array.isArray(result?.data?.memberships)?result.data.memberships:[],
-                backendSessionToken:result?.data?.sessionToken||''
-              });
-            }catch(error){
-              fail(error);
-            }
-          }
-        });
-
-        window.google.accounts.id.renderButton(button,{
-          type:'standard',
-          theme:'outline',
-          size:'large',
-          text:'signin_with',
-          shape:'rectangular',
-          logo_alignment:'left',
-          width:320,
-          locale:'zh_TW'
-        });
-
-        openModal('googleIdentityModal');
-      }catch(error){
-        fail(error);
-      }
-    });
-  },
-  async facebook(){
-    const cfg=oauthConfig();if(!cfg.facebookAppId)throw new Error('平台尚未完成 Facebook OAuth 應用設定；使用者帳號不需要由 平台超級管理者預先建立');
-    await loadExternalScript('facebook-jssdk','https://connect.facebook.net/zh_TW/sdk.js');
-    if(!window.FB)throw new Error('Facebook SDK 載入失敗');
-    window.FB.init({appId:cfg.facebookAppId,cookie:true,xfbml:false,version:cfg.facebookApiVersion||'v23.0'});
-    return new Promise((resolve,reject)=>window.FB.login(response=>{
-      if(!response.authResponse){reject(new Error('Facebook 登入已取消或未授權'));return;}
-      window.FB.api('/me',{fields:'id,name,email'},profile=>{if(!profile||profile.error){reject(new Error(profile?.error?.message||'無法取得 Facebook 基本資料'));return;}resolve({provider:'facebook',providerUserId:profile.id,name:profile.name||'',email:profile.email||''});});
-    },{scope:'email',return_scopes:true}));
-  },
-  async apple(){
-    const cfg=oauthConfig();if(!cfg.appleClientId||!cfg.appleRedirectURI)throw new Error('平台尚未完成 Apple OAuth 應用設定；使用者帳號不需要由 平台超級管理者預先建立');
-    if(location.hostname==='localhost'||location.hostname==='127.0.0.1')throw new Error('Sign in with Apple Web 需要已登記的正式網域，不能使用 localhost');
-    await loadExternalScript('apple-signin-sdk','https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js');
-    if(!window.AppleID)throw new Error('Apple Sign in SDK 載入失敗');
-    const state=randomAuthValue(),nonce=randomAuthValue();
-    window.AppleID.auth.init({clientId:cfg.appleClientId,scope:'name email',redirectURI:cfg.appleRedirectURI,state,nonce,usePopup:true});
-    const response=await window.AppleID.auth.signIn();const auth=response?.authorization||response||{};if(auth.state&&auth.state!==state)throw new Error('Apple state 驗證失敗');
-    const payload=await verifyAppleIdentityToken(auth.id_token||'',cfg.appleClientId,nonce),appleUser=response?.user||{};const first=appleUser?.name?.firstName||'',last=appleUser?.name?.lastName||'';
-    return {provider:'apple',providerUserId:payload.sub||'',name:`${last}${first}`.trim(),email:appleUser.email||payload.email||''};
-  }
-};
 }
 
 
@@ -7678,82 +7325,15 @@ function switchOrganization(organizationId){
 }
 
 // Auth service bridge: keep main runtime and release scripts on the same instances.
-window.SocialAuth=SocialAuth;
 window.CloudIdentity=CloudIdentity;
 
 function assertIdentityServicesReady_(){
-  if(!SocialAuth||typeof SocialAuth.start!=='function'){
-    throw new Error('Google 登入服務尚未完成初始化');
-  }
   if(!CloudIdentity||typeof CloudIdentity.registerRequester!=='function'){
     throw new Error('帳號建立服務尚未完成初始化');
   }
   return true;
 }
 
-let pendingSocialIdentity=null;
-const SOCIAL_PROVIDER_LABELS={google:'Google',apple:'Apple',facebook:'Facebook'};
-async function startSocialLogin(provider){
-  try{
-    assertIdentityServicesReady_();
-    showToast(`正在開啟 ${SOCIAL_PROVIDER_LABELS[provider]} 登入…`);
-    const profile=await SocialAuth.start(provider);
-    if(provider==='google'&&!profile?.backendVerified){showToast('Google 後端驗證未完成');return;}
-    const prepared=Identity.prepareSocialLogin(profile);
-    if(!prepared.ok){showToast(prepared.error);return;}
-    if(prepared.loggedIn){$('loginScreen').classList.add('hidden');$('appShell').classList.remove('hidden');setupApp();showToast(`已使用 ${SOCIAL_PROVIDER_LABELS[provider]} 登入`);return;}
-    pendingSocialIdentity={...(prepared.profile||profile),backendUserId:profile.backendUserId||null,backendMemberships:profile.backendMemberships||[]};
-    $('socialLoginTitle').textContent=`完成 ${SOCIAL_PROVIDER_LABELS[provider]} 登入`;
-    $('socialLoginDescription').textContent='你已直接使用自己的社群帳號完成驗證。系統會自動建立／綁定使用者，不需要 平台超級管理者預先新增；只保存姓名、電子信箱、電話。社群平台沒有提供的欄位才需要本人補填。';
-    const socialName=pendingSocialIdentity.name||'',socialEmail=pendingSocialIdentity.email||'';
-    $('socialNameInput').value=socialName;
-    $('socialEmailInput').value=socialEmail;
-    $('socialPhoneInput').value=pendingSocialIdentity.phone||$('loginPhone').value||'';
-    $('socialNameInput').readOnly=!!socialName;
-    $('socialEmailInput').readOnly=!!socialEmail;
-    $('socialNameInput').title=socialName?'姓名由社群帳號提供':'';
-    $('socialEmailInput').title=socialEmail?'電子信箱由社群帳號提供':'';
-    openModal('socialLoginModal');
-  }catch(error){showToast(error?.message||'社群登入失敗');}
-}
-async function confirmSocialLogin(){
-  if(!pendingSocialIdentity){showToast('請先完成社群帳號驗證');return;}
-  const btn=$('confirmSocialLoginBtn');
-  setButtonBusy(btn,true,'正在完成登入…');
-  try{
-    if(pendingSocialIdentity.provider==='google'){
-      CloudIdentity.saveSessionToken(pendingSocialIdentity.backendSessionToken||'');
-      const completed=await CloudIdentity.completeSocialProfile({name:$('socialNameInput').value,email:$('socialEmailInput').value,phone:$('socialPhoneInput').value});
-      if(completed.user?.userId)pendingSocialIdentity.backendUserId=completed.user.userId;
-      if(Array.isArray(completed.memberships))pendingSocialIdentity.backendMemberships=completed.memberships;
-    }
-    const result=Identity.completeSocialLogin({...pendingSocialIdentity,name:$('socialNameInput').value,email:$('socialEmailInput').value,phone:$('socialPhoneInput').value});
-    if(!result.ok)throw new Error(result.error);
-    pendingSocialIdentity=null;$('socialNameInput').readOnly=false;$('socialEmailInput').readOnly=false;closeModal('socialLoginModal');$('loginScreen').classList.add('hidden');$('appShell').classList.remove('hidden');setupApp();
-    {
-      setTimeout(async()=>{
-        try{
-          const sync=await AppStateDatabase.loadAll({silent:true});
-          if(!sync?.ok){console.warn('[SocialLogin] Google Database background sync failed',sync?.error||sync);return;}
-          if(Identity.currentUser()){applyIdentityContext();renderNav();render();updateSyncUI();}
-        }catch(error){console.warn('[SocialLogin] Google Database background sync failed',error);}
-      },150);
-    }
-    showToast(result.identityAdded?'Google 登入成功，需求者身分已建立':'Google 登入成功');
-  }catch(error){showToast(error?.message||'Google 登入失敗');}
-  finally{setButtonBusy(btn,false);}
-}
-function openOauthConfig(){
-  if(!Identity.isSuperAdmin()){showToast('只有 平台超級管理者可以設定社群登入');return;}
-  const cfg=SocialAuth.config();
-  $('oauthGoogleClientId').value=cfg.googleClientId||'';$('oauthAppleClientId').value=cfg.appleClientId||'';$('oauthAppleRedirectURI').value=cfg.appleRedirectURI||'';$('oauthFacebookAppId').value=cfg.facebookAppId||'';$('oauthFacebookApiVersion').value=cfg.facebookApiVersion||'v23.0';
-  openModal('oauthConfigModal');
-}
-function handleSaveOauthConfig(){
-  if(!Identity.isSuperAdmin()){showToast('只有 平台超級管理者可以設定社群登入');return;}
-  SocialAuth.saveConfig({googleClientId:SocialAuth.config().googleClientId||'',appleClientId:$('oauthAppleClientId').value.trim(),appleRedirectURI:$('oauthAppleRedirectURI').value.trim(),facebookAppId:$('oauthFacebookAppId').value.trim(),facebookApiVersion:$('oauthFacebookApiVersion').value.trim()||'v23.0'});
-  closeModal('oauthConfigModal');render();showToast('社群登入設定已儲存');
-}
 
 function openRegisterRequester(){
   clearFieldErrors($('registerRequesterModal'));
@@ -8320,13 +7900,6 @@ function safeAccountSection_(title,renderer){
     return accountSectionErrorCard_(title,error);
   }
 }
-function oauthSettingsCard(){
-  if(!Identity.isSuperAdmin())return '';
-  let cfg={};
-  try{cfg=SocialAuth?.config?.()||{};}catch(error){console.warn('[Account] OAuth local config unavailable',error);}
-  const apple=!!(cfg.appleClientId&&cfg.appleRedirectURI),facebook=!!cfg.facebookAppId;
-  return `<section class="card"><div class="card-head"><div><h3>社群登入技術設定</h3><p>Google 正式登入由 Netlify 環境變數管理；Apple／Facebook 仍使用目前前端設定。</p></div><button class="btn outline sm" id="openOauthConfigBtn" type="button">設定 Apple／Facebook</button></div><div class="meta">Google：✓ 由伺服器端設定<br>Apple：${apple?'✓ 已設定':'尚未設定'}<br>Facebook：${facebook?'✓ 已設定':'尚未設定'}<br><br>Google Client ID 不再依賴目前瀏覽器 LocalStorage，因此清除瀏覽器資料不會讓 Google 登入設定消失。</div></section>`;
-}
 function identityHealthCard(){
   if(!Identity.isSuperAdmin())return '';
   try{
@@ -8445,7 +8018,6 @@ function genericAccount(){
       ${safeAccountSection_('帳號摘要',()=>`<section class="card"><div class="account-card">${accountAvatar(u,'◇')}<div><h3>${escapeHTML(u?.name||'')}</h3><p>${formatPhone(u?.phone||'')}${u?.email?`・${escapeHTML(u.email)}`:''}</p></div></div></section>`)}
       ${safeAccountSection_('個人照片',()=>profilePhotoSection(u,'◇'))}
       ${safeAccountSection_('平台超級管理者帳號',()=>superAdminAccountSettingsCard(u))}
-      ${safeAccountSection_('社群登入技術設定',()=>oauthSettingsCard())}
       ${safeAccountSection_('帳號身分健康檢查',()=>identityHealthCard())}
       ${safeAccountSection_('服務對象資料治理',()=>careRecipientHealthCard())}
       <section class="card"><div class="card-head"><h3>平台身分</h3></div><div class="meta">角色：超級管理者<br>組織身分：無<br>目前查看：${escapeHTML(currentOrgName)}<br>可跨組織查看平台營運狀況，但不隸屬任何公司。</div></section>
@@ -9501,7 +9073,6 @@ function bindViewEvents(){
   document.querySelectorAll('.membership-history-btn').forEach(btn=>btn.addEventListener('click',()=>openMembershipHistory(btn.dataset.membership)));
   document.querySelectorAll('.revoke-membership-btn').forEach(btn=>btn.addEventListener('click',()=>openRevokeMembership(btn.dataset.membership)));
   $('openSystemReportBtn')?.addEventListener('click',openSystemReport);
-  $('openOauthConfigBtn')?.addEventListener('click',openOauthConfig);
   document.querySelectorAll('.identity-switch-btn').forEach(btn=>btn.addEventListener('click',()=>switchOrganization(btn.dataset.org)));
   document.querySelectorAll('.platform-enter-org-btn').forEach(btn=>btn.addEventListener('click',()=>{const result=Identity.switchOrganization(btn.dataset.org);if(!result.ok){showToast(result.error);return;}currentView='platform-members';applyIdentityContext();renderNav();render();showToast(`正在管理 ${result.organization?.name||'組織'} 成員`);}));
   document.querySelectorAll('.platform-org-active-btn').forEach(btn=>btn.addEventListener('click',()=>openOrganizationStatusConfirm(btn.dataset.org,btn.dataset.active==='true')));
@@ -9525,7 +9096,6 @@ function updateDriverClock(){ const now=new Date(),clock=$('driverNowClock');if(
 $('loginBtn')?.addEventListener('click',login);$('logoutBtn')?.addEventListener('click',logout);
 $('loginPhone')?.addEventListener('input',renderLoginSecurityState);$('loginPassword')?.addEventListener('keydown',e=>{if(e.key==='Enter')login();});$('loginCaptchaInput')?.addEventListener('keydown',e=>{if(e.key==='Enter')login();});
 $('refreshLoginCaptchaBtn')?.addEventListener('click',()=>{$('loginCaptchaCode').textContent=LoginSecurity.refreshCaptcha($('loginPhone').value);$('loginCaptchaInput').value='';});
-$('googleLoginBtn')?.addEventListener('click',()=>startSocialLogin('google')); $('appleLoginBtn')?.addEventListener('click',()=>startSocialLogin('apple')); $('facebookLoginBtn')?.addEventListener('click',()=>startSocialLogin('facebook')); $('confirmSocialLoginBtn')?.addEventListener('click',confirmSocialLogin);
 $('openRegisterBtn')?.addEventListener('click',()=>{
   try{
     openRegisterRequester();
@@ -9547,7 +9117,6 @@ $('saveOrganizationBtn')?.addEventListener('click',saveOrganization);
 $('saveOrganizationDetailsBtn')?.addEventListener('click',saveOrganizationDetails);
 $('saveMemberProfileBtn')?.addEventListener('click',saveMemberProfile);
 $('saveSystemReportBtn')?.addEventListener('click',saveSystemReport);
-$('saveOauthConfigBtn')?.addEventListener('click',handleSaveOauthConfig);
 $('saveBenefitRulesetBtn')?.addEventListener('click',saveBenefitRuleset);
 $('saveBenefitAssessmentBtn')?.addEventListener('click',saveBenefitAssessment);
 $('saveBenefitAuthorizationBtn')?.addEventListener('click',saveBenefitAuthorization);
@@ -9857,7 +9426,7 @@ bootstrapApplication().catch(error=>{
       const text=el.textContent.trim();
       if(text==='目前沒有異常')makeEmptyState(el,{icon:'✓',title:'目前沒有未結異常',description:'目前所有行程都沒有需要調度人員接手的異常事件。',actions:[{label:'查看全部行程',kind:'outline',run:()=>jumpToView('dispatch-trips')}]});
       else if(text.includes('目前沒有 補助規則集')||text.includes('目前沒有補助規則集'))makeEmptyState(el,{icon:'補',title:'尚未建立補助規則',description:'系統不會自行假造政府補助內容。請由有權限的管理者依官方來源建立規則。',actions:[$('#openBenefitRulesetBtn')?{label:'新增補助規則',kind:'primary',run:()=>clickExisting('#openBenefitRulesetBtn')}:{label:'重新整理',kind:'outline',run:()=>location.reload()}]});
-      else if(text==='目前還沒有需求者')makeEmptyState(el,{icon:'人',title:'目前還沒有需求者',description:'需求者可自行註冊或使用 Google、Apple、Facebook 登入；公司工作者也可另外增加需求者身分。',actions:[]});
+      else if(text==='目前還沒有需求者')makeEmptyState(el,{icon:'人',title:'目前還沒有需求者',description:'需求者可用手機號碼自行註冊；公司工作者也可另外增加需求者身分。',actions:[]});
       else if(text==='此組織目前沒有成員')makeEmptyState(el,{icon:'＋',title:'此組織尚未新增成員',description:'先新增負責人、調度人員或司機，之後才能進行完整的公司營運設定。',actions:[$('#openAddStaffBtn')?{label:'新增組織成員',kind:'primary',run:()=>clickExisting('#openAddStaffBtn')}:{label:'返回組織管理',kind:'outline',run:()=>jumpToView('platform-organizations')}]});
       else if(text==='目前沒有有效組織')makeEmptyState(el,{icon:'＋',title:'目前沒有有效組織',description:'建立第一個合作公司或長照機構後，才能開始設定人員、車輛與營運資料。',actions:[$('#openAddOrganizationBtn')?{label:'新增組織',kind:'primary',run:()=>clickExisting('#openAddOrganizationBtn')}:{label:'前往組織管理',kind:'outline',run:()=>jumpToView('platform-organizations')}]});
     });

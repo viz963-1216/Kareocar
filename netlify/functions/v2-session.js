@@ -13,7 +13,7 @@
  * id = app.current_user_id() 那一條。這裡沒有繞過 RLS 的捷徑。
  */
 
-const { json, parseBody, handleError } = require('./_apps-script');
+const { json, parseBody, handleError } = require('./_http');
 const { withUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
 

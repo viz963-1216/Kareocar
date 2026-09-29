@@ -14,7 +14,7 @@
  * 本來就不在操作者看得到的範圍內。那支函式自己會確認呼叫者是營運方。
  */
 
-const { json, parseBody, handleError } = require('./_apps-script');
+const { json, parseBody, handleError } = require('./_http');
 const { withUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
 

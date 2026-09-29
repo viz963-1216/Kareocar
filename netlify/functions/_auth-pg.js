@@ -3,7 +3,7 @@
 /**
  * 身分驗證核心（Postgres 版）。
  *
- * 這是 apps-script/AuthCore.gs 的 Node 移植版，演算法刻意保持一致，讓
+ * 這是原本 Apps Script AuthCore.gs（已移除）的 Node 移植版，演算法刻意保持一致，讓
  * Apps Script 期間建立的憑證在切換之後仍然驗得過。差別只在儲存位置：
  *
  *   憑證     Script Properties / 密碼憑證工作表  →  password_credentials 表

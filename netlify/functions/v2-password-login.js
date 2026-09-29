@@ -6,7 +6,7 @@
  * 走 Postgres 的密碼登入。與 Apps Script 版並存，前端可以逐條切換。
  */
 
-const { json, parseBody, handleError, clientIp } = require('./_apps-script');
+const { json, parseBody, handleError, clientIp } = require('./_http');
 const { withoutUser, withUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
 

@@ -1,6 +1,6 @@
 # 安心接送
 
-長照接送媒合平台。Netlify 提供前端與 API gateway，Google Apps Script 負責身分驗證與資料授權，Google Sheets 保存資料。
+長照接送媒合平台。Netlify 提供前端與 API（Netlify Functions），資料、身分與授權都在 Postgres（Supabase），由 RLS 把關。
 
 - 目前版本：`12.26.1`
 - 展示網站：https://care-ride-commercial-readiness.netlify.app
@@ -12,23 +12,20 @@
 瀏覽器 (index.html)
    │  只走 /api/*，帶 Bearer session token
    ▼
-Netlify Functions              ← APPS_SCRIPT_GATEWAY_SECRET
-   │  轉送並附上來源 IP
+Netlify Functions
+   │  驗證 session，以 care_ride_app 角色連線
    ▼
-Apps Script Web App            ← NETLIFY_GATEWAY_SECRET 驗證
-   │  驗證 session、套用 row-level 授權
-   ▼
-Google Sheets
+Postgres（Supabase）           ← RLS 政策做 row-level 授權
 ```
 
-瀏覽器沒有任何 Google Sheets 的直接讀取權限，也沒有內建資料快照；未登入時讀不到任何資料。
+瀏覽器不直接連資料庫，也沒有內建資料快照；未登入時讀不到任何資料。
 
 ## 開發
 
 ```bash
 # 需要本機 Postgres 16
 PGHOST=/tmp/pgrun PGPORT=5433 supabase/tests/run-all.sh   # 全套接線與 RLS 測試
-npm test                                                  # Apps Script 層的回歸測試
+npm test                                                  # 離線回歸測試（不需要資料庫）
 node tools/check-inline-js.js    # index.html 內嵌 JS 語法檢查
 node tools/check-dom-refs.js     # DOM id 交叉檢查
 node tools/check-id-mapping.js   # 後端／前端識別碼對應（權限會壞在這裡）
@@ -38,16 +35,12 @@ node tools/check-id-mapping.js   # 後端／前端識別碼對應（權限會壞
 `netlify/functions/` 底下的實際程式碼，接在真實 Postgres 上、以真實的
 `care_ride_app` 角色連線，所以 RLS 是真的在把關，不是模擬的。
 
-`tests/` 則是 Apps Script 層的測試，用一個小型模擬層（`tests/shim.js`、
-`tests/sheets.js`）在 Node 上執行 `.gs` 檔。
+`tests/` 是不需要資料庫的離線測試：建置檢查、行程執行規則、前端接線等。
 
 ## 資料庫
 
 執行中的系統跑在 **Postgres（Supabase）** 上：身分、預約、行程、稽核全部在
 `supabase/migrations/` 定義的 schema 與 RLS 政策之下。
-
-Apps Script 與 Google Sheets 只剩 Google 社群登入那一條路徑還在用，而該功能
-目前在登入頁是停用的，等移轉到 Postgres 後才會重新開啟。
 
 套用步驟與注意事項見 [supabase/README.md](supabase/README.md)。最重要的一點：
 Netlify Function 必須用 `care_ride_app` 角色連線，用 `postgres` 會繞過全部 RLS 政策。
@@ -87,9 +80,9 @@ Netlify Function 必須用 `care_ride_app` 角色連線，用 `postgres` 會繞�
 
 以下項目不在 12.26.0 的範圍內，上線前應逐項確認，詳細說明見 SECURITY_HARDENING.md 的「尚未處理」章節。
 
-1. Apps Script 專案中有 6 支函式尚未納入版本控制，repo 目前無法完整重建後端。
+1. ~~Apps Script 專案中有 6 支函式尚未納入版本控制~~：Apps Script 已整個移除，不再適用。
 2. `index.html` 仍是單一檔案且 CSP 帶 `'unsafe-inline'`；session token 存在 `sessionStorage`。
 3. 一次資料同步仍是 23 個獨立請求，各自重算一次權限範圍（批次寫入已優化，讀取路徑尚未）。
 4. 「從已發布試算表匯入預約」功能仍由瀏覽器直接讀取公開試算表。
-5. 沒有監控與告警：Apps Script 開始出錯時不會有人知道。
+5. 沒有監控與告警：後端開始出錯時不會有人知道。
 6. 個資告知、服務條款、資料保存與刪除流程、備份與資安測試。

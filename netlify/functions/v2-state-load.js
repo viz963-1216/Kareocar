@@ -15,7 +15,7 @@
  * 它們有自己的 typed 資料表，這裡從那邊讀出來、轉成前端用的形狀。
  */
 
-const { json, handleError } = require('./_apps-script');
+const { json, handleError } = require('./_http');
 const { withUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
 

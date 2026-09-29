@@ -8,7 +8,7 @@
  * 應用錯誤碼、寫一筆稽核紀錄。
  */
 
-const { json, parseBody, handleError } = require('./_apps-script');
+const { json, parseBody, handleError } = require('./_http');
 const { withUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
 
