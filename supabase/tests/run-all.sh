@@ -5,8 +5,9 @@
 #
 #   PGHOST=/tmp/pgrun PGPORT=5433 ./run-all.sh
 #
-# 測試之間有順序相依：bootstrap 會替超級管理者設定密碼，session 才有帳號可以
-# 登入。所以這支腳本固定順序執行，不要單獨挑一支跑就下結論。
+# 身分驗證用假的 Supabase Auth（supabase/tests/_auth-fixture.js），不連外部服務。
+# 測試之間有順序相依（identity 借用 seed 的 B 隊負責人建立員工），所以這支腳本
+# 固定順序執行，不要單獨挑一支跑就下結論。
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,9 +33,8 @@ echo "== 種子資料 =="
 $PSQL_ADMIN -d "$PGDATABASE" -v ON_ERROR_STOP=1 -f "$HERE/seed.sql" >/dev/null
 
 total_fail=0
-# 順序有相依：bootstrap 會替 seed 裡那個沒有密碼的超級管理者設定密碼，
-# session 才有帳號可以登入；identity 借用 seed 的 B 隊負責人建立員工。
-for suite in bootstrap session identity orgs identity-write state load wiring; do
+# 順序有相依：identity 借用 seed 的 B 隊負責人建立員工。
+for suite in session identity orgs identity-write state load wiring; do
   echo
   echo "== $suite =="
   if ! node "$HERE/$suite.test.js"; then total_fail=$((total_fail+1)); fi

@@ -123,8 +123,39 @@ PGHOST=/tmp/pgrun PGPORT=5433 bash supabase/tests/rls.test.sh
 
 `?pool=1` 讀公開需求池。舊的 `/api/*` 路由完全沒動，兩套可以並存。
 
-需要的 Netlify 環境變數：`DATABASE_URL`、`AUTH_SESSION_SECRET`、`AUTH_PASSWORD_PEPPER`、
-`PRODUCTION_SUPABASE_PROJECT_REF`，選用的 `AUTH_PBKDF2_ITERATIONS`。
+需要的 Netlify 環境變數：
+
+| 變數 | 用途 | 機密 |
+|---|---|---|
+| `DATABASE_URL` | `care_ride_app` 角色的連線字串 | 是 |
+| `SUPABASE_URL` | `https://<ref>.supabase.co` | 否 |
+| `SUPABASE_ANON_KEY` | 公開金鑰（anon 或 `sb_publishable_…`），密碼登入與換 token 用 | 否 |
+| `SUPABASE_SERVICE_ROLE_KEY` | 秘密金鑰（service_role 或 `sb_secret_…`），建立、更新使用者用 | **是** |
+| `SUPABASE_JWT_SECRET` | 選用。舊版 HS256 簽章金鑰；新版專案用非對稱金鑰，會自動從 JWKS 取公鑰 | 是 |
+| `AUTH_SESSION_SECRET` | 速率限制鍵的 HMAC 金鑰（名稱沿用） | 是 |
+| `AUTH_PASSWORD_PEPPER` | 忘記密碼驗證碼的雜湊 pepper | 是 |
+| `PRODUCTION_SUPABASE_PROJECT_REF` | 正式專案 ref，建置檢查用 | 否 |
+
+### 身分驗證（Supabase Auth）
+
+密碼、token 簽發與撤銷由 Supabase Auth 負責，資料庫不保存任何密碼。Netlify Function
+驗證 access token（JWT）後，以 token 的 `sub` 作為 `app.user_id`，RLS 照常生效；
+`users.id` 就是 Supabase Auth 的使用者 ID。token 只放在 HttpOnly cookie（`cr_at`、
+`cr_rt`），瀏覽器的 JavaScript 讀不到。
+
+Supabase 主控台要設定的：**Authentication → Sign In / Providers → Phone** 啟用（簡訊廠商
+在 #19 接上）。
+
+**建立超級管理者**（取代原本的 bootstrap 端點）：
+
+1. 在 **Authentication → Users → Add user** 以手機號碼（+8869…）與密碼建立帳號，勾選自動確認，
+   複製它的 User UID。
+2. 在 SQL Editor 建立對應的使用者列（`guard_user_insert` 只擋應用角色，SQL Editor 可以建）：
+
+   ```sql
+   insert into users (id, display_name, phone_e164, platform_role, auth_provider, auth_subject_id, active)
+   values ('<User UID>', '平台超級管理者', '+8869xxxxxxxx', 'super_admin', 'supabase', '<User UID>', true);
+   ```
 
 `PRODUCTION_SUPABASE_PROJECT_REF` 是正式 Supabase 專案的 ref（主控台網址
 `/project/<ref>` 那一段），不是機密，所有 deploy context 設同一個值。建置檢查

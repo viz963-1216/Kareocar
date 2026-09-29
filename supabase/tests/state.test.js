@@ -35,10 +35,12 @@ const psqlOutput = (q) => {
   }
 };
 
+// 假的 Supabase Auth 與測試簽章金鑰；舊測試的 token 寫法由 fx.adapt 轉成 cookie
+const fx = require('./_auth-fixture');
 const auth = require(path.join(FN, '_auth-pg.js'));
 const { withoutUser, getPool } = require(path.join(FN, '_db.js'));
-const login = require(path.join(FN, 'v2-password-login.js'));
-const mutate = require(path.join(FN, 'v2-state-mutate.js'));
+const login = fx.adapt(require(path.join(FN, 'v2-password-login.js')));
+const mutate = fx.adapt(require(path.join(FN, 'v2-state-mutate.js')));
 
 let pass = 0, fail = 0;
 const t = async (name, fn) => {
@@ -66,7 +68,7 @@ const booking = (id, extra = {}) => ({
   await withoutUser(async (c) => {
     for (const [uid, pw] of [['USR-VICTIM', 'VictimPass123'], ['USR-ATTACK', 'AttackPass123'],
                              ['USR-DISP1', 'DispatchPass123'], ['USR-OWN2', 'Own2Pass123']]) {
-      await auth.setPasswordCredential(c, uid, pw);
+      await fx.setSeedPassword(uid, pw);
     }
   });
   const victim = (await doLogin('0912000001', 'VictimPass123', '203.0.113.1')).data.sessionToken;

@@ -104,6 +104,9 @@ jobs:
       - name: 業務權限整合測試（接案／司機執行／需求者取消 + RLS）
         run: bash supabase/tests/run-business-flow.sh
 
+      - name: 身分、session、帳號與 RLS 測試（run-all：session／identity／orgs／identity-write／state／load／wiring／rls）
+        run: bash supabase/tests/run-all.sh
+
       - name: migration 往返（回復檔齊全、上→下→上、司機政策執行計畫、通知觸發器）
         run: bash supabase/tests/migrations.test.sh
 

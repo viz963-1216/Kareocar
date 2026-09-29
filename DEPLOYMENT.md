@@ -16,8 +16,9 @@ Apps Script、Google Sheets 與社群登入（Google／Apple／Facebook）已從
 ## 2. Netlify：整包部署
 
 環境變數見 [supabase/README.md](supabase/README.md)（`DATABASE_URL`、
-`AUTH_SESSION_SECRET`、`AUTH_PASSWORD_PEPPER`、`PRODUCTION_SUPABASE_PROJECT_REF`
-等）。部署內容：`index.html`、`_headers`、`netlify.toml`、`netlify/functions/`。
+`SUPABASE_URL`、`SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_ROLE_KEY`、`AUTH_SESSION_SECRET`、
+`AUTH_PASSWORD_PEPPER`、`PRODUCTION_SUPABASE_PROJECT_REF` 等）。`BOOTSTRAP_TOKEN` 與
+`AUTH_PBKDF2_ITERATIONS` 已不再使用，可以刪除；超級管理者的建立方式見 supabase/README.md。部署內容：`index.html`、`_headers`、`netlify.toml`、`netlify/functions/`。
 
 ## 3. Health Gate
 

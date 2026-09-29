@@ -25,8 +25,8 @@
   status = 200
 
 [[redirects]]
-  from = "/api/v2/bootstrap-admin"
-  to = "/.netlify/functions/v2-bootstrap-admin"
+  from = "/api/v2/logout"
+  to = "/.netlify/functions/v2-logout"
   status = 200
 
 [[redirects]]

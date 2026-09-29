@@ -11,6 +11,7 @@
 const { json, parseBody, handleError } = require('./_http');
 const { withUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
+const session = require('./_session');
 
 /** 這些 security definer 函式使用的自訂 SQLSTATE。 */
 function translateRpcError(error) {
@@ -18,11 +19,6 @@ function translateRpcError(error) {
   if (code === 'CR400') return Object.assign(new Error(error.message), { code: 'VALIDATION_ERROR' });
   if (code === 'CR409') return Object.assign(new Error(error.message), { code: 'TRIP_CONFLICT' });
   return translateDbError(error);
-}
-
-function bearerToken(event) {
-  const header = String(event.headers?.authorization || event.headers?.Authorization || '');
-  return header.replace(/^Bearer\s+/i, '').trim();
 }
 
 function requireId(value, label) {
@@ -51,14 +47,10 @@ async function runAuthenticated(event, fn) {
     return json(405, { ok: false, error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed' } });
   }
   try {
-    const token = bearerToken(event);
-    if (!token) {
-      return json(401, { ok: false, error: { code: 'SESSION_REQUIRED', message: '請先登入' } });
-    }
-    const claims = auth.parseSessionToken(token);
+    const claims = await session.requireSession(event);
     const body = parseBody(event);
     const data = await withUser(claims.userId, async (client) => {
-      await auth.verifySessionToken(client, token);
+      await session.assertSessionActive(client, claims);
       return fn(client, body, claims);
     });
     return json(200, { ok: true, data });

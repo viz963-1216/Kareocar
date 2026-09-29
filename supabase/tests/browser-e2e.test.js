@@ -29,12 +29,13 @@ if (typeof WebSocket !== 'function') throw Error('需要 Node 22 以上（內建
 process.env.DATABASE_URL = `postgresql://care_ride_app@${host}:${process.env.PGPORT}/careride_e2e_test?sslmode=disable`;
 process.env.AUTH_SESSION_SECRET = 'synthetic-session-secret-e2e-0123456789';
 process.env.AUTH_PASSWORD_PEPPER = 'synthetic-password-pepper-e2e-0123456789';
-process.env.AUTH_PBKDF2_ITERATIONS = '1000';
+// 假的 Supabase Auth 與測試簽章金鑰。本機伺服器與 function 跑在同一個行程，所以登入畫面
+// 送出的帳密會由這個替身驗證、function 端以正式的 JWT 驗證程式驗 cookie 裡的 token
+const fx = require('./_auth-fixture');
 
 const { Pool } = require('pg');
 const admin = new Pool({ host, port: Number(process.env.PGPORT), database: 'careride_e2e_test', user: 'postgres' });
 const db = require('../../netlify/functions/_db');
-const auth = require('../../netlify/functions/_auth-pg');
 const mutate = require('../../netlify/functions/v2-state-mutate');
 const { createServer } = require('../../tools/local-dev-server');
 const F = require('../../tests/_trip-fixtures');
@@ -240,6 +241,10 @@ async function login(page, user) {
   await typeInto(page, '#loginPassword', PASSWORD);
   await click(page, '#loginBtn');
   await waitFor(page, `!document.getElementById('appShell').classList.contains('hidden')&&document.body.innerText.includes(${J(user.name)})`, `${user.name} 登入`);
+  // token 只在 HttpOnly cookie：頁面的 JavaScript 讀不到，也沒有存進 Web Storage
+  const exposed = await evaluate(page, `(()=>{const hits=[];if(/(^|;\\s*)cr_(at|rt)=/.test(document.cookie))hits.push('document.cookie');
+    for(const s of [localStorage,sessionStorage])for(let i=0;i<s.length;i++){const v=String(s.getItem(s.key(i))||'');if(/eyJ[\\w-]+\\.eyJ/.test(v))hits.push(s.key(i));}return hits;})()`);
+  record('登入', `${user.name}：頁面 JavaScript 讀不到登入 token`, exposed.length === 0, exposed.join(', '));
 }
 
 /** 瀏覽器最近一次成功載入的 state-load 回應內容（瀏覽器實際收到的，不是測試另外呼叫）。 */
@@ -277,7 +282,7 @@ async function row(collection, id) {
   return rows[0] || null;
 }
 async function apiMutate(token, changes) {
-  const res = await mutate.handler({ httpMethod: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ changes }) });
+  const res = await mutate.handler({ httpMethod: 'POST', headers: { host: '127.0.0.1', cookie: `cr_at=${token}` }, body: JSON.stringify({ changes }) });
   return res.statusCode;
 }
 function openBooking(id) {
@@ -316,9 +321,9 @@ async function seed() {
       ('M-E2E-DRV','${U.drv.id}','${ORG}','driver','active');
     insert into drivers (id, user_id, organization_id, duty_status, active) values ('${DRIVER_ID}','${U.drv.id}','${ORG}','on_duty',true);
   `);
-  for (const u of Object.values(U)) await db.withoutUser((c) => auth.setPasswordCredential(c, u.id, PASSWORD));
+  for (const u of Object.values(U)) fx.addUser(u.id, u.phone, PASSWORD);
   const tokens = {};
-  for (const [k, u] of Object.entries(U)) tokens[k] = await db.withoutUser((c) => auth.issueSessionToken(c, u.id));
+  for (const [k, u] of Object.entries(U)) tokens[k] = fx.mintAccessToken(u.id, { expInSeconds: 6 * 3600 });
   return tokens;
 }
 

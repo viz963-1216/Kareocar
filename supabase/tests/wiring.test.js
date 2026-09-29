@@ -25,9 +25,11 @@ process.env.AUTH_SESSION_SECRET = 'test-session-secret-0123456789abcdef';
 process.env.AUTH_PASSWORD_PEPPER = 'test-pepper-0123456789abcdefghijkl';
 process.env.AUTH_PBKDF2_ITERATIONS = '1000';
 
+// 假的 Supabase Auth 與測試簽章金鑰；舊測試的 token 寫法由 fx.adapt 轉成 cookie
+const fx = require('./_auth-fixture');
 const auth = require(path.join(FN, '_auth-pg.js'));
 const { withoutUser, withUser, getPool } = require(path.join(FN, '_db.js'));
-const login = require(path.join(FN, 'v2-password-login.js'));
+const login = fx.adapt(require(path.join(FN, 'v2-password-login.js')));
 
 let pass = 0, fail = 0;
 const t = async (name, fn) => {
@@ -48,7 +50,7 @@ const parse = (res) => ({ status: res.statusCode, ...JSON.parse(res.body) });
   // 給種子使用者設定可登入的密碼
   await withoutUser(async (c) => {
     for (const [uid, pw] of [['USR-VICTIM', 'VictimPass123'], ['USR-DISP1', 'DispatchPass123']]) {
-      await auth.setPasswordCredential(c, uid, pw);
+      await fx.setSeedPassword(uid, pw);
     }
   });
 
@@ -109,10 +111,10 @@ const parse = (res) => ({ status: res.statusCode, ...JSON.parse(res.body) });
   // bookings 表。預約資料現在寫在 app_state，那條路徑已經沒有人走。等價的驗證
   // 在 state.test.js（寫入與遮蔽）與 load.test.js（每個身分讀得到什麼）。
 
-  console.log('--- 改密碼後舊 token 失效 ---');
-  await t('bump session 版本後舊 token 被拒', async () => {
-    await withUser('USR-VICTIM', (c) => auth.bumpSessionVersion(c, 'USR-VICTIM'));
-    const load = require(path.join(FN, 'v2-state-load.js'));
+  console.log('--- 撤銷 session 後舊 token 失效 ---');
+  await t('revoke_sessions 之後舊 token 被拒', async () => {
+    await withUser('USR-VICTIM', (c) => c.query("select app.revoke_sessions('USR-VICTIM')"));
+    const load = fx.adapt(require(path.join(FN, 'v2-state-load.js')));
     const r = parse(await load.handler({ httpMethod: 'GET',
       headers: { authorization: `Bearer ${victimToken}` } }));
     return r.error && r.error.code === 'SESSION_INVALID';

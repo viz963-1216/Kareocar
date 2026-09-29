@@ -26,11 +26,13 @@ process.env.AUTH_SESSION_SECRET = 'test-session-secret-0123456789abcdef';
 process.env.AUTH_PASSWORD_PEPPER = 'test-pepper-0123456789abcdefghijkl';
 process.env.AUTH_PBKDF2_ITERATIONS = '1000';
 
+// 假的 Supabase Auth 與測試簽章金鑰；舊測試的 token 寫法由 fx.adapt 轉成 cookie
+const fx = require('./_auth-fixture');
 const auth = require(path.join(FN, '_auth-pg.js'));
 const { withoutUser, getPool } = require(path.join(FN, '_db.js'));
-const login = require(path.join(FN, 'v2-password-login.js'));
-const session = require(path.join(FN, 'v2-session.js'));
-const register = require(path.join(FN, 'v2-register-requester.js'));
+const login = fx.adapt(require(path.join(FN, 'v2-password-login.js')));
+const session = fx.adapt(require(path.join(FN, 'v2-session.js')));
+const register = fx.adapt(require(path.join(FN, 'v2-register-requester.js')));
 
 let pass = 0, fail = 0;
 const t = async (name, fn) => {
@@ -80,7 +82,7 @@ const usableMemberships = (data) => {
   });
 
   console.log('--- 調度員（多組織情境） ---');
-  await withoutUser((c) => auth.setPasswordCredential(c, 'USR-DISP1', 'DispatchPass123'));
+  await withoutUser((c) => fx.setSeedPassword('USR-DISP1', 'DispatchPass123'));
   await t('調度員每一筆成員資格都找得到對應組織', async () => {
     const r = parse(await post(login, { phone: '0912000003', password: 'DispatchPass123' },
       { 'x-nf-client-connection-ip': '198.51.100.61' }));

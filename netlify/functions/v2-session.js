@@ -1,94 +1,53 @@
 'use strict';
 
 /**
- * POST /api/v2/session   —— 用既有的 session token 換回身分（重新整理頁面時用）
+ * POST /api/v2/session   —— 以 cookie 裡的登入工作階段換回身分（重新整理頁面時用）
  *
- * 取代 identity-session.js（Apps Script 版）。前端在載入時會呼叫這支，
- * 沒有它的話，切到 v2 登入之後只要重新整理就會被登出。
+ * access token 還有效：直接回身分。access token 過期或不見了、但有 refresh token：
+ * 向 Supabase Auth 換一組新的，寫回 cookie 後回身分。都不行就清掉 cookie、回 401。
  *
- * 驗證在 withUser 交易內做：verifySessionToken 會比對 users.session_version，
- * 所以改過密碼（版本 +1）的舊 token 會在這裡被踢掉，不只是簽章有效就放行。
+ * 前端呼叫其他 API 拿到 401 SESSION_EXPIRED 時，也是呼叫這支換 token 後重試一次。
+ * refresh token 的 cookie 路徑只到這支端點，其他 API 收不到。
  *
- * 使用者資料是「以自己的身分」讀出來的——users_read 政策裡的
- * id = app.current_user_id() 那一條。這裡沒有繞過 RLS 的捷徑。
+ * 使用者資料以自己的身分讀出（users_read 政策的 id = app.current_user_id()），
+ * 沒有繞過 RLS 的捷徑。
  */
 
-const { json, parseBody, handleError } = require('./_http');
+const { json, withCookies, handleError } = require('./_http');
 const { withUser, translateDbError } = require('./_db');
-const auth = require('./_auth-pg');
+const supabaseAuth = require('./_supabase-auth');
+const session = require('./_session');
+const { loadIdentity } = require('./_identity');
 
-// token 用掉超過一半壽命就換一張新的，長時間值班不會做到一半被登出。
-// 舊 token 不會因此失效（要讓它失效請改密碼，那會 bump session_version）。
-const REFRESH_AFTER_RATIO = 0.5;
+async function currentOrRefreshed(event) {
+  try {
+    return { claims: await session.requireSession(event), tokens: null };
+  } catch (error) {
+    if (!['SESSION_REQUIRED', 'SESSION_EXPIRED'].includes(error.code)) throw error;
+    const refreshToken = session.readCookie(event, session.REFRESH_COOKIE);
+    if (!refreshToken) throw error;
+    const tokens = await supabaseAuth.refresh(refreshToken);
+    const claims = await supabaseAuth.verifyAccessToken(tokens.accessToken);
+    return { claims, tokens };
+  }
+}
 
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return json(405, { ok: false, error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed' } });
   }
   try {
-    const body = parseBody(event);
-    const headerToken = String(event.headers?.authorization || event.headers?.Authorization || '')
-      .replace(/^Bearer\s+/i, '').trim();
-    const token = String(body.sessionToken || '').trim() || headerToken;
-    if (!token) {
-      return json(401, { ok: false, error: { code: 'SESSION_REQUIRED', message: '請先登入' } });
-    }
-
-    // 先只驗簽章拿 userId；版本比對需要資料庫，放在交易內
-    const claims = auth.parseSessionToken(token);
-
+    session.assertSameOrigin(event);
+    const { claims, tokens } = await currentOrRefreshed(event);
     const data = await withUser(claims.userId, async (client) => {
-      await auth.verifySessionToken(client, token);
-
-      const { rows } = await client.query(
-        'select id, display_name, phone_e164, platform_role, active from users where id = $1',
-        [claims.userId]);
-      const user = rows[0];
-      if (!user) throw auth.authError('SESSION_INVALID', '使用者不存在，請重新登入');
-      if (user.active !== true) throw auth.authError('SESSION_INVALID', '此帳號已停用');
-
-      const memberships = (await client.query('SELECT * FROM app.get_memberships($1)', [claims.userId])).rows;
-      const isSuperAdmin = String(user.platform_role || '').toLowerCase() === 'super_admin';
-      if (!isSuperAdmin && memberships.length === 0) {
-        throw auth.authError('NO_ACTIVE_IDENTITY', '此帳號目前沒有有效身分，請聯絡平台管理者');
-      }
-
-      // 手機號碼回前端時用 09 開頭的本地格式，跟登入端點一致
-      const phone = String(user.phone_e164 || '').replace(/^\+886/, '0');
-
-      // 前端的 activeMembershipsForUser 會要求「成員資格指向的組織必須在本機存在」，
-      // 否則那筆身分會被過濾掉、變成「沒有有效身分」。以前組織是靠整份鏡像帶進來的，
-      // 現在本機一開始是空的，所以身分回應必須自己把組織一起帶上。
-      const organizations = (await client.query(
-        `select id, org_type, name, active from organizations`)).rows.map((o) => ({
-          id: o.id, type: o.org_type, name: o.name || '', active: o.active !== false
-        }));
-
-      const result = {
-        organizations,
-        user: {
-          userId: user.id,
-          displayName: user.display_name || '',
-          phone,
-          platformRole: String(user.platform_role || 'none').toLowerCase()
-        },
-        memberships: memberships.map((m) => ({
-          membershipId: m.id, organizationId: m.organization_id, role: m.role, status: m.status
-        }))
-      };
-
-      const now = Math.floor(Date.now() / 1000);
-      const issuedAt = Number(claims.iat || 0);
-      const expiresAt = Number(claims.exp || 0);
-      const halfway = issuedAt + (expiresAt - issuedAt) * REFRESH_AFTER_RATIO;
-      if (now > halfway) {
-        result.sessionToken = await auth.issueSessionToken(client, claims.userId);
-      }
-      return result;
+      await session.assertSessionActive(client, claims);
+      return loadIdentity(client, claims.userId);
     });
-
-    return json(200, { ok: true, data });
+    const response = json(200, { ok: true, data });
+    return tokens ? withCookies(response, session.sessionCookies(event, tokens)) : response;
   } catch (error) {
-    return handleError(translateDbError(error));
+    const response = handleError(translateDbError(error));
+    // 身分無法恢復時順手清掉 cookie，瀏覽器不會一直帶著失效的 token
+    return response.statusCode === 401 ? withCookies(response, session.clearSessionCookies(event)) : response;
   }
 };

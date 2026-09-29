@@ -102,7 +102,10 @@ function createServer({ log = () => {} } = {}) {
       try {
         const { handler } = require(path.join(ROOT, 'netlify', 'functions', `${fnName}.js`));
         const out = await handler(event, {});
-        res.writeHead(out.statusCode || 200, { 'content-type': 'application/json; charset=utf-8', ...(out.headers || {}) });
+        const headers = { 'content-type': 'application/json; charset=utf-8', ...(out.headers || {}) };
+        // Netlify 以 multiValueHeaders 送出多個同名標頭（登入時的兩個 Set-Cookie）
+        for (const [name, values] of Object.entries(out.multiValueHeaders || {})) headers[name] = values;
+        res.writeHead(out.statusCode || 200, headers);
         res.end(out.body || '');
         log(`${req.method} ${url.pathname} → ${fnName} ${out.statusCode}`);
       } catch (error) {

@@ -3,22 +3,28 @@
 /**
  * POST /api/v2/confirm-password-reset
  *
- * 驗證碼通過後：寫新密碼、bump session 版本（所有裝置上的舊 token 立刻失效，
- * 這正是「我的帳號被盜了」時使用者期待發生的事）、清掉登入失敗計數與挑戰。
+ * 驗證碼通過後：在 Supabase Auth 寫入新密碼、把 sessions_valid_after 推到現在
+ * （所有裝置上的舊 access token 立刻失效，這正是「我的帳號被盜了」時使用者期待
+ * 發生的事）、清掉登入失敗計數與挑戰。資料庫部分在同一筆交易裡，Supabase Auth
+ * 的更新放在交易最後，失敗就整筆回滾。
  *
- * 全部在同一筆交易裡，所以不會出現「密碼換了但舊 session 還活著」的空窗。
+ * 提交之後，再以新密碼登入一次並撤銷這個帳號全部的 refresh token（scope=global），
+ * 別的裝置無法再用舊的 refresh token 換到新的 access token。
  */
 
 const { json, parseBody, handleError } = require('./_http');
 const { withoutUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
 const reset = require('./_auth-reset');
+const supabaseAuth = require('./_supabase-auth');
+const session = require('./_session');
 
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return json(405, { ok: false, error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed' } });
   }
   try {
+    session.assertSameOrigin(event);
     const body = parseBody(event);
     const phone = auth.normalizeTaiwanPhone(body.phone);
     const code = String(body.otp || body.code || '').replace(/\D/g, '');
@@ -58,13 +64,12 @@ exports.handler = async (event) => {
         // （仍持有 verifyChallenge 取得的 advisory lock）內把挑戰作廢，提交之後
         // 才回報一般的 RESET_CODE_INVALID。
         //
-        // 不動任何一方的密碼與 session_version：這個分支下兩個帳號都不該被改。
+        // 不動任何一方的密碼與 session：這個分支下兩個帳號都不該被改。
         await reset.clearChallenge(client, phone);
         return { verificationError: auth.authError('RESET_CODE_INVALID', '驗證碼無效或已失效') };
       }
 
-      await auth.setPasswordCredential(client, user.id, newPassword);
-      await auth.bumpSessionVersion(client, user.id);
+      await session.revokeSessions(client, user.id);
       await auth.clearLoginRate(client, phone);
       await reset.clearChallenge(client, phone);
       await client.query('update users set updated_at = now() where id = $1', [user.id]);
@@ -78,6 +83,9 @@ exports.handler = async (event) => {
          values ($1,'auth.password.reset_completed',$2,'user',$2,'PASSWORD_RESET_OTP','{}'::jsonb)`,
         [`AUD-${Date.now()}-${auth.randomHex(4)}`, user.id]);
 
+      // 最後才改 Supabase Auth 的密碼：失敗時上面的資料庫變更一起回滾
+      await supabaseAuth.updateUser(user.id, { password: newPassword });
+
       return {
         reset: true,
         user: {
@@ -90,6 +98,15 @@ exports.handler = async (event) => {
     });
 
     if (data.verificationError) throw data.verificationError;
+
+    // 撤銷其他裝置的 refresh token。失敗不影響重設結果：舊的 access token 已因
+    // sessions_valid_after 失效，只是舊 refresh token 在 Supabase Auth 那端還沒撤銷。
+    try {
+      const tokens = await supabaseAuth.signInWithPassword(auth.toE164(phone), newPassword);
+      await supabaseAuth.signOut(tokens.accessToken, 'global');
+    } catch (error) {
+      console.warn('[reset] 撤銷 refresh token 失敗', error && error.code);
+    }
     return json(200, { ok: true, data });
   } catch (error) {
     return handleError(translateDbError(error));

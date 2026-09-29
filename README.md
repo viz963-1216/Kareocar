@@ -81,7 +81,7 @@ Netlify Function 必須用 `care_ride_app` 角色連線，用 `postgres` 會繞�
 以下項目不在 12.26.0 的範圍內，上線前應逐項確認，詳細說明見 SECURITY_HARDENING.md 的「尚未處理」章節。
 
 1. ~~Apps Script 專案中有 6 支函式尚未納入版本控制~~：Apps Script 已整個移除，不再適用。
-2. ~~`index.html` 仍是單一檔案且 CSP 帶 `'unsafe-inline'`~~：JS 已拆到 `js/`，`script-src` 不再允許 `'unsafe-inline'`（#14）。session token 仍存在 `sessionStorage`，由 #18 處理。
+2. ~~`index.html` 仍是單一檔案且 CSP 帶 `'unsafe-inline'`；session token 存在 `sessionStorage`~~：JS 已拆到 `js/`，`script-src` 不再允許 `'unsafe-inline'`（#14）；登入改由 Supabase Auth，token 只在 HttpOnly cookie（#18）。
 3. 一次資料同步仍是 23 個獨立請求，各自重算一次權限範圍（批次寫入已優化，讀取路徑尚未）。
 4. 「從已發布試算表匯入預約」功能仍由瀏覽器直接讀取公開試算表。
 5. 沒有監控與告警：後端開始出錯時不會有人知道。

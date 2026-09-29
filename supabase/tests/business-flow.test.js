@@ -37,11 +37,11 @@ process.env.DATABASE_URL = isSocket
   : `postgresql://care_ride_app@${host}:${process.env.PGPORT}/careride_flow_test?sslmode=disable`;
 process.env.AUTH_SESSION_SECRET = 'synthetic-session-secret-flow-0123456789';
 process.env.AUTH_PASSWORD_PEPPER = 'synthetic-password-pepper-flow-0123456789';
-process.env.AUTH_PBKDF2_ITERATIONS = '1000';
+// access token 以測試金鑰簽發，function 端走正式的 JWT 驗證；必須在載入 function 之前
+const fx = require('./_auth-fixture');
 
 const admin = new Pool({ host, port: Number(process.env.PGPORT), database: 'careride_flow_test', user: 'postgres' });
 const db = require('../../netlify/functions/_db');
-const auth = require('../../netlify/functions/_auth-pg');
 const load = require('../../netlify/functions/v2-state-load');
 const mutate = require('../../netlify/functions/v2-state-mutate');
 const claimFn = require('../../netlify/functions/v2-claim-booking');
@@ -72,7 +72,7 @@ function record(scenario, name, ok, detail = '') {
 async function call(handler, method, token, body) {
   const res = await handler({
     httpMethod: method,
-    headers: token ? { authorization: `Bearer ${token}` } : {},
+    headers: token ? { host: '127.0.0.1', cookie: `cr_at=${token}` } : {},
     body: body === undefined ? undefined : JSON.stringify(body)
   });
   let parsed = {};
@@ -158,7 +158,7 @@ async function seedIdentities() {
   `);
 }
 
-const token = (userId) => db.withoutUser((c) => auth.issueSessionToken(c, userId));
+const token = async (userId) => fx.mintAccessToken(userId);
 
 function openBooking(id, requester = U.req) {
   return {

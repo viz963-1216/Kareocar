@@ -26,10 +26,12 @@ process.env.AUTH_PBKDF2_ITERATIONS = '1000';
 const sql = (q) => execFileSync('psql', ['-h', PGHOST, '-p', PGPORT, '-U', 'postgres',
   '-d', PGDATABASE, '-tAc', q]).toString().trim();
 
+// 假的 Supabase Auth 與測試簽章金鑰；舊測試的 token 寫法由 fx.adapt 轉成 cookie
+const fx = require('./_auth-fixture');
 const auth = require(path.join(FN, '_auth-pg.js'));
 const { withoutUser, getPool } = require(path.join(FN, '_db.js'));
-const login = require(path.join(FN, 'v2-password-login.js'));
-const idw = require(path.join(FN, 'v2-identity-write.js'));
+const login = fx.adapt(require(path.join(FN, 'v2-password-login.js')));
+const idw = fx.adapt(require(path.join(FN, 'v2-identity-write.js')));
 
 let pass = 0, fail = 0;
 const t = async (name, fn) => {
@@ -46,7 +48,7 @@ const doLogin = async (p, pw, ip) => parse(await login.handler({ httpMethod: 'PO
   await withoutUser(async (c) => {
     for (const [u, p] of [['USR-ROOT', 'RootPass2026!!'], ['USR-OWN2', 'Own2Pass123'],
                           ['USR-DISP1', 'DispatchPass123'], ['USR-VICTIM', 'VictimPass123']]) {
-      await auth.setPasswordCredential(c, u, p);
+      await fx.setSeedPassword(u, p);
     }
   });
   const root = (await doLogin('0912000009', 'RootPass2026!!', '198.51.100.70')).data.sessionToken;

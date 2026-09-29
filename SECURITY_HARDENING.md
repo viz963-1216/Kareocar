@@ -6,6 +6,8 @@
 
 ---
 
+> **註**：第一節第 2 項（密碼雜湊）與第 3、6 項的 session／密碼細節，自 #18 起由 Supabase Auth 取代；以下保留為歷史紀錄。
+
 ## 一、已修正的安全問題
 
 ### 1. AppState 寫入授權採信了請求內容（嚴重）
@@ -114,7 +116,7 @@
 
 ### 2. 前端單檔與 XSS 風險面
 
-> **部分已處理（#14）**：JS 已拆到 `js/`，CSP 的 `script-src` 不再允許 `'unsafe-inline'`，`tel:` 插值已跳脫。session token 改 HttpOnly cookie 由 #18 處理；`style-src` 仍帶 `'unsafe-inline'`。
+> **大部分已處理**：JS 已拆到 `js/`，CSP 的 `script-src` 不再允許 `'unsafe-inline'`，`tel:` 插值已跳脫（#14）；登入改由 Supabase Auth，token 只在 HttpOnly cookie（#18）。`style-src` 仍帶 `'unsafe-inline'`。
 
 `index.html` 仍是單一檔案，CSP 因此必須帶 `'unsafe-inline'`；session token 存在 `sessionStorage`，JavaScript 讀得到。
 

@@ -10,7 +10,7 @@ function check(fn){fn();checks++;}
 async function main(){
  const state={integration:{},bookings:[]};const mutations=[];
  let response={ok:true,status:200,json:async()=>({ok:true,data:{collections:{bookings:[{id:'B'}]},counts:{bookings:1},loadedAt:'2026-09-14T00:00:00Z'}})};
- const context=vm.createContext({window:{backendAuthToken:()=> 'synthetic'},navigator:{onLine:true},store:{mutate:(f,o)=>{mutations.push(o);f(state);}},normalizeLoadedIds_:x=>x,AUTHORITATIVE_STATE_COLLECTIONS:['bookings'],nowISO:()=> 'now',fetch:async()=>response,showToast:()=>{},console});
+ const context=vm.createContext({window:{hasBackendSession:()=>true},navigator:{onLine:true},store:{mutate:(f,o)=>{mutations.push(o);f(state);}},normalizeLoadedIds_:x=>x,AUTHORITATIVE_STATE_COLLECTIONS:['bookings'],nowISO:()=> 'now',fetch:async()=>response,showToast:()=>{},console});
  vm.runInContext(loader+';globalThis.loader=AppStateDatabase',context);
  await context.loader.loadAll();
  check(()=>assert.equal(state.integration.lastSyncAt,'2026-09-14T00:00:00Z'));
