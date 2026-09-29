@@ -1,9 +1,7 @@
 'use strict';
 const assert=require('node:assert/strict');
-const fs=require('node:fs');
-const path=require('node:path');
 const vm=require('node:vm');
-const html=fs.readFileSync(path.join(__dirname,'../index.html'),'utf8');
+const html=require('../tools/_frontend-source').readFrontendSource().js;
 const loader=html.slice(html.indexOf('const AppStateDatabase={'),html.indexOf('window.AppStateDatabase=AppStateDatabase;'));
 const queueMethod=html.slice(html.indexOf('  async syncOfflineQueue(){'),html.indexOf('  captureProof(tripId'));
 const badgeFunction=html.match(/function updateSyncUI\(\)\{[^\n]+/)[0];

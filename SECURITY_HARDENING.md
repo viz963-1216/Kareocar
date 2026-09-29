@@ -114,6 +114,8 @@
 
 ### 2. 前端單檔與 XSS 風險面
 
+> **部分已處理（#14）**：JS 已拆到 `js/`，CSP 的 `script-src` 不再允許 `'unsafe-inline'`，`tel:` 插值已跳脫。session token 改 HttpOnly cookie 由 #18 處理；`style-src` 仍帶 `'unsafe-inline'`。
+
 `index.html` 仍是單一檔案，CSP 因此必須帶 `'unsafe-inline'`；session token 存在 `sessionStorage`，JavaScript 讀得到。
 
 建議順序：把內嵌 JS 拆成獨立檔案 → 移除 `'unsafe-inline'` → session 改為 `HttpOnly; Secure; SameSite=Strict` cookie 由 Netlify Function 設定。另外 `href="tel:${...}"` 這類屬性插值仍未跳脫。

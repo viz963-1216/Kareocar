@@ -146,12 +146,17 @@ async function openPage(cdp, baseUrl, label) {
   const { browserContextId } = await cdp.send('Target.createBrowserContext', { disposeOnDetach: true });
   const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank', browserContextId });
   const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
-  const page = { label, targetId, exceptions: [], consoleErrors: [], requests: [], stateLoads: [], send: (m, p = {}) => cdp.send(m, p, sessionId) };
+  const page = { label, targetId, exceptions: [], consoleErrors: [], cspViolations: [], requests: [], stateLoads: [], send: (m, p = {}) => cdp.send(m, p, sessionId) };
   cdp.on((msg) => {
     if (msg.sessionId !== sessionId) return;
     if (msg.method === 'Runtime.exceptionThrown') {
       const d = msg.params.exceptionDetails || {};
       page.exceptions.push((d.exception && d.exception.description) || d.text);
+    }
+    // CSP 違規：瀏覽器把「Refused to execute / load ... Content Security Policy」記在 Log 網域，
+    // 不會出現在 console API。跨重新整理累積，所以不會漏掉 reload 前的違規。
+    if (msg.method === 'Log.entryAdded' && /Content Security Policy/i.test(msg.params.entry.text || '')) {
+      page.cspViolations.push(String(msg.params.entry.text).slice(0, 300));
     }
     if (msg.method === 'Runtime.consoleAPICalled' && msg.params.type === 'error') {
       page.consoleErrors.push(msg.params.args.map((a) => a.value ?? a.description ?? '').join(' ').slice(0, 300));
@@ -170,6 +175,10 @@ async function openPage(cdp, baseUrl, label) {
   });
   await page.send('Page.enable');
   await page.send('Runtime.enable');
+  await page.send('Log.enable');
+  // 另外以頁面事件收集（每次載入重新掛上），兩種來源取聯集
+  await page.send('Page.addScriptToEvaluateOnNewDocument', { source:
+    "window.__cspViolations=[];document.addEventListener('securitypolicyviolation',e=>window.__cspViolations.push((e.violatedDirective||'')+' '+(e.blockedURI||'inline')));" });
   await page.send('Network.enable', { maxPostDataSize: 5 * 1024 * 1024 });
   await page.send('Network.setBlockedURLs', { urls: ['https://*'] });
   await page.send('Page.navigate', { url: baseUrl });
@@ -316,10 +325,14 @@ async function seed() {
 async function finishPage(page, S) {
   await screenshot(page, page.label);
   fs.writeFileSync(path.join(ARTIFACT_DIR, `${page.label}-errors.json`), J({
-    exceptions: page.exceptions, consoleErrors: page.consoleErrors,
+    exceptions: page.exceptions, consoleErrors: page.consoleErrors, cspViolations: page.cspViolations,
     requests: page.requests.map(({ path }) => ({ path }))
   }));
   record(S, '頁面沒有未處理的 JavaScript 例外', page.exceptions.length === 0, page.exceptions.slice(0, 3).join(' | '));
+  let pageViolations = [];
+  try { pageViolations = (await evaluate(page, 'window.__cspViolations||[]')) || []; } catch (_) { /* 頁面已關閉時略過 */ }
+  const csp = [...page.cspViolations, ...pageViolations];
+  record(S, '過程中沒有 CSP 違規', csp.length === 0, csp.slice(0, 3).join(' | '));
   if (page.consoleErrors.length) console.log(`    （資訊）console.error ${page.consoleErrors.length} 則：${page.consoleErrors.slice(0, 3).join(' | ')}`);
 }
 
@@ -549,6 +562,12 @@ async function flowCancel(cdp, baseUrl, tokens) {
     server = createServer();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     const baseUrl = `http://127.0.0.1:${server.address().port}/`;
+    // 確認測試真的跑在正式站的 CSP 之下：本機伺服器套用 _headers，script-src 不含 unsafe-inline
+    const cspHeader = await new Promise((resolve, reject) => {
+      require('node:http').get(baseUrl, (r) => { r.resume(); resolve(String(r.headers['content-security-policy'] || '')); }).on('error', reject);
+    });
+    const scriptSrc = (cspHeader.split(';').map((d) => d.trim()).find((d) => d.startsWith('script-src')) || '');
+    record('啟動', '頁面回應帶 CSP，且 script-src 不允許 unsafe-inline', Boolean(scriptSrc) && !scriptSrc.includes("'unsafe-inline'"), scriptSrc || '（沒有 CSP 標頭）');
     chrome = await launchChrome();
     console.log(`Chrome：${chrome.version ? chrome.version.product : '（未知版本）'}　應用：${baseUrl}　截圖目錄：${ARTIFACT_DIR}`);
     const cdp = new Cdp(chrome.ws);

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Cross-checks DOM id usage in index.html.
+ * Cross-checks DOM id usage in index.html and the JS files it loads.
  *
  * Reports:
  *   - ids referenced from script ($('x') / getElementById('x')) that no static
@@ -13,10 +13,11 @@
  *
  *   node tools/check-dom-refs.js
  */
-const fs = require('fs');
-const path = require('path');
+const { readFrontendSource } = require('./_frontend-source');
 
-const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+const source = readFrontendSource();
+// markup 加上所有 JS：id 可能宣告在靜態 HTML，也可能在 JS 的樣板字串裡
+const html = `${source.html}\n${source.js}`;
 
 // Every id="..." occurrence, whether in static markup or in a template string.
 const declared = new Map();
@@ -36,7 +37,7 @@ for (const m of html.matchAll(/(?:getElementById|\$)\(\s*["']([A-Za-z_][\w:.-]*)
 const missing = [...referenced].filter((id) => !declared.has(id)).sort();
 
 // Static markup only, so a duplicate here is a real collision.
-const staticHtml = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
+const staticHtml = source.html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
 const staticIds = new Map();
 for (const m of staticHtml.matchAll(/\bid\s*=\s*["']([A-Za-z_][\w:.-]*)["']/g)) {
   staticIds.set(m[1], (staticIds.get(m[1]) || 0) + 1);
