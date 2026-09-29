@@ -5,7 +5,7 @@
  *
  * body: { bookingId, reasonCode, reasonText }
  *
- * 由 app.cancel_app_state_booking（0008）在同一交易內處理預約與關聯行程：
+ * 由 app.cancel_app_state_booking（baseline 第 8 部分）在同一交易內處理預約與關聯行程：
  * 驗證擁有者與可取消狀態、逐筆鎖定並取消單人的 scheduled 行程、保留歷史關聯。
  * 任何一筆行程不能取消（已開始、已結束、共乘）就整筆回滾。
  *

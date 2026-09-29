@@ -5,7 +5,7 @@
  *
  * ⚠️ DATABASE_URL 的使用者一定要是 care_ride_app，不能是 postgres。
  *    Postgres 的資料表擁有者預設繞過所有 RLS 政策——用 postgres 連線的話，
- *    supabase/migrations/0002 裡那 55 條政策一條都不會生效，而且不會有任何
+ *    baseline migration 裡那 55 條政策一條都不會生效，而且不會有任何
  *    錯誤訊息。啟動時會檢查並直接拒絕啟動。
  */
 

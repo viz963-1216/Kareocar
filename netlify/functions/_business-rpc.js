@@ -3,7 +3,7 @@
 /**
  * 接案、司機執行、需求者取消三個專用端點的共用外殼。
  *
- * 授權與狀態驗證全部在資料庫的 security definer 函式裡（0008 migration）；
+ * 授權與狀態驗證全部在資料庫的 security definer 函式裡（baseline 第 8 部分）；
  * 這裡只負責：驗 session、基本輸入形狀、把函式的錯誤碼轉成前端已經在處理的
  * 應用錯誤碼、寫一筆稽核紀錄。
  */
@@ -12,7 +12,7 @@ const { json, parseBody, handleError } = require('./_http');
 const { withUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
 
-/** 0008 函式使用的自訂 SQLSTATE。 */
+/** 這些 security definer 函式使用的自訂 SQLSTATE。 */
 function translateRpcError(error) {
   const code = error && error.code;
   if (code === 'CR400') return Object.assign(new Error(error.message), { code: 'VALIDATION_ERROR' });

@@ -2,7 +2,7 @@
 /**
  * 瀏覽器端對端測試：在真的 Chrome 裡操作 index.html。後端是實際的
  * netlify/functions handler（tools/local-dev-server.js）與套用實際 migrations 的
- * 隔離 Postgres，handler 以 care_ride_app 連線，RLS 與 0008 函式全部生效。
+ * 隔離 Postgres，handler 以 care_ride_app 連線，RLS 與 security definer 函式全部生效。
  *
  *   A. 調度員在公開需求池按「接案」
  *   B. 司機工作台：出發 → 離線時完成接送、返回上一步、再完成 → 恢復連線自動同步

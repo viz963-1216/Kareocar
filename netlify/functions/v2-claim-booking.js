@@ -5,7 +5,7 @@
  *
  * body: { bookingId, organizationId }
  *
- * 呼叫 0007 建立、0008 補強的 app.claim_app_state_booking：
+ * 呼叫 app.claim_app_state_booking（baseline 第 8 部分）：
  *   - 呼叫者必須是該組織的 owner／dispatcher
  *   - 組織必須啟用中且為可承接的服務組織類型
  *   - SELECT ... FOR UPDATE 搶單；已被接走 → 409 BOOKING_CONFLICT

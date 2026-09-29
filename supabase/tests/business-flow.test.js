@@ -4,7 +4,7 @@
  *
  * 所有斷言都經過實際的 netlify/functions handler（state-load、state-mutate、
  * claim-booking、trip-execute、cancel-booking），handler 以 care_ride_app 連線，
- * RLS、app_state_force_scope 觸發器與 0008 的 security definer 函式全部生效。
+ * RLS、app_state_force_scope 觸發器與 baseline 第 8 部分的 security definer 函式全部生效。
  * 不用 postgres 連線、也不直接呼叫 SQL 函式來代替 API 驗證。
  *
  * postgres 連線只用在：
@@ -24,8 +24,6 @@
  *
  * 只允許本機隔離端點與固定測試庫名稱，不會連到正式或預覽資料庫。
  */
-const fs = require('node:fs');
-const path = require('node:path');
 const { Pool } = require('pg');
 
 const host = process.env.PGHOST;
@@ -723,7 +721,7 @@ async function scenario4(t) {
     record(S, `[資料庫層] ${label}：資料完全不變`, (await state()) === before);
   }
   // 實體 DELETE：沒有 DELETE 政策，RLS 下影響 0 列；以「0 列且資料不變」作為被擋的證據
-  // （觸發器本身的 DELETE 分支在 migration-0008-deploy 第 7 段以隔離情境另外驗證）
+  // （觸發器本身的 DELETE 分支在 migrations.test.sh 第 4 段以隔離情境另外驗證）
   for (const [label, uid] of [['需求者', U.req], ['調度員 A', U.dspA]]) {
     const before = await state();
     const r = await asUser(uid, [[`delete from app_state where collection = 'notifications' and id = $1`, [toDriver.id]]]);
@@ -756,57 +754,6 @@ async function scenario4(t) {
       === JSON.stringify(legit.map((x) => [x.id, x.data.recipientId, x.deleted]))
       && JSON.stringify(await Promise.all(legit.map((x) => provenance(x.id)))) === JSON.stringify(legitProof));
 
-  // ---- 重套 0008、回復期間竄改、再套用：只有未被改動的合法通知恢復可讀
-  // 先在 0008 生效時多做兩次合法取消，湊出三則寫給司機 A1 的系統通知
-  const extra = [];
-  for (const suffix of ['A', 'B']) {
-    const bid = `BKG-FLOW-S4${suffix}`;
-    const tid = `TRP-FLOW-S4${suffix}`;
-    await mutateAs(t.req, [{ collection: 'bookings', id: bid, record: openBooking(bid) }]);
-    await fixtureScheduled(bid, tid);
-    await mutateAs(t.dspA, [{ collection: 'trips', id: tid, record: scheduledTrip(tid, DRIVER.a1, { bookingId: bid, bookingIds: [bid] }) }]);
-    const r = await cancelAs(t.req, { bookingId: bid, reasonCode: 'requester_no_longer_needed' });
-    const ntf = (await notificationsFor(bid)).find((x) => x.data.template === 'trip_cancelled');
-    record(S, `（前提）合法取消 ${bid} 產生寫給司機 A1 的系統通知`, r.status === 200 && Boolean(ntf) && Boolean(await provenance(ntf && ntf.id)), outcome(r));
-    extra.push(ntf);
-  }
-  const [tamperContent, tamperRecipient] = [toDriver, extra[0]];
-  const untouched = extra[1];
-  const readable = async (tok, id) => idsIn(await loadAs(tok), 'notifications').includes(id);
-
-  const sql = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
-  await admin.query(sql('migrations/0008_business_flow_endpoints.sql'));
-  record(S, '重套 0008 後，三則合法通知收件司機 A1 都讀得到',
-    (await readable(t.drvA1, tamperContent.id)) && (await readable(t.drvA1, tamperRecipient.id)) && (await readable(t.drvA1, untouched.id)));
-
-  const rc = await admin.connect();
-  try {
-    await rc.query('begin');
-    await rc.query(sql('rollback/0008_business_flow_endpoints.down.sql'));
-    await rc.query(sql('migrations/0007_app_state.sql'));
-    await rc.query('commit');
-  } catch (e) { await rc.query('rollback'); throw e; } finally { rc.release(); }
-  record(S, '回復 0008 後：收件司機讀不到（政策已移除）、來源證明保留',
-    !(await readable(t.drvA1, untouched.id)) && Boolean(await provenance(untouched.id)));
-
-  // 回復期間觸發器不在：以原本就有權修改這些資料列的 care_ride_app 使用者（需求者是擁有者）改動
-  const contentEdit = await asUser(U.req, [[`update app_state set data = jsonb_set(data, '{payload,reason}', to_jsonb('回復期間竄改的內容'::text)) where collection = 'notifications' and id = $1`, [tamperContent.id]]]);
-  const recipientEdit = await asUser(U.req, [[`update app_state set data = jsonb_set(data, '{recipientId}', to_jsonb($1::text)) where collection = 'notifications' and id = $2`, [U.drvA2, tamperRecipient.id]]]);
-  record(S, '回復期間需求者（擁有者）改動通知內容：成功（觸發器已移除）', contentEdit.ok && contentEdit.rowCount === 1, JSON.stringify(contentEdit));
-  record(S, '回復期間需求者（擁有者）把通知收件人改成司機 A2：成功（觸發器已移除）', recipientEdit.ok && recipientEdit.rowCount === 1, JSON.stringify(recipientEdit));
-
-  await admin.query(sql('migrations/0008_business_flow_endpoints.sql'));
-  record(S, '再套用 0008：內容被改過的通知，原收件司機 A1 讀不到', !(await readable(t.drvA1, tamperContent.id)));
-  record(S, '再套用 0008：收件人被改成 A2 的通知，原收件司機 A1 讀不到、A2 也讀不到',
-    !(await readable(t.drvA1, tamperRecipient.id)) && !(await readable(t.drvA2, tamperRecipient.id)));
-  record(S, '再套用 0008：未被改動的合法通知，收件司機 A1 恢復可讀', await readable(t.drvA1, untouched.id));
-  record(S, '再套用 0008：竄改後的內容沒有被還原成可信（資料列仍是竄改內容、來源證明未被改寫）',
-    (await row('notifications', tamperContent.id)).data.payload.reason === '回復期間竄改的內容'
-      && (await provenance(tamperRecipient.id)).recipient_user_id === U.drvA1);
-  record(S, '再套用 0008：偽造與無證明通知仍讀不到',
-    !idsIn(await loadAs(t.drvA1), 'notifications').some((x) => x.startsWith('NTF-CLIENT-') || x === 'NTF-DB-GUC')
-      && !(await readable(t.drvA2, 'NTF-LEGACY-1')));
-
 }
 
 // ================================================================ 執行
@@ -823,7 +770,7 @@ async function scenario4(t) {
   await scenario2b(t);
   console.log('--- 情境 3：需求者取消自己的已排車預約（含通知與共乘） ---');
   await scenario3(t);
-  console.log('--- 情境 4：通知來源證明；前端通知照舊回存；系統通知不能偽造、竄改、刪除；重套與回復後可見性 ---');
+  console.log('--- 情境 4：通知來源證明；前端通知照舊回存；系統通知不能偽造、竄改、刪除 ---');
   await scenario4(t);
 
   const failed = results.filter((r) => !r.ok);

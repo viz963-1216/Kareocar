@@ -14,7 +14,7 @@
  *
  * command：complete_step | undo_step | proof_service | location_sample | report_issue
  * 對應前端 Trip 的既有司機操作；逐欄驗證規則在 _trip-execution-rules.js，
- * 寫入與核心條件在 app.apply_driver_trip_execution（0008）。
+ * 寫入與核心條件在 app.apply_driver_trip_execution（baseline 第 8 部分）。
  *
  * 流程在同一筆交易內：鎖定行程 → 驗證 → 寫入。驗證失敗整筆回滾。
  *
