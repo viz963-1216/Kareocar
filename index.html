@@ -3399,14 +3399,18 @@ function normalizeLoadedIds_(collections){
 
 const AppStateDatabase={
   lastLoadedAt:null,
+  recordLoadError_(message){
+    store.mutate(db=>{db.integration={...(db.integration||{}),lastSyncStatus:'載入失敗',lastSyncDetails:[message]};},{remote:false,reason:'state_load_error'});
+  },
   async loadAll({silent=false}={}){
     if(typeof navigator!=='undefined'&&navigator.onLine===false){
       const error='目前離線，無法向正式資料庫取得最新資料。';
+      this.recordLoadError_(error);
       if(!silent)showToast(error);
       return {ok:false,error,details:[error]};
     }
     const token=typeof window.backendAuthToken==='function'?window.backendAuthToken():'';
-    if(!token)return {ok:false,error:'尚未登入',details:['尚未登入']};
+    if(!token){this.recordLoadError_('尚未登入');return {ok:false,error:'尚未登入',details:['尚未登入']};}
     try{
       const response=await fetch('/api/v2/state-load',{
         method:'GET',
@@ -3416,6 +3420,7 @@ const AppStateDatabase={
       const result=await response.json().catch(()=>null);
       if(!response.ok||!result?.ok){
         const message=result?.error?.message||`載入失敗（HTTP ${response.status}）`;
+        this.recordLoadError_(message);
         if(!silent)showToast(message);
         return {ok:false,error:message,details:[message],code:result?.error?.code};
       }
@@ -3429,14 +3434,17 @@ const AppStateDatabase={
           else if(!Array.isArray(db[name]))db[name]=[];
         });
         db.demandPool=Array.isArray(result.data?.pool)?result.data.pool:[];
-        db.integration={...(db.integration||{}),lastSyncStatus:'',lastSyncDetails:details,
-                        lastSyncedAt:result.data?.loadedAt||nowISO(),source:'postgres'};
+        db.integration={...(db.integration||{}),lastSyncStatus:result.data?.truncated?'部分資料已載入':'同步完成',
+                        lastSyncDetails:result.data?.truncated?['資料量達到上限，目前僅載入部分資料。']:[],
+                        lastSyncCounts:result.data?.counts||{},
+                        lastSyncAt:result.data?.loadedAt||nowISO(),source:'postgres'};
       },{remote:false,reason:'state_load'});
       this.lastLoadedAt=result.data?.loadedAt||nowISO();
       if(result.data?.truncated)console.warn('[StateLoad] 資料量達到上限，只載入了一部分');
       return {ok:true,details,counts:result.data?.counts||{}};
     }catch(error){
       const message=`載入正式資料失敗：${error?.message||error}`;
+      this.recordLoadError_(message);
       if(!silent)showToast(message);
       return {ok:false,error:message,details:[message]};
     }
@@ -6170,7 +6178,7 @@ Trip = {
       if(persistRows.length)await Promise.all(persistRows.map(persistTripQueueRowP2));
       await cleanupTripP2Storage();const remaining=this.offlineQueue().length;return {ok:failed===0&&stillPending===0&&response?.ok!==false,synced,failed,pending:remaining,mode:response?.mode||TripSyncAdapter.mode,error:failed||stillPending?(response?.error||'部分項目尚未同步'):null};
     })();
-    try{return await tripOutboxSyncPromise;}finally{tripOutboxSyncPromise=null;}
+    try{return await tripOutboxSyncPromise;}finally{tripOutboxSyncPromise=null;updateSyncUI();}
   },
   captureProof(tripId,stepId,input={},actorUserId,options={}){
     const lock=acquireTripMutationLock(tripId,actorUserId);if(!lock.ok)return lock;
