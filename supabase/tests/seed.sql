@@ -3,7 +3,7 @@ truncate app_state,
          audit_events, kpi_daily, system_reports, benefit_assessments, notifications,
          dispatch_plans, cancellations, quote_snapshots, booking_events, telemetry_events,
          issues, service_proofs, trip_bookings, trips, bookings, vehicles, drivers,
-         care_recipient_contacts, care_recipients, memberships, password_credentials,
+         care_recipient_contacts, care_recipients, memberships,
          users, organizations cascade;
 
 insert into organizations (id, org_type, name) values
@@ -51,4 +51,3 @@ insert into trip_bookings (id, trip_id, booking_id) values
 insert into audit_events (id, event_type, actor_user_id, organization_id) values
   ('AUD-1','booking.created','USR-VICTIM','ORG-TP-001');
 
-select app.set_credential('USR-VICTIM', 2, 'iterated-hmac-sha256-peppered', 6000, 'abc123', 'deadbeef');

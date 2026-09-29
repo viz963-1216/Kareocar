@@ -2,8 +2,8 @@
 # migration 的結構與往返，在隔離資料庫上實測：
 #
 #   1. 每支 migration 都有對應的 supabase/rollback/<名稱>.down.sql
-#   2. 往返：全部套用 → 依反序回復 → 再全部套用。回復後 public 與 app schema
-#      沒有殘留物件；再套用後的 schema 與第一次完全相同
+#   2. 往返：逐支套用 → 依反序逐支回復，每回復一支，schema 都要回到套用它之前的
+#      樣子；全部回復後 public 與 app 沒有殘留；再全部套用後的 schema 與第一次相同
 #   3. 司機讀取政策的執行計畫：司機清單的子查詢只算一次，不是每列都查
 #   4. 通知觸發器本身（隔離情境）：交易內暫時加上 SELECT／UPDATE／DELETE 政策，
 #      驗證觸發器擋下修改與刪除系統通知，交易結束即回滾
@@ -31,13 +31,6 @@ expect() { if [ "$2" = "$3" ]; then check "$1" 0; else check "$1（實得 '$2'�
 up() {
   for migration in "$ROOT"/supabase/migrations/*.sql; do
     psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f "$migration" >/dev/null || return 1
-  done
-}
-down() {
-  local files=("$ROOT"/supabase/migrations/*.sql) i name
-  for ((i = ${#files[@]} - 1; i >= 0; i--)); do
-    name="$(basename "${files[$i]}" .sql)"
-    psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f "$ROOT/supabase/rollback/$name.down.sql" >/dev/null || return 1
   done
 }
 # schema 的指紋：public 與 app 裡的資料表欄位、view、函式簽名、政策、觸發器、索引
@@ -75,12 +68,25 @@ for migration in "$ROOT"/supabase/migrations/*.sql; do
 done
 expect "缺少回復檔的 migration" "${missing:-無}" "無"
 
-echo "--- 2. 往返：上 → 下 → 上 ---"
-up && r=0 || r=$?; check "第一次套用" "$r"
-FIRST="$(fingerprint)"
-down && r=0 || r=$?; check "依反序回復" "$r"
-expect "回復後 public 與 app 沒有殘留的資料表、view、序列或 app schema" "$(leftovers)" 0
-up && r=0 || r=$?; check "回復後再套用" "$r"
+echo "--- 2. 往返：逐支上 → 逐支下（每一步都回到套用前的 schema）→ 再上 ---"
+MIGRATIONS=("$ROOT"/supabase/migrations/*.sql)
+declare -a PRINT
+PRINT[0]="$(fingerprint)"
+for ((i = 0; i < ${#MIGRATIONS[@]}; i++)); do
+  name="$(basename "${MIGRATIONS[$i]}" .sql)"
+  psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f "${MIGRATIONS[$i]}" >/dev/null && r=0 || r=$?
+  check "套用 $name" "$r"
+  PRINT[$((i + 1))]="$(fingerprint)"
+done
+FIRST="${PRINT[${#MIGRATIONS[@]}]}"
+for ((i = ${#MIGRATIONS[@]} - 1; i >= 0; i--)); do
+  name="$(basename "${MIGRATIONS[$i]}" .sql)"
+  psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f "$ROOT/supabase/rollback/$name.down.sql" >/dev/null && r=0 || r=$?
+  check "回復 $name" "$r"
+  expect "回復 $name 後的 schema 與套用它之前相同" "$(fingerprint)" "${PRINT[$i]}"
+done
+expect "全部回復後 public 與 app 沒有殘留的資料表、view、序列或 app schema" "$(leftovers)" 0
+up && r=0 || r=$?; check "回復後再全部套用" "$r"
 expect "再套用後的 schema 指紋與第一次相同" "$(fingerprint)" "$FIRST"
 
 echo "--- 3. 司機讀取政策 ---"

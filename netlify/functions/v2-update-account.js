@@ -6,32 +6,34 @@
  * 授權靠 RLS：users_update 政策裡的 id = app.current_user_id()。這支端點不會
  * 也不能改到別人的資料列。
  *
- * 重要的一條：改密碼或改手機號碼都必須再輸入一次目前的密碼。手機號碼就是登入
- * 帳號，只要 session token 被偷就能把帳號整個換走——多一道現行密碼，偷到 token
- * 的人還是接管不了帳號。改完之後 bump session 版本，把所有裝置上的舊 token 踢掉。
+ * 改密碼或改手機號碼都必須再輸入一次目前的密碼（由 Supabase Auth 驗證）。手機
+ * 號碼就是登入帳號，只要 token 被偷就能把帳號整個換走——多一道現行密碼，偷到
+ * token 的人還是接管不了帳號。
+ *
+ * 改完密碼或手機之後：
+ *   - sessions_valid_after 推到現在，所有裝置上既有的 access token 立即失效
+ *   - Supabase Auth 撤銷這個使用者全部的 refresh token
+ *   - 以新的帳密替目前這個裝置重新登入，寫回 cookie，使用者不會被登出
  */
 
-const { json, parseBody, handleError } = require('./_http');
+const { json, withCookies, parseBody, handleError } = require('./_http');
 const { withUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
+const supabaseAuth = require('./_supabase-auth');
+const session = require('./_session');
 
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return json(405, { ok: false, error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed' } });
   }
   try {
+    const claims = await session.requireSession(event);
     const body = parseBody(event);
-    const headerToken = String(event.headers?.authorization || event.headers?.Authorization || '')
-      .replace(/^Bearer\s+/i, '').trim();
-    const token = String(body.sessionToken || '').trim() || headerToken;
-    if (!token) {
-      return json(401, { ok: false, error: { code: 'SESSION_REQUIRED', message: '請先登入' } });
-    }
-    const claims = auth.parseSessionToken(token);
 
     const name = String(body.name || '').trim();
     const phone = auth.normalizeTaiwanPhone(body.phone);
     const newPassword = String(body.newPassword || '');
+    const currentPassword = String(body.currentPassword || '');
 
     if (!name || name.length > 80) throw auth.authError('VALIDATION_ERROR', '請輸入正確顯示名稱');
     if (!/^09\d{8}$/.test(phone)) throw auth.authError('VALIDATION_ERROR', '請輸入 09 開頭共 10 位手機號碼');
@@ -39,8 +41,10 @@ exports.handler = async (event) => {
       throw auth.authError('WEAK_PASSWORD', '新密碼至少需要 8 碼，最多 128 碼');
     }
 
+    let credentialsChanged = false;
+    let validAfter = 0;
     const data = await withUser(claims.userId, async (client) => {
-      await auth.verifySessionToken(client, token);
+      await session.assertSessionActive(client, claims);
 
       const user = (await client.query(
         'select id, display_name, phone_e164, platform_role, active from users where id = $1',
@@ -51,15 +55,17 @@ exports.handler = async (event) => {
 
       const oldPhone = auth.normalizeTaiwanPhone(user.phone_e164);
       const phoneChanged = oldPhone !== phone;
+      credentialsChanged = Boolean(newPassword) || phoneChanged;
 
-      // 社群登入的帳號沒有密碼憑證，對他們來說 session token 就是唯一的證明
-      if ((newPassword || phoneChanged) && await auth.hasPasswordCredential(client, claims.userId)) {
-        const currentPassword = String(body.currentPassword || '');
+      if (credentialsChanged) {
         if (!currentPassword) {
           throw auth.authError('CURRENT_PASSWORD_REQUIRED', '變更密碼或手機號碼前，請先輸入目前的密碼');
         }
-        if (!await auth.verifyPasswordCredential(client, claims.userId, currentPassword)) {
-          throw auth.authError('INVALID_CREDENTIALS', '目前密碼不正確');
+        try {
+          await supabaseAuth.signInWithPassword(auth.toE164(oldPhone), currentPassword);
+        } catch (error) {
+          if (error.code === 'INVALID_CREDENTIALS') throw auth.authError('INVALID_CREDENTIALS', '目前密碼不正確');
+          throw error;
         }
       }
 
@@ -68,14 +74,13 @@ exports.handler = async (event) => {
         'update users set display_name = $2, phone_e164 = $3, updated_at = now() where id = $1',
         [claims.userId, name, auth.toE164(phone)]);
 
-      if (newPassword) await auth.setPasswordCredential(client, claims.userId, newPassword);
-
-      let sessionToken = token;
-      if (newPassword || phoneChanged) {
-        await auth.bumpSessionVersion(client, claims.userId);
-        // bump 之後手上這張 token 也失效了，馬上換一張新的給呼叫者，
-        // 否則使用者改完自己的資料就會被登出
-        sessionToken = await auth.issueSessionToken(client, claims.userId);
+      if (credentialsChanged) {
+        // 在交易內呼叫：Supabase Auth 更新失敗就整筆回滾，資料庫與登入帳號不會不一致
+        await supabaseAuth.updateUser(claims.userId, {
+          phoneE164: phoneChanged ? auth.toE164(phone) : undefined,
+          password: newPassword || undefined
+        });
+        validAfter = await session.revokeSessions(client, claims.userId);
       }
 
       await auth.clearLoginRate(client, oldPhone);
@@ -101,12 +106,19 @@ exports.handler = async (event) => {
         memberships: memberships.map((m) => ({
           membershipId: m.id, organizationId: m.organization_id, role: m.role, status: m.status
         })),
-        sessionToken,
         passwordChanged: !!newPassword
       };
     });
 
-    return json(200, { ok: true, data });
+    if (!credentialsChanged) return json(200, { ok: true, data });
+
+    // 其他裝置的 refresh token 一併撤銷；失敗時 access token 仍已因 sessions_valid_after 失效
+    try { await supabaseAuth.signOut(claims.accessToken, 'global'); } catch (error) {
+      console.warn('[update-account] 撤銷 refresh token 失敗', error && error.code);
+    }
+    await session.waitUntilValid(validAfter);
+    const tokens = await supabaseAuth.signInWithPassword(auth.toE164(phone), newPassword || currentPassword);
+    return withCookies(json(200, { ok: true, data }), session.sessionCookies(event, tokens));
   } catch (error) {
     return handleError(translateDbError(error));
   }

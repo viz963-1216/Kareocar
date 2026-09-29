@@ -18,6 +18,15 @@ function json(statusCode, body) {
   };
 }
 
+/** 在回應上附加 Set-Cookie（Netlify 以 multiValueHeaders 支援多個同名標頭）。 */
+function withCookies(response, cookies) {
+  const list = (cookies || []).filter(Boolean);
+  if (!list.length) return response;
+  const multi = { ...(response.multiValueHeaders || {}) };
+  multi['Set-Cookie'] = [...(multi['Set-Cookie'] || []), ...list];
+  return { ...response, multiValueHeaders: multi };
+}
+
 /**
  * Source IP of the caller, for per-IP login throttling. Netlify sets
  * x-nf-client-connection-ip; the x-forwarded-for fallback takes only the
@@ -47,7 +56,7 @@ function handleError(error) {
     : code === 'RESET_RATE_LIMITED' ? 429
     : code === 'CURRENT_PASSWORD_REQUIRED' ? 400
     : code === 'RESET_PROVIDER_UNAVAILABLE' ? 503
-    : code === 'CONFIG_MISSING' || code === 'CONFIG_INVALID' ? 503
+    : code === 'CONFIG_MISSING' || code === 'CONFIG_INVALID' || code === 'AUTH_PROVIDER_UNAVAILABLE' ? 503
     // 「找不到」與「沒有權限」不是伺服器故障。漏掉這幾個會掉進最後的 502，
     // 前端就會顯示「後端服務錯誤」，而實際上只是這個人看不到那個組織。
     : code === 'ORG_NOT_FOUND' || code === 'USER_NOT_FOUND' || code === 'NOT_FOUND' ? 404
@@ -57,4 +66,4 @@ function handleError(error) {
   return json(userStatus, { ok: false, error: { code, message: error?.message || '服務暫時無法使用' } });
 }
 
-module.exports = { json, parseBody, handleError, clientIp };
+module.exports = { json, withCookies, parseBody, handleError, clientIp };

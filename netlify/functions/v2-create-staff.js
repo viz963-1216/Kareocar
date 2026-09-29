@@ -12,11 +12,16 @@
  *
  * 唯一用到 security definer 的是「用手機號碼找既有帳號」——因為要加進來的人
  * 本來就不在操作者看得到的範圍內。那支函式自己會確認呼叫者是營運方。
+ *
+ * 新帳號先在 Supabase Auth 建立（取得使用者 ID 與密碼），再寫入資料庫；資料庫
+ * 交易失敗時補償刪除剛建立的 Supabase Auth 帳號。
  */
 
 const { json, parseBody, handleError } = require('./_http');
 const { withUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
+const supabaseAuth = require('./_supabase-auth');
+const session = require('./_session');
 
 const REQUESTER_ORG_ID = 'ORG-REQ-001';
 const STAFF_ROLES = ['owner', 'dispatcher', 'driver'];
@@ -30,14 +35,8 @@ exports.handler = async (event) => {
     return json(405, { ok: false, error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed' } });
   }
   try {
+    const claims = await session.requireSession(event);
     const body = parseBody(event);
-    const headerToken = String(event.headers?.authorization || event.headers?.Authorization || '')
-      .replace(/^Bearer\s+/i, '').trim();
-    const token = String(body.sessionToken || '').trim() || headerToken;
-    if (!token) {
-      return json(401, { ok: false, error: { code: 'SESSION_REQUIRED', message: '請先登入' } });
-    }
-    const claims = auth.parseSessionToken(token);
 
     const organizationId = String(body.organizationId || '').trim();
     const role = String(body.role || '').trim().toLowerCase();
@@ -53,8 +52,9 @@ exports.handler = async (event) => {
     if (!name || name.length > 80) throw auth.authError('VALIDATION_ERROR', '請輸入姓名');
     if (!/^09\d{8}$/.test(phone)) throw auth.authError('VALIDATION_ERROR', '請輸入 09 開頭共 10 位手機號碼');
 
+    let createdAuthUserId = null;
     const data = await withUser(claims.userId, async (client) => {
-      await auth.verifySessionToken(client, token);
+      await session.assertSessionActive(client, claims);
 
       const org = (await client.query(
         'select id, name from organizations where id = $1 and active', [organizationId])).rows[0];
@@ -75,17 +75,18 @@ exports.handler = async (event) => {
         throw auth.authError('FORBIDDEN', '平台超級管理者不可加入公司 Membership');
       }
 
-      let userId = found ? found.id : newId('USR-PW');
+      let userId = found ? found.id : null;
       const createdUser = !found;
 
       if (createdUser) {
         if (password.length < 8) throw auth.authError('WEAK_PASSWORD', '新帳號初始密碼至少需要 8 碼');
         if (password.length > 128) throw auth.authError('WEAK_PASSWORD', '密碼長度不可超過 128 碼');
+        userId = await supabaseAuth.createUser({ phoneE164: auth.toE164(phone), password });
+        createdAuthUserId = userId;
         await client.query(
           `insert into users (id, display_name, phone_e164, auth_provider, auth_subject_id, active, platform_role)
-           values ($1,$2,$3,'password',$4,true,'none')`,
-          [userId, name, auth.toE164(phone), `password:${userId}`]);
-        await auth.setPasswordCredential(client, userId, password);
+           values ($1,$2,$3,'supabase',$1,true,'none')`,
+          [userId, name, auth.toE164(phone)]);
       } else {
         const dup = (await client.query(
           `select 1 from memberships
@@ -138,6 +139,13 @@ exports.handler = async (event) => {
         createdUser,
         reusedUser: !createdUser
       };
+    }).catch(async (error) => {
+      if (createdAuthUserId) {
+        try { await supabaseAuth.deleteUser(createdAuthUserId); } catch (cleanupError) {
+          console.error('[create-staff] 補償刪除 Supabase Auth 帳號失敗，需人工處理', createdAuthUserId, cleanupError && cleanupError.code);
+        }
+      }
+      throw error;
     });
 
     return json(200, { ok: true, data });

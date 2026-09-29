@@ -1,22 +1,16 @@
 'use strict';
 
 /**
- * 身分驗證核心（Postgres 版）。
+ * 身分流程的共用工具：登入速率限制、手機號碼正規化、驗證碼與比對工具。
  *
- * 這是原本 Apps Script AuthCore.gs（已移除）的 Node 移植版，演算法刻意保持一致，讓
- * Apps Script 期間建立的憑證在切換之後仍然驗得過。差別只在儲存位置：
+ * 密碼與 session token 已交給 Supabase Auth（見 _supabase-auth.js、_session.js），
+ * 這裡不再保存或驗證密碼。
  *
- *   憑證     Script Properties / 密碼憑證工作表  →  password_credentials 表
- *   速率狀態 CacheService                       →  auth_rate_limits 表（有 TTL）
- *   session  Script Properties                  →  users.session_version
- *
- * 密碼雜湊仍然經過 pepper，而 pepper 只在 Netlify 的環境變數裡——資料庫整個
- * 外洩也沒有 pepper 可以拿來離線破解。
+ * AUTH_SESSION_SECRET 現在只用來把手機號碼、IP 轉成速率限制表裡不可逆的鍵
+ * （opaqueKey），名稱沿用以免正式環境變數改名。
  */
 
 const crypto = require('crypto');
-
-const SESSION_TTL_SECONDS = 12 * 60 * 60;
 
 const LOGIN_WINDOW_SECONDS = 30 * 60;
 const LOGIN_LOCK_STEPS = [
@@ -29,9 +23,6 @@ const LOGIN_IP_WINDOW_SECONDS = 30 * 60;
 const LOGIN_IP_MAX_FAILURES = 30;
 const LOGIN_IP_LOCK_SECONDS = 30 * 60;
 
-const PBKDF2_DEFAULT_ITERATIONS = 6000;
-const PBKDF2_MIN_ITERATIONS = 1000;
-const PBKDF2_MAX_ITERATIONS = 100000;
 
 function authError(code, message) {
   return Object.assign(new Error(String(message || '驗證失敗')), { code: String(code || 'AUTH_ERROR') });
@@ -43,17 +34,12 @@ function requireSecret(name) {
   return value;
 }
 
-function iterations() {
-  const n = Number(process.env.AUTH_PBKDF2_ITERATIONS) || PBKDF2_DEFAULT_ITERATIONS;
-  return Math.min(PBKDF2_MAX_ITERATIONS, Math.max(PBKDF2_MIN_ITERATIONS, Math.floor(n)));
-}
 
 /* ------------------------------------------------------------------ 雜湊 */
 
 /**
- * 與 AuthCore.gs 的 authPbkdf2Hex_ 完全相同的演算法：PBKDF2 的 F 函式
- * （迭代 HMAC-SHA256 + XOR 累加），HMAC 的 key 是 pepper、訊息是 salt|password。
- * 保持一致是為了讓兩套系統在切換期間可以驗證同一批憑證。
+ * 迭代 HMAC-SHA256（PBKDF2 的 F 函式），忘記密碼驗證碼的雜湊用（_auth-reset.js）。
+ * HMAC 的 key 是 pepper、訊息是 salt|值。
  */
 function stretchHex(password, salt, rounds, pepper) {
   const key = Buffer.from(String(pepper), 'utf8');
@@ -83,103 +69,6 @@ function constantTimeEqual(a, b) {
   const bb = Buffer.from(String(b || ''), 'utf8');
   if (ba.length !== bb.length) return false;
   return crypto.timingSafeEqual(ba, bb);
-}
-
-/* ---------------------------------------------------------------- 憑證 */
-
-async function setPasswordCredential(client, userId, password) {
-  const pw = String(password || '');
-  if (pw.length < 8) throw authError('WEAK_PASSWORD', '密碼至少需要 8 碼');
-  if (pw.length > 128) throw authError('WEAK_PASSWORD', '密碼長度不可超過 128 碼');
-  const pepper = requireSecret('AUTH_PASSWORD_PEPPER');
-  const salt = randomHex(16);
-  const rounds = iterations();
-  const hash = stretchHex(pw, salt, rounds, pepper);
-  await client.query('SELECT app.set_credential($1,$2,$3,$4,$5,$6)',
-    [userId, 2, 'iterated-hmac-sha256-peppered', rounds, salt, hash]);
-}
-
-async function deletePasswordCredential(client, userId) {
-  await client.query('SELECT app.delete_credential($1)', [userId]);
-}
-
-/**
- * 驗證密碼，成功時順手把過舊的憑證升級（演算法舊、或成本被調高）。
- * 帳號不存在時仍然做一次完整運算，避免用回應時間判斷帳號是否存在。
- */
-async function verifyPasswordCredential(client, userId, password) {
-  const pepper = requireSecret('AUTH_PASSWORD_PEPPER');
-  const { rows } = await client.query('SELECT * FROM app.get_credential($1)', [userId]);
-  const cred = rows[0];
-  if (!cred) {
-    stretchHex(String(password || ''), 'absent-account-timing-equalizer', iterations(), pepper);
-    return false;
-  }
-  const rounds = Math.min(PBKDF2_MAX_ITERATIONS, Math.max(1, Number(cred.iterations) || PBKDF2_DEFAULT_ITERATIONS));
-  const version = Number(cred.version) || 1;
-  const computed = version >= 2
-    ? stretchHex(String(password || ''), String(cred.salt), rounds, pepper)
-    : crypto.createHmac('sha256', Buffer.from(pepper, 'utf8'))
-        .update(`${cred.salt}|${String(password || '')}`).digest('hex');
-
-  if (!constantTimeEqual(computed, String(cred.hash))) return false;
-
-  if (version < 2 || rounds < iterations()) {
-    try { await setPasswordCredential(client, userId, String(password || '')); } catch (_) { /* 非致命 */ }
-  }
-  return true;
-}
-
-async function hasPasswordCredential(client, userId) {
-  const { rows } = await client.query('SELECT app.has_credential($1) AS has', [userId]);
-  return !!(rows[0] && rows[0].has);
-}
-
-/* ------------------------------------------------------------ session */
-
-const b64url = (s) => Buffer.from(s, 'utf8').toString('base64url');
-const unb64url = (s) => Buffer.from(String(s), 'base64url').toString('utf8');
-
-async function issueSessionToken(client, userId) {
-  const { rows } = await client.query('SELECT app.get_session_version($1) AS v', [userId]);
-  const now = Math.floor(Date.now() / 1000);
-  const payload = {
-    v: 2, userId: String(userId), sv: Number(rows[0].v) || 1,
-    iat: now, exp: now + SESSION_TTL_SECONDS, nonce: randomHex(16)
-  };
-  const body = b64url(JSON.stringify(payload));
-  const sig = crypto.createHmac('sha256', requireSecret('AUTH_SESSION_SECRET')).update(body).digest('hex');
-  return `${body}.${sig}`;
-}
-
-/** 只驗簽章與有效期，不碰資料庫——中介層用。 */
-function parseSessionToken(token) {
-  const parts = String(token || '').split('.');
-  if (parts.length !== 2) throw authError('SESSION_INVALID', '登入工作階段無效，請重新登入');
-  const expected = crypto.createHmac('sha256', requireSecret('AUTH_SESSION_SECRET')).update(parts[0]).digest('hex');
-  if (!constantTimeEqual(expected, parts[1])) throw authError('SESSION_INVALID', '登入工作階段簽章無效，請重新登入');
-  let payload;
-  try { payload = JSON.parse(unb64url(parts[0])); } catch (_) { throw authError('SESSION_INVALID', '登入工作階段格式錯誤'); }
-  const now = Math.floor(Date.now() / 1000);
-  if (!payload.userId || Number(payload.exp || 0) <= now) {
-    throw authError('SESSION_EXPIRED', '登入工作階段已過期，請重新登入');
-  }
-  return payload;
-}
-
-/** 完整驗證：加上 session 版本比對，改過密碼的舊 token 會被踢掉。 */
-async function verifySessionToken(client, token) {
-  const payload = parseSessionToken(token);
-  const { rows } = await client.query('SELECT app.get_session_version($1) AS v', [payload.userId]);
-  const current = Number(rows[0] && rows[0].v) || 0;
-  if (current === 0) throw authError('SESSION_INVALID', '使用者不存在，請重新登入');
-  if (Number(payload.sv || 1) !== current) throw authError('SESSION_INVALID', '登入工作階段已失效，請重新登入');
-  return payload;
-}
-
-async function bumpSessionVersion(client, userId) {
-  const { rows } = await client.query('SELECT app.bump_session_version($1) AS v', [userId]);
-  return Number(rows[0].v);
 }
 
 /* ------------------------------------------------------------ 速率限制 */
@@ -270,7 +159,7 @@ async function clearLoginRate(client, phone) {
 
 /* ---------------------------------------------------------------- 工具 */
 
-/** 台灣手機號碼正規化，與 IdentityApi.gs 的 normalizeTaiwanPhoneForIdentity_ 一致。 */
+/** 台灣手機號碼正規化成 09 開頭的本地格式。 */
 function normalizeTaiwanPhone(value) {
   const raw = String(value || '').replace(/[^\d+]/g, '');
   if (/^09\d{8}$/.test(raw)) return raw;
@@ -284,10 +173,7 @@ function toE164(localPhone) {
 }
 
 module.exports = {
-  authError, requireSecret, iterations, stretchHex, randomHex, secureOtpCode, constantTimeEqual,
-  setPasswordCredential, deletePasswordCredential, verifyPasswordCredential, hasPasswordCredential,
-  issueSessionToken, parseSessionToken, verifySessionToken, bumpSessionVersion,
+  authError, requireSecret, stretchHex, randomHex, secureOtpCode, constantTimeEqual,
   opaqueKey, assertLoginAllowed, recordLoginFailure, clearLoginRate,
-  normalizeTaiwanPhone, toE164,
-  SESSION_TTL_SECONDS
+  normalizeTaiwanPhone, toE164
 };

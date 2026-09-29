@@ -3,16 +3,20 @@
 /**
  * POST /api/v2/register-requester  —— 需求者自助註冊
  *
- * 取代 identity-register-requester.js（Apps Script 版）。
+ * 先在 Supabase Auth 建立帳號（手機號碼＋密碼，取得使用者 ID），再用同一個 ID
+ * 在資料庫建立使用者列與需求者成員資格。資料庫這一步失敗時，補償刪除剛建立的
+ * Supabase Auth 帳號，不會留下「能登入但沒有身分」的殘骸。成功後直接登入，
+ * token 只寫進 HttpOnly cookie。
  *
- * 整個註冊是一筆交易：建立使用者、掛上需求者組織的成員資格、寫入密碼憑證。
- * 任何一步失敗就整筆回滾，不會留下「有帳號但沒有密碼」或「有密碼但沒有身分」
- * 的殘骸——Apps Script 版是靠手動補償刪除來達成這件事的。
+ * 手機號碼目前不做簡訊驗證就建立為已驗證（與改用 Supabase Auth 前相同）；
+ * 簡訊驗證在 #19 接上。
  */
 
-const { json, parseBody, handleError, clientIp } = require('./_http');
+const { json, withCookies, parseBody, handleError, clientIp } = require('./_http');
 const { withoutUser, withUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
+const supabaseAuth = require('./_supabase-auth');
+const session = require('./_session');
 
 const REQUESTER_ORG_ID = 'ORG-REQ-001';
 
@@ -37,21 +41,31 @@ exports.handler = async (event) => {
     if (password.length < 8) throw auth.authError('WEAK_PASSWORD', '密碼至少需要 8 碼');
     if (password.length > 128) throw auth.authError('WEAK_PASSWORD', '密碼長度不可超過 128 碼');
 
-    const userId = newId('USR-PW');
+    session.assertSameOrigin(event);
+    const phoneE164 = auth.toE164(phone);
     const membershipId = newId('MEM-REQ');
 
-    const result = await withoutUser(async (client) => {
-      await client.query('SELECT app.register_requester($1,$2,$3,$4,$5)',
-        [userId, membershipId, name, email, auth.toE164(phone)]);
-      await auth.setPasswordCredential(client, userId, password);
-      const sessionToken = await auth.issueSessionToken(client, userId);
-      return {
-        user: { userId, displayName: name, phone, email, platformRole: 'none' },
-        membership: { membershipId, organizationId: REQUESTER_ORG_ID, role: 'requester', status: 'active' },
-        sessionToken
-      };
-    });
+    // 資料庫已有這個手機號碼時，不先去 Supabase Auth 建帳號再補償
+    const taken = await withoutUser(async (client) =>
+      (await client.query('SELECT * FROM app.find_user_for_login($1)', [phoneE164])).rows.length > 0);
+    if (taken) throw auth.authError('PHONE_EXISTS', '此手機號碼已經註冊');
 
+    const userId = await supabaseAuth.createUser({ phoneE164, password });
+    try {
+      await withoutUser((client) => client.query('SELECT app.register_requester($1,$2,$3,$4,$5)',
+        [userId, membershipId, name, email, phoneE164]));
+    } catch (dbError) {
+      try { await supabaseAuth.deleteUser(userId); } catch (cleanupError) {
+        console.error('[register] 補償刪除 Supabase Auth 帳號失敗，需人工處理', userId, cleanupError && cleanupError.code);
+      }
+      throw dbError;
+    }
+
+    const tokens = await supabaseAuth.signInWithPassword(phoneE164, password);
+    const result = {
+      user: { userId, displayName: name, phone, email, platformRole: 'none' },
+      membership: { membershipId, organizationId: REQUESTER_ORG_ID, role: 'requester', status: 'active' }
+    };
     result.memberships = [result.membership];
 
     // 稽核與組織清單都用新帳號自己的身分做，RLS 一併適用。
@@ -72,7 +86,7 @@ exports.handler = async (event) => {
       result.organizations = [{ id: REQUESTER_ORG_ID, type: 'requester_hub', name: '需求者組織', active: true }];
     }
 
-    return json(200, { ok: true, data: result });
+    return withCookies(json(200, { ok: true, data: result }), session.sessionCookies(event, tokens));
   } catch (error) {
     return handleError(translateDbError(error));
   }

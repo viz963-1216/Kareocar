@@ -31,14 +31,16 @@ require.cache[smsPath].exports = {
   sendPasswordResetSms: async (_phone, code) => { lastCode = code; }
 };
 
+// 假的 Supabase Auth 與測試簽章金鑰；舊測試的 token 寫法由 fx.adapt 轉成 cookie
+const fx = require('./_auth-fixture');
 const auth = require(path.join(FN, '_auth-pg.js'));
 const { withUser, withoutUser, getPool } = require(path.join(FN, '_db.js'));
-const login = require(path.join(FN, 'v2-password-login.js'));
-const register = require(path.join(FN, 'v2-register-requester.js'));
-const reqReset = require(path.join(FN, 'v2-request-password-reset.js'));
-const confirmReset = require(path.join(FN, 'v2-confirm-password-reset.js'));
-const createStaff = require(path.join(FN, 'v2-create-staff.js'));
-const updateAccount = require(path.join(FN, 'v2-update-account.js'));
+const login = fx.adapt(require(path.join(FN, 'v2-password-login.js')));
+const register = fx.adapt(require(path.join(FN, 'v2-register-requester.js')));
+const reqReset = fx.adapt(require(path.join(FN, 'v2-request-password-reset.js')));
+const confirmReset = fx.adapt(require(path.join(FN, 'v2-confirm-password-reset.js')));
+const createStaff = fx.adapt(require(path.join(FN, 'v2-create-staff.js')));
+const updateAccount = fx.adapt(require(path.join(FN, 'v2-update-account.js')));
 
 let pass = 0, fail = 0;
 const t = async (name, fn) => {
@@ -53,10 +55,10 @@ const R_PHONE = '0933111222', R_PW = 'RequesterPass123';
 
 (async () => {
   console.log('--- 需求者自助註冊 ---');
-  let rToken = null, rUserId = null;
+  let rToken = null, rUserId = null, regToken = null;
   await t('註冊成功並直接拿到 session', async () => {
     const r = parse(await post(register, { name: '王小明', email: 'ming@example.com', phone: R_PHONE, password: R_PW }));
-    rToken = r.data && r.data.sessionToken; rUserId = r.data && r.data.user.userId;
+    rToken = r.data && r.data.sessionToken; rUserId = r.data && r.data.user.userId; regToken = rToken;
     return r.ok === true && !!rToken && r.data.membership.role === 'requester'
       && r.data.membership.organizationId === 'ORG-REQ-001';
   });
@@ -66,13 +68,21 @@ const R_PHONE = '0933111222', R_PW = 'RequesterPass123';
   });
   await t('平台角色一定是 none（不能自己註冊成管理者）', () =>
     sql(`select platform_role from users where id = '${rUserId}'`) === 'none');
-  await t('重複手機被擋', async () => {
+  await t('使用者 ID 就是 Supabase Auth 的使用者 ID，auth_provider 記為 supabase', () =>
+    sql(`select auth_provider || '|' || (auth_subject_id = id) from users where id = '${rUserId}'`) === 'supabase|true');
+  await t('重複手機被擋，而且不會去 Supabase Auth 建帳號', async () => {
+    const before = fx.calls.filter((c) => c[0] === 'createUser').length;
     const r = parse(await post(register, { name: '別人', email: 'other@example.com', phone: R_PHONE, password: 'AnotherPass123' }));
-    return r.status === 400 && r.error.code === 'ACCOUNT_EXISTS';
+    return r.status === 400 && r.error.code === 'PHONE_EXISTS'
+      && fx.calls.filter((c) => c[0] === 'createUser').length === before;
   });
-  await t('重複信箱被擋', async () => {
+  await t('重複信箱被擋，剛在 Supabase Auth 建的帳號被補償刪除', async () => {
     const r = parse(await post(register, { name: '別人', email: 'MING@example.com', phone: '0933999888', password: 'AnotherPass123' }));
-    return r.status === 400 && r.error.code === 'ACCOUNT_EXISTS';
+    const created = fx.calls.filter((c) => c[0] === 'createUser' && c[1] === '+886933999888').length;
+    let canLogin = true;
+    try { await require(path.join(FN, '_supabase-auth.js')).signInWithPassword('+886933999888', 'AnotherPass123'); } catch (_) { canLogin = false; }
+    return r.status === 400 && r.error.code === 'ACCOUNT_EXISTS' && created === 1 && canLogin === false
+      && sql("select count(*) from users where phone_e164 = '+886933999888'") === '0';
   });
   await t('密碼太短被擋，且沒有留下半個帳號', async () => {
     const before = sql('select count(*) from users');
@@ -129,9 +139,9 @@ const R_PHONE = '0933111222', R_PW = 'RequesterPass123';
     rToken = r.data && r.data.sessionToken;
     return r.ok === true;
   });
-  await t('重設後舊 session token 立刻失效', async () => {
-    const r = parse(await post(updateAccount, { sessionToken: 'x' }));
-    return r.status === 401;
+  await t('重設前簽發的 session token 立刻失效', async () => {
+    const r = parse(await post(updateAccount, { sessionToken: regToken, name: '王小明', phone: R_PHONE }));
+    return r.status === 401 && r.error.code === 'SESSION_INVALID';
   });
   await t('同一組驗證碼不能用第二次', async () => {
     const r = parse(await post(confirmReset, { phone: R_PHONE, otp: theCode, newPassword: 'YetAnotherPw789' }));
@@ -140,7 +150,7 @@ const R_PHONE = '0933111222', R_PW = 'RequesterPass123';
 
   console.log('--- 建立員工 ---');
   // 用 seed.sql 裡的 B 隊負責人（USR-OWN2 / ORG-TP-002），不另外造人
-  await withoutUser((c) => auth.setPasswordCredential(c, 'USR-OWN2', 'OwnerPass123'));
+  fx.setSeedPassword('USR-OWN2', 'OwnerPass123');
   let ownerToken = null;
   await t('負責人登入', async () => {
     const r = parse(await post(login, { phone: '0912000005', password: 'OwnerPass123' }, { 'x-nf-client-connection-ip': '198.51.100.4' }));
@@ -216,6 +226,14 @@ const R_PHONE = '0933111222', R_PW = 'RequesterPass123';
       && !!r.data.sessionToken && r.data.sessionToken !== userToken;
     userToken = r.data && r.data.sessionToken;
     return changed;
+  });
+  await t('改手機前的舊 token 已失效（其他裝置被登出）', async () => {
+    const r = parse(await post(updateAccount, { sessionToken: rToken, name: '王大明', phone: '0933555444' }));
+    return r.status === 401 && r.error.code === 'SESSION_INVALID';
+  });
+  await t('Supabase Auth 那端的手機號碼也跟著改了，新手機可以登入', async () => {
+    const r = parse(await post(login, { phone: '0933555444', password: NEW_PW }, { 'x-nf-client-connection-ip': '198.51.100.6' }));
+    return r.ok === true && r.data.user.userId === rUserId;
   });
   await t('換發的新 token 立刻可用', async () => {
     const r = parse(await post(updateAccount, { sessionToken: userToken, name: '王大明', phone: '0933555444' }));

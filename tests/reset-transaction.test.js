@@ -35,8 +35,13 @@ async function run(kind) {
     process:{env:{DATABASE_URL:'postgres://care_ride_app@localhost/offline'}},console
   });
   const auth={normalizeTaiwanPhone:p=>p,toE164:p=>p,authError:(code,msg)=>Object.assign(Error(msg),{code}),
-    async setPasswordCredential(){state.password='new';},async bumpSessionVersion(){state.version++; if(kind==='write-error')throw Error('database failure');},
     async clearLoginRate(){},randomHex:()=> 'test'};
+  // session 撤銷寫在資料庫交易裡（會跟著回滾）；Supabase Auth 的密碼更新是交易內最後一步。
+  // 這裡把撤銷記成 version，密碼記成 password，驗證「失敗時兩者都沒改」。
+  const session={assertSameOrigin(){},
+    async revokeSessions(){state.version++; if(kind==='write-error')throw Error('database failure');}};
+  const supabaseAuth={async updateUser(){state.password='new';},
+    async signInWithPassword(){return {accessToken:'x'};},async signOut(){}};
   const reset={async verifyChallenge(){
       state.attempts++;
       if(kind==='invalid')throw auth.authError('RESET_CODE_INVALID','invalid');
@@ -44,7 +49,7 @@ async function run(kind) {
       // 驗證成功但挑戰綁的是別的使用者
       return {userId:kind==='mismatch'?'someone-else':'synthetic'};
     },async clearChallenge(){state.challengeCleared=true;}};
-  const helpers={'./_db':mod.exports,'./_auth-pg':auth,'./_auth-reset':reset,'./_http':{
+  const helpers={'./_db':mod.exports,'./_auth-pg':auth,'./_auth-reset':reset,'./_session':session,'./_supabase-auth':supabaseAuth,'./_http':{
     json:(statusCode,body)=>({statusCode,body}),parseBody:e=>JSON.parse(e.body),handleError:e=>({error:e.code||e.message})}};
   const h=load('v2-confirm-password-reset.js',helpers).handler;
   const out=await h({httpMethod:'POST',body:JSON.stringify({phone:'0900000099',otp:'111111',newPassword:'synthetic-password'})});

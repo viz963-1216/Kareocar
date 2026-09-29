@@ -94,13 +94,13 @@ check_err "不能代表自己沒加入的公司承接" \
   "沒有權限代表這個組織承接案件"
 
 echo
-echo "═══ 密碼憑證：只能走受控函式 ═══"
-check_err "應用角色無法直接讀憑證表" \
-  "$(as_raw USR-ROOT "select count(*) from password_credentials;")" "permission denied"
-check "受控函式讀得到憑證" \
-  "$(as USR-ROOT "select hash from app.get_credential('USR-VICTIM');")" "deadbeef"
-check "憑證表裡沒有 pepper" \
-  "$(as_owner USR-ROOT "select count(*) from password_credentials where hash like '%pepper%';")" "0"
+echo "═══ 密碼不在資料庫；session 撤銷只能走受控函式 ═══"
+check "資料庫沒有密碼憑證表（密碼由 Supabase Auth 保管）" \
+  "$(as_owner USR-ROOT "select count(*) from pg_tables where tablename = 'password_credentials';")" "0"
+check "應用角色讀得到自己的 session 狀態" \
+  "$(as USR-VICTIM "select active from app.session_state('USR-VICTIM');")" "t"
+check "撤銷 session 後，生效起點晚於現在（這一秒內簽發的 token 也失效）" \
+  "$(as USR-VICTIM "select app.revoke_sessions('USR-VICTIM') > floor(extract(epoch from now()))::bigint;")" "t"
 
 echo
 echo "═══ 稽核紀錄不可竄改 ═══"

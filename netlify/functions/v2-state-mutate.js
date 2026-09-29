@@ -18,6 +18,7 @@
 const { json, parseBody, handleError } = require('./_http');
 const { withUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
+const session = require('./_session');
 
 const MAX_CHANGES = 200;
 
@@ -63,12 +64,7 @@ exports.handler = async (event) => {
     return json(405, { ok: false, error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed' } });
   }
   try {
-    const authorization = String(event.headers?.authorization || event.headers?.Authorization || '');
-    const token = authorization.replace(/^Bearer\s+/i, '').trim();
-    if (!token) {
-      return json(401, { ok: false, error: { code: 'SESSION_REQUIRED', message: '請先登入再寫入正式資料庫' } });
-    }
-    const claims = auth.parseSessionToken(token);
+    const claims = await session.requireSession(event);
 
     const body = parseBody(event);
     const changes = Array.isArray(body.changes) ? body.changes : [];
@@ -78,7 +74,7 @@ exports.handler = async (event) => {
     }
 
     const data = await withUser(claims.userId, async (client) => {
-      await auth.verifySessionToken(client, token);
+      await session.assertSessionActive(client, claims);
 
       const results = [];
       for (const change of changes) {

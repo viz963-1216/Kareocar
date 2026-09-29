@@ -17,7 +17,8 @@ process.env.DATABASE_URL = isSocket
   : `postgresql://care_ride_app@${host}:${process.env.PGPORT}/careride_reset_test?sslmode=disable`;
 process.env.AUTH_SESSION_SECRET = 'synthetic-session-secret-0123456789';
 process.env.AUTH_PASSWORD_PEPPER = 'synthetic-password-pepper-0123456789';
-process.env.AUTH_PBKDF2_ITERATIONS = '1000';
+// 假的 Supabase Auth（密碼存在記憶體）；必須在載入任何 function 之前
+const fx = require('./_auth-fixture');
 const admin = new Pool({host,port:Number(process.env.PGPORT),database:process.env.PGDATABASE,user:'postgres'});
 const db = require('../../netlify/functions/_db');
 const reset = require('../../netlify/functions/_auth-reset');
@@ -26,6 +27,11 @@ const confirm = require('../../netlify/functions/v2-confirm-password-reset');
 const phone='0912000001', user='USR-VICTIM';
 const other='USR-ATTACK', otherPhone='+886912000002';
 const newPassword='synthetic-new-password';
+fx.addUser(user, phone, 'synthetic-old-password');
+const supabaseAuth = require('../../netlify/functions/_supabase-auth');
+const canLogin = async (p, pw) => { try { await supabaseAuth.signInWithPassword(fx.toE164(p), pw); return true; } catch (_) { return false; } };
+const validAfter = async (id) => Number((await admin.query(
+  'select floor(extract(epoch from sessions_valid_after))::bigint v from users where id=$1',[id])).rows[0].v);
 const post = async otp => JSON.parse((await confirm.handler({httpMethod:'POST',body:JSON.stringify({phone,otp,newPassword})})).body);
 let count=0;
 async function check(name, fn){await fn(); count++; console.log('PASS',name);}
@@ -54,12 +60,18 @@ async function challenge(){
   });
   await check('concurrent correct OTP requests commit exactly once',async()=>{
     const otp=await challenge();
-    const before=(await admin.query('select session_version from users where id=$1',[user])).rows[0].session_version;
+    const before=await validAfter(user);
+    const updatesBefore=fx.calls.filter(c=>c[0]==='updateUser').length;
     const results=await Promise.all([post(otp),post(otp)]);
     assert.equal(results.filter(r=>r.ok).length,1);
     assert.equal(results.filter(r=>r.error?.code==='RESET_CODE_INVALID').length,1);
-    assert.equal((await admin.query('select session_version from users where id=$1',[user])).rows[0].session_version,before+1);
-    assert.equal(await db.withoutUser(c=>auth.verifyPasswordCredential(c,user,newPassword)),true);
+    // 舊 session 全部失效：生效起點推到現在之後
+    assert.ok(await validAfter(user) > Math.max(before, Math.floor(Date.now()/1000) - 5));
+    // Supabase Auth 的密碼只被更新一次，而且是新密碼
+    assert.equal(fx.calls.filter(c=>c[0]==='updateUser').length-updatesBefore,1);
+    assert.equal(await canLogin(phone,newPassword),true);
+    // 提交後撤銷了這個帳號全部的 refresh token
+    assert.ok(fx.calls.some(c=>c[0]==='signOut'&&c[1]==='global'));
   });
   await check('challenge bound to another user is invalidated, no account changes, reuse rejected',async()=>{
     // 挑戰綁 USR-VICTIM，然後把號碼移到 USR-ATTACK：此時挑戰的 userId 與這支
@@ -68,13 +80,13 @@ async function challenge(){
     const otp=await challenge();
     const e164=auth.toE164(phone), parked='+886912099999';
     const snap=async()=>(await admin.query(
-      `select u.id, u.session_version, u.updated_at,
-              (select count(*)::int from password_credentials c where c.user_id=u.id) creds
+      `select u.id, u.sessions_valid_after, u.updated_at
          from users u where u.id in ($1,$2) order by u.id`,[user,other])).rows;
     await admin.query('update users set phone_e164=$1 where id=$2',[parked,user]);
     await admin.query('update users set phone_e164=$1 where id=$2',[e164,other]);
     try {
       const before=await snap();
+      const updatesBefore=fx.calls.filter(c=>c[0]==='updateUser').length;
       const first=await post(otp);
       assert.equal(first.error.code,'RESET_CODE_INVALID');
       assert.equal(first.ok,false);   // handleError 會回 { ok:false, error:{...} }
@@ -83,11 +95,11 @@ async function challenge(){
       assert.equal((await admin.query('select count(*)::int n from auth_rate_limits where key=$1',
         [auth.opaqueKey('reset',phone)])).rows[0].n,0);
 
-      // 兩個帳號的 session_version、updated_at、憑證數量都沒變
+      // 兩個帳號的 sessions_valid_after、updated_at 都沒變
       assert.deepEqual(await snap(),before);
 
-      // 沒有任何一方的密碼被設成這次送進來的新密碼
-      assert.equal(await db.withoutUser(c=>auth.verifyPasswordCredential(c,other,newPassword)),false);
+      // Supabase Auth 那端沒有任何一方的密碼被改
+      assert.equal(fx.calls.filter(c=>c[0]==='updateUser').length,updatesBefore);
 
       // 同一組碼再送一次仍然被拒（挑戰真的不見了，不是還留著可重試）
       assert.equal((await post(otp)).error.code,'RESET_CODE_INVALID');

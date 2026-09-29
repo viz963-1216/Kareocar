@@ -15,7 +15,9 @@ const APP_CONFIG = Object.freeze({
   identityCreateStaffUrl: '/api/v2/create-staff',
   identitySessionUrl: '/api/v2/session',
   backendHealthUrl: '/api/health',
-  authSessionTokenKey: 'careRideV122579ReportDemoAuthSessionToken',
+  backendSessionFlagKey: 'careRideBackendSessionActive',
+  legacyAuthSessionTokenKey: 'careRideV122579ReportDemoAuthSessionToken',
+  logoutUrl: '/api/v2/logout',
   stateMutateUrl: '/api/v2/state-mutate',
   identityWriteUrl: '/api/v2/identity-write',
   claimBookingUrl: '/api/v2/claim-booking',
@@ -503,7 +505,7 @@ async function authoritativeFlush_(){
   }
   if(!authoritativeProduction_())return {ok:true,skipped:true};
   if(typeof navigator!=='undefined'&&navigator.onLine===false){updateAuthoritativeWriteUI_();return {ok:false,offline:true,pending:true,error:'目前離線，尚未寫入正式資料庫'};}
-  const token=typeof backendAuthToken==='function'?backendAuthToken():'';const actor=authoritativeCurrentActor_();if(!token||!actor)return {ok:false,skipped:true};
+  const token=(typeof hasBackendSession==='function'&&hasBackendSession()?'cookie':'');const actor=authoritativeCurrentActor_();if(!token||!actor)return {ok:false,skipped:true};
   const rows=[...authoritativeQueue.values()].filter(x=>x.actorUserId===actor).slice(0,100);if(!rows.length){updateAuthoritativeWriteUI_();return {ok:true,count:0};}
   authoritativeFlushInFlight=true;updateAuthoritativeWriteUI_();
   try{
@@ -515,7 +517,7 @@ async function authoritativeFlush_(){
     const stateRows=payload.filter(x=>!IDENTITY_WRITE_COLLECTIONS.has(x.collection));
     const post=async(url,changes)=>{
       if(!changes.length)return;
-      const response=await fetch(url,{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${token}`},credentials:'same-origin',cache:'no-store',body:JSON.stringify({changes})});
+      const response=await apiFetch(url,{method:'POST',headers:{'content-type':'application/json'},credentials:'same-origin',cache:'no-store',body:JSON.stringify({changes})});
       const result=await response.json().catch(()=>null);
       if(!response.ok||!result?.ok)throw new Error(result?.error?.message||`正式資料寫入失敗（HTTP ${response.status}）`);
     };
@@ -554,7 +556,7 @@ function authoritativeDriverExecutionChange_(change){
 function authoritativeQueueChanges_(changes){
   if(!authoritativeProduction_()||!changes?.length)return;
   changes=changes.filter(c=>!authoritativeDriverExecutionChange_(c));if(!changes.length)return;
-  const actor=authoritativeCurrentActor_();const token=typeof backendAuthToken==='function'?backendAuthToken():'';if(!actor||!token)return;
+  const actor=authoritativeCurrentActor_();const token=(typeof hasBackendSession==='function'&&hasBackendSession()?'cookie':'');if(!actor||!token)return;
   changes.forEach(c=>{const key=`${actor}|${c.collection}|${c.id}`,prior=authoritativeQueue.get(key),next={...c,record:authoritativeSanitizeRecord_(c.collection,c.record),previousRecord:prior?.previousRecord!==undefined?prior.previousRecord:c.previousRecord,expectedRevision:prior?.expectedRevision!==undefined?prior.expectedRevision:c.expectedRevision,actorUserId:actor,queuedAt:prior?.queuedAt||nowISO()};authoritativeQueue.set(key,next);});authoritativePersistQueue_();
   clearTimeout(authoritativeFlushTimer);authoritativeFlushTimer=setTimeout(()=>authoritativeFlush_(),25);
 }
@@ -618,7 +620,7 @@ class Store {
     return LocalStore.persistent;
   }
   flushLocal(){ return this.save({immediate:true}); }
-  mutate(mutator,options={}){ const capture=options?.remote!==false&&authoritativeProduction_()&&typeof backendAuthToken==='function'&&!!backendAuthToken()&&!!authoritativeCurrentActor_(); const before=capture?deepClone(this.#state):null; mutator(this.#state); this.save(); if(capture)authoritativeQueueChanges_(authoritativeDiff_(before,this.#state)); return this.#state; }
+  mutate(mutator,options={}){ const capture=options?.remote!==false&&authoritativeProduction_()&&typeof hasBackendSession==='function'&&hasBackendSession()&&!!authoritativeCurrentActor_(); const before=capture?deepClone(this.#state):null; mutator(this.#state); this.save(); if(capture)authoritativeQueueChanges_(authoritativeDiff_(before,this.#state)); return this.#state; }
   async flushAuthoritative(){ return authoritativeFlush_(); }
   refreshFromStorage(){
     // 本機不再保存整份資料庫，所以沒有東西可以重新讀取。
@@ -962,12 +964,12 @@ const AppStateDatabase={
       if(!silent)showToast(error);
       return {ok:false,error,details:[error]};
     }
-    const token=typeof window.backendAuthToken==='function'?window.backendAuthToken():'';
+    const token=(typeof window.hasBackendSession==='function'&&window.hasBackendSession()?'cookie':'');
     if(!token){this.recordLoadError_('尚未登入');return {ok:false,error:'尚未登入',details:['尚未登入']};}
     try{
-      const response=await fetch('/api/v2/state-load',{
+      const response=await (window.apiFetch||fetch)('/api/v2/state-load',{
         method:'GET',
-        headers:{'Accept':'application/json','Authorization':`Bearer ${token}`},
+        headers:{'Accept':'application/json'},
         credentials:'same-origin',cache:'no-store'
       });
       const result=await response.json().catch(()=>null);
@@ -1616,10 +1618,10 @@ Booking = {
     // 接案由後端 app.claim_app_state_booking 決定：組織權限、組織類型、FOR UPDATE 搶單。
     // 本機不先改 store——那會變成一筆 state-mutate 寫入，而一般寫入管道不允許接案。
     if(!bookingActorCan(userId,BOOKING_PERMISSION.MARKET_CLAIM,organizationId))return {ok:false,error:bookingPermissionError(BOOKING_PERMISSION.MARKET_CLAIM)};
-    const token=typeof backendAuthToken==='function'?backendAuthToken():'';
+    const token=(typeof hasBackendSession==='function'&&hasBackendSession()?'cookie':'');
     if(!token)return {ok:false,error:'請先登入後再接案'};
     try{
-      const response=await fetch(APP_CONFIG.claimBookingUrl,{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${token}`},credentials:'same-origin',cache:'no-store',body:JSON.stringify({bookingId:id,organizationId,expectedVersion:Number(expectedVersion)||null})});
+      const response=await apiFetch(APP_CONFIG.claimBookingUrl,{method:'POST',headers:{'content-type':'application/json'},credentials:'same-origin',cache:'no-store',body:JSON.stringify({bookingId:id,organizationId,expectedVersion:Number(expectedVersion)||null})});
       const result=await response.json().catch(()=>null);
       if(!response.ok||!result?.ok)return {ok:false,code:result?.error?.code||null,error:result?.error?.message||`接案失敗（HTTP ${response.status}）`};
       return {ok:true,organization:Organization.get(organizationId)||{id:organizationId,name:'目前組織'},serverVersion:result.data?.version??null};
@@ -1798,14 +1800,14 @@ Booking = {
   async cancelOwn(id,userId,reasonCode,reasonText=''){
     const allowed=this.canCancelOwn(id,userId); if(!allowed.ok)return allowed;
     if(!String(reasonCode||'').trim())return {ok:false,error:'請選擇此操作的原因'};
-    const token=typeof backendAuthToken==='function'?backendAuthToken():'';
+    const token=(typeof hasBackendSession==='function'&&hasBackendSession()?'cookie':'');
     if(!token)return {ok:false,error:'請先登入後再取消預約'};
     // 預約與關聯行程由後端 app.cancel_app_state_booking 在同一交易內處理；
     // 本機不先改 store，避免產生需求者無權寫入的行程異動。
     // 取消通知（司機 trip_cancelled、需求者 booking_cancelled）也由後端在同一交易內
     // 排入 notifications，重新載入後出現；取消失敗不會留下通知。
     try{
-      const response=await fetch(APP_CONFIG.cancelBookingUrl,{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${token}`},credentials:'same-origin',cache:'no-store',body:JSON.stringify({bookingId:id,reasonCode,reasonText})});
+      const response=await apiFetch(APP_CONFIG.cancelBookingUrl,{method:'POST',headers:{'content-type':'application/json'},credentials:'same-origin',cache:'no-store',body:JSON.stringify({bookingId:id,reasonCode,reasonText})});
       const result=await response.json().catch(()=>null);
       if(!response.ok||!result?.ok)return {ok:false,code:result?.error?.code||null,error:result?.error?.message||`取消失敗（HTTP ${response.status}）`};
       const refresh=await AppStateDatabase.loadAll({silent:true});
@@ -2888,7 +2890,7 @@ const TripSyncAdapter={mode:'trip_execute_endpoint',
       if(!tripDriverExecutionOwned_(trip)){legacy.push(item);continue;}
       if(!byTrip.has(item.tripId))byTrip.set(item.tripId,[]);byTrip.get(item.tripId).push(item);
     }
-    const token=typeof backendAuthToken==='function'?backendAuthToken():'';
+    const token=(typeof hasBackendSession==='function'&&hasBackendSession()?'cookie':'');
     for(const [tripId,rows] of byTrip){
       const claimed=new Set();let stop=null;
       for(const cmd of rows.filter(isCommand)){
@@ -2899,7 +2901,7 @@ const TripSyncAdapter={mode:'trip_execute_endpoint',
         if(!token){stop={permanent:false,error:'尚未登入'};continue;}
         const events=siblings.filter(x=>x.mutationType==='trip_event'&&x.payload).map(x=>x.payload);
         let status=0,body=null,networkError='';
-        try{const response=await fetch(APP_CONFIG.tripExecuteUrl,{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${token}`},credentials:'same-origin',cache:'no-store',body:JSON.stringify(this.commandBody_(cmd,tripId,events))});status=response.status;body=await response.json().catch(()=>null);}catch(error){networkError=String(error?.message||error);}
+        try{const response=await apiFetch(APP_CONFIG.tripExecuteUrl,{method:'POST',headers:{'content-type':'application/json'},credentials:'same-origin',cache:'no-store',body:JSON.stringify(this.commandBody_(cmd,tripId,events))});status=response.status;body=await response.json().catch(()=>null);}catch(error){networkError=String(error?.message||error);}
         if(status===200&&body?.ok){const stamp=nowISO();group.forEach(x=>results.push({id:x.id,requestId:x.requestId,ok:true,serverRevision:body.data?.revision??null,serverRecordedAt:stamp}));continue;}
         const error=body?.error?.message||(status?`行程同步失敗（HTTP ${status}）`:`行程同步失敗：${networkError||'網路錯誤'}`);
         stop={permanent:[400,403,404,409].includes(status),error};
@@ -4624,14 +4626,36 @@ Identity = {
 
 
 
-function backendAuthToken(){return String(SessionStore.getItem(APP_CONFIG.authSessionTokenKey)||'');}
-function persistBackendAuthToken(token){const value=String(token||'').trim();if(value)SessionStore.setItem(APP_CONFIG.authSessionTokenKey,value);else SessionStore.removeItem(APP_CONFIG.authSessionTokenKey);}
+// 登入 token 只存在伺服器設定的 HttpOnly cookie，這裡的 JavaScript 讀不到也碰不到。
+// 前端只記一個「這個分頁目前有伺服器登入」的旗標（不是秘密），用來決定要不要呼叫需要登入的 API。
+try{SessionStore.removeItem(APP_CONFIG.legacyAuthSessionTokenKey);}catch(_){}
+function hasBackendSession(){return SessionStore.getItem(APP_CONFIG.backendSessionFlagKey)==='1';}
+function markBackendSession(active){if(active)SessionStore.setItem(APP_CONFIG.backendSessionFlagKey,'1');else SessionStore.removeItem(APP_CONFIG.backendSessionFlagKey);}
 function backendApiError(message,code='BACKEND_ERROR'){const error=new Error(String(message||'後端服務錯誤'));error.code=code;return error;}
-// V12.25.79 production hotfix: expose auth helpers across runtime scopes.
-window.backendAuthToken=backendAuthToken;
+window.hasBackendSession=hasBackendSession;
 window.backendApiError=backendApiError;
-async function backendJsonPost(url,payload={},extraHeaders={}){
-  const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json',...extraHeaders},credentials:'same-origin',cache:'no-store',body:JSON.stringify(payload)});
+// access token 過期（SESSION_EXPIRED）時，以 refresh token cookie 向 /api/v2/session 換一組新的，
+// 成功就把原本的請求重送一次。同時多個請求過期時只換一次。
+let backendRefreshPromise=null;
+function refreshBackendSession(){
+  if(!backendRefreshPromise){
+    backendRefreshPromise=fetch(APP_CONFIG.identitySessionUrl,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},credentials:'same-origin',cache:'no-store',body:'{}'})
+      .then(r=>{markBackendSession(r.ok);return r.ok;}).catch(()=>false).finally(()=>{backendRefreshPromise=null;});
+  }
+  return backendRefreshPromise;
+}
+async function apiFetch(url,init={}){
+  const options={credentials:'same-origin',...init};
+  let response=await fetch(url,options);
+  if(response.status===401&&url!==APP_CONFIG.identitySessionUrl){
+    let code='';try{code=(await response.clone().json())?.error?.code||'';}catch(_){}
+    if(code==='SESSION_EXPIRED'&&await refreshBackendSession())response=await fetch(url,options);
+  }
+  return response;
+}
+window.apiFetch=apiFetch;
+async function backendJsonPost(url,payload={}){
+  const response=await apiFetch(url,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(payload)});
   const result=await response.json().catch(()=>null);
   if(response.status===404)throw backendApiError('Netlify Functions 尚未部署；請部署完整正式專案，不要只替換 index.html','FUNCTION_NOT_DEPLOYED');
   if(!response.ok||!result?.ok)throw backendApiError(result?.error?.message||`後端請求失敗（HTTP ${response.status}）`,result?.error?.code||`HTTP_${response.status}`);
@@ -4639,33 +4663,38 @@ async function backendJsonPost(url,payload={},extraHeaders={}){
 }
 
 CloudIdentity=Object.freeze({
-  token:backendAuthToken,
-  saveSessionToken:persistBackendAuthToken,
-  clearSessionToken(){persistBackendAuthToken('');},
+  hasSession:hasBackendSession,
+  // 登出這個裝置：伺服器撤銷 refresh token 並清掉 cookie。只清旗標時不必等回應。
+  clearSessionToken(){
+    const had=hasBackendSession();markBackendSession(false);
+    if(had)fetch(APP_CONFIG.logoutUrl,{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',cache:'no-store',body:'{}'}).catch(()=>{});
+  },
   async registerRequester({name,email,phone,password}){
     const result=await backendJsonPost(APP_CONFIG.identityRegisterUrl,{
       name:String(name||'').trim(),email:String(email||'').trim(),phone:String(phone||'').replace(/\D/g,''),password:String(password||'')
     });
     const user=result?.data?.user||{},membership=result?.data?.membership||{};
     if(!user.userId||!membership.membershipId)throw backendApiError('後端未回傳完整的使用者／成員資格資料','INVALID_BACKEND_RESPONSE');
-    this.saveSessionToken(result?.data?.sessionToken||'');
-    return {user,membership,memberships:result?.data?.memberships||[membership],sessionToken:result?.data?.sessionToken||''};
+    markBackendSession(true);
+    return {user,membership,memberships:result?.data?.memberships||[membership]};
   },
   async passwordLogin({phone,password}){
     const result=await backendJsonPost(APP_CONFIG.identityPasswordLoginUrl,{phone:String(phone||'').replace(/\D/g,''),password:String(password||'')});
     const data=result?.data||{};
     if(!data.user?.userId)throw backendApiError('登入後端未回傳使用者資料','INVALID_BACKEND_RESPONSE');
-    this.saveSessionToken(data.sessionToken||'');
+    markBackendSession(true);
     return data;
   },
   async resumeSession(){
-    const token=this.token();if(!token)throw backendApiError('登入工作階段不存在','SESSION_REQUIRED');
-    const result=await backendJsonPost(APP_CONFIG.identitySessionUrl,{sessionToken:token});
-    const data=result?.data||{};if(data.sessionToken)this.saveSessionToken(data.sessionToken);return data;
+    try{
+      const result=await backendJsonPost(APP_CONFIG.identitySessionUrl,{});
+      markBackendSession(true);
+      return result?.data||{};
+    }catch(error){markBackendSession(false);throw error;}
   },
   async createStaff({organizationId,name,phone,password,role,alsoRequester=false}){
-    const token=this.token();if(!token)throw backendApiError('登入工作階段已遺失，請重新登入','SESSION_REQUIRED');
-    const result=await backendJsonPost(APP_CONFIG.identityCreateStaffUrl,{sessionToken:token,organizationId,name:String(name||'').trim(),phone:String(phone||'').replace(/\D/g,''),password:String(password||''),role:String(role||''),alsoRequester:!!alsoRequester});
+    if(!hasBackendSession())throw backendApiError('登入工作階段已遺失，請重新登入','SESSION_REQUIRED');
+    const result=await backendJsonPost(APP_CONFIG.identityCreateStaffUrl,{organizationId,name:String(name||'').trim(),phone:String(phone||'').replace(/\D/g,''),password:String(password||''),role:String(role||''),alsoRequester:!!alsoRequester});
     return result?.data||{};
   },
   async requestPasswordReset({phone}){
@@ -4675,9 +4704,9 @@ CloudIdentity=Object.freeze({
     const result=await backendJsonPost(APP_CONFIG.identityConfirmPasswordResetUrl,{phone:String(phone||'').replace(/\D/g,''),otp:String(otp||'').replace(/\D/g,''),newPassword:String(newPassword||'')});return result?.data||{};
   },
   async updateAccount({name,phone,newPassword='',currentPassword=''}){
-    const token=this.token();if(!token)throw backendApiError('登入工作階段已遺失，請重新登入','SESSION_REQUIRED');
-    const result=await backendJsonPost(APP_CONFIG.identityUpdateAccountUrl,{name:String(name||'').trim(),phone:String(phone||'').replace(/\D/g,''),newPassword:String(newPassword||''),currentPassword:String(currentPassword||'')},{Authorization:`Bearer ${token}`});
-    const data=result?.data||{};if(data.sessionToken)this.saveSessionToken(data.sessionToken);return data;
+    if(!hasBackendSession())throw backendApiError('登入工作階段已遺失，請重新登入','SESSION_REQUIRED');
+    const result=await backendJsonPost(APP_CONFIG.identityUpdateAccountUrl,{name:String(name||'').trim(),phone:String(phone||'').replace(/\D/g,''),newPassword:String(newPassword||''),currentPassword:String(currentPassword||'')});
+    return result?.data||{};
   }
 });
 
@@ -6839,13 +6868,16 @@ async function bootstrapApplication(){
   // rendered from local state until the server has authenticated the session.
   {
     Identity.init();
-    if(Identity.currentUser()||CloudIdentity.token()){
+    // 登入 cookie 讀不到，所以一律問伺服器：新分頁、重新整理都能恢復登入；沒有登入就回 401
+    {
       try{
-        if(!CloudIdentity.token())throw window.backendApiError('找不到伺服器登入工作階段','SESSION_REQUIRED');
         const cloud=await CloudIdentity.resumeSession();
         const resumed=Identity.startBackendSession({user:cloud.user,memberships:cloud.memberships||[],organizations:cloud.organizations||[],provider:'session'});
         if(!resumed.ok)throw window.backendApiError(resumed.error,'SESSION_FAILED');
-      }catch(error){console.warn('[Bootstrap] production session resume rejected',error);Identity.logout();clearProductionSensitiveCache_();}
+      }catch(error){
+        if(error?.code!=='SESSION_REQUIRED')console.warn('[Bootstrap] production session resume rejected',error);
+        Identity.logout();clearProductionSensitiveCache_();
+      }
     }
   }
   const benefitInit=Benefit.initialize();
