@@ -1,0 +1,130 @@
+name: Deploy migrations
+
+# 合併到 main、且動到 migration 時：
+#   1. verify      在拋棄式 postgres:16 上跑 migration 往返與執行器測試
+#   2. staging     自動套用到 Staging
+# Production 只在人工觸發時套用：Actions → Deploy migrations → Run workflow，
+# target 選 production，並在 confirm 輸入 apply-production。這個 repo 是私人 repo，
+# 免費方案沒有 Environment 的審核人功能，所以「人工觸發＋輸入確認」就是核准關卡。
+#
+# 連線字串是 repo secret STAGING_MIGRATION_DATABASE_URL、PRODUCTION_MIGRATION_DATABASE_URL
+# （Supabase 的 postgres 管理連線），不是 Netlify 上 care_ride_app 的 DATABASE_URL。執行器見
+# tools/apply-migrations.sh：已套用的檔案被改過、順序錯亂、或資料庫有舊物件卻沒有
+# migration 紀錄時，一律拒絕、什麼都不改。
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/**'
+      - 'supabase/rollback/**'
+      - 'tools/apply-migrations.sh'
+      - '.github/workflows/deploy-migrations.yml'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: '套用到哪裡'
+        type: choice
+        options: [staging, production]
+        default: staging
+      confirm:
+        description: '套用到 production 時輸入 apply-production'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+# 同一時間只允許一次部署，後到的排隊，不取消進行中的
+concurrency:
+  group: deploy-migrations
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: 驗證（往返與執行器）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安裝 psql
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+      - name: migration 往返
+        run: bash supabase/tests/migrations.test.sh
+      - name: 執行器行為
+        run: bash supabase/tests/apply-migrations.test.sh
+
+  staging:
+    name: 套用到 Staging
+    needs: verify
+    if: github.event_name == 'push' || inputs.target == 'staging'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安裝 psql
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+      - name: 確認已設定連線
+        env:
+          MIGRATION_DATABASE_URL: ${{ secrets.STAGING_MIGRATION_DATABASE_URL }}
+        run: |
+          if [ -z "$MIGRATION_DATABASE_URL" ]; then
+            echo '::error::沒有設定 repo secret STAGING_MIGRATION_DATABASE_URL'
+            exit 1
+          fi
+      - name: 待套用清單
+        env:
+          MIGRATION_DATABASE_URL: ${{ secrets.STAGING_MIGRATION_DATABASE_URL }}
+        run: bash tools/apply-migrations.sh --dry-run
+      - name: 套用
+        env:
+          MIGRATION_DATABASE_URL: ${{ secrets.STAGING_MIGRATION_DATABASE_URL }}
+        run: bash tools/apply-migrations.sh
+
+  production:
+    name: 套用到 Production（人工觸發）
+    needs: verify
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'production' && inputs.confirm == 'apply-production' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安裝 psql
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+      - name: 確認已設定連線
+        env:
+          MIGRATION_DATABASE_URL: ${{ secrets.PRODUCTION_MIGRATION_DATABASE_URL }}
+        run: |
+          if [ -z "$MIGRATION_DATABASE_URL" ]; then
+            echo '::error::沒有設定 repo secret PRODUCTION_MIGRATION_DATABASE_URL'
+            exit 1
+          fi
+      - name: 待套用清單
+        env:
+          MIGRATION_DATABASE_URL: ${{ secrets.PRODUCTION_MIGRATION_DATABASE_URL }}
+        run: bash tools/apply-migrations.sh --dry-run
+      - name: 套用
+        env:
+          MIGRATION_DATABASE_URL: ${{ secrets.PRODUCTION_MIGRATION_DATABASE_URL }}
+        run: bash tools/apply-migrations.sh

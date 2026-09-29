@@ -19,6 +19,8 @@ on:
       - 'tests/**'
       - 'tools/**'
       - 'index.html'
+      - 'js/**'
+      - '_headers'
       - 'netlify.toml'
       - 'package.json'
       - '.github/workflows/isolated-sql-review.yml'
@@ -30,6 +32,8 @@ on:
       - 'tests/**'
       - 'tools/**'
       - 'index.html'
+      - 'js/**'
+      - '_headers'
       - 'netlify.toml'
       - 'package.json'
       - '.github/workflows/isolated-sql-review.yml'
@@ -109,6 +113,9 @@ jobs:
 
       - name: migration 往返（回復檔齊全、上→下→上、司機政策執行計畫、通知觸發器）
         run: bash supabase/tests/migrations.test.sh
+
+      - name: migration 執行器（紀錄、checksum、順序、舊庫拒絕、回滾、lock_timeout）
+        run: bash supabase/tests/apply-migrations.test.sh
 
   browser-e2e:
     # 在真的 Chrome 裡操作 index.html：調度接案、司機執行（含離線／返回／服務
