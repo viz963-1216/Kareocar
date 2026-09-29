@@ -140,3 +140,19 @@ Supabase 可能有版本庫外的 trigger、webhook、排程或外部訂閱；Ne
 所以 SQL/RLS 改動的預設做法是**推上分支開 PR 讓隔離 CI 跑**，拿到實際執行
 證據。只有在 CI 也涵蓋不到的情況才標示「未執行」，並寫清楚是哪一部分涵蓋
 不到。
+
+---
+
+## Agent skills
+
+### Issue tracker
+
+Issue 與 spec 記在 GitHub Issues（viz963-1216/Kareocar），用 `gh` CLI 操作。見 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+使用預設的五個標籤：needs-triage、needs-info、ready-for-agent、ready-for-human、wontfix。見 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+單一 context：根目錄一份 `CONTEXT.md`，ADR 放在 `docs/adr/`。見 `docs/agents/domain.md`。
