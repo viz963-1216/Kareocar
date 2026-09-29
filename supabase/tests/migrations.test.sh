@@ -44,7 +44,7 @@ down() {
 fingerprint() {
   q -c "select md5(string_agg(x, E'\n' order by x)) from (
           select 'col ' || table_schema || '.' || table_name || '.' || column_name || ' ' || data_type
-                 || ' ' || is_nullable || ' ' || coalesce(column_default, '')
+                 || ' ' || is_nullable || ' ' || coalesce(column_default, '') as x
             from information_schema.columns where table_schema in ('public', 'app')
           union all select 'view ' || schemaname || '.' || viewname || ' ' || md5(definition)
             from pg_views where schemaname in ('public', 'app')
