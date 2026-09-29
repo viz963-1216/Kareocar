@@ -6,8 +6,12 @@
  *   - netlify.toml 的 [[redirects]]（/api/... → /.netlify/functions/NAME）
  *     → 在同一個 Node 行程裡呼叫 netlify/functions/NAME.js 的 handler
  *
+ *   - 靜態檔套用 _headers 裡 /* 的回應標頭（含 CSP），讓端對端測試在與正式站
+ *     相同的 script-src 下執行。例外：本機是 http，所以拿掉 HSTS 與 CSP 的
+ *     upgrade-insecure-requests，否則瀏覽器會把本站的 JS 請求升級成 https 而載入失敗
+ *
  * 只給瀏覽器端對端測試與人工驗收使用。不是 netlify dev 的替代品：沒有 edge
- * function、沒有 header 規則、沒有建置步驟。
+ * function、沒有建置步驟。
  *
  * 啟動（資料庫必須是本機隔離庫，這支會拒絕其他主機）：
  *
@@ -27,6 +31,29 @@ const MIME = {
 };
 // 這些目錄是伺服器端程式、測試與版本庫內部資料，正式站也不該被當成靜態檔下載
 const PRIVATE_PREFIXES = ['netlify', 'supabase', 'tests', 'tools', 'node_modules', '.git', '.github'];
+
+/** _headers 中 `/*` 區塊的標頭（本機 http 不適用的兩項除外）。 */
+function staticHeaders() {
+  const file = path.join(ROOT, '_headers');
+  if (!fs.existsSync(file)) return {};
+  const out = {};
+  let inAll = false;
+  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+    if (!line.trim() || line.trim().startsWith('#')) continue;
+    if (!/^\s/.test(line)) { inAll = line.trim() === '/*'; continue; }
+    if (!inAll) continue;
+    const i = line.indexOf(':');
+    if (i < 0) continue;
+    const name = line.slice(0, i).trim();
+    let value = line.slice(i + 1).trim();
+    if (name.toLowerCase() === 'strict-transport-security') continue;
+    if (name.toLowerCase() === 'content-security-policy') {
+      value = value.split(';').map((d) => d.trim()).filter((d) => d && d !== 'upgrade-insecure-requests').join('; ');
+    }
+    out[name] = value;
+  }
+  return out;
+}
 
 function parseRedirects(tomlText) {
   const routes = new Map();
@@ -53,6 +80,7 @@ async function readBody(req) {
 
 function createServer({ log = () => {} } = {}) {
   const routes = parseRedirects(fs.readFileSync(path.join(ROOT, 'netlify.toml'), 'utf8'));
+  const securityHeaders = staticHeaders();
   return http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     const fnName = routes.get(url.pathname)
@@ -95,7 +123,7 @@ function createServer({ log = () => {} } = {}) {
       res.end('not found');
       return;
     }
-    res.writeHead(200, { 'content-type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream', 'cache-control': 'no-store' });
+    res.writeHead(200, { ...securityHeaders, 'content-type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream', 'cache-control': 'no-store' });
     if (req.method === 'HEAD') { res.end(); return; }
     fs.createReadStream(file).pipe(res);
   });

@@ -13,8 +13,9 @@
  */
 const fs = require('fs');
 const path = require('path');
-const INDEX = process.argv[2] || path.join(__dirname, '..', 'index.html');
-const src = fs.readFileSync(INDEX, 'utf8');
+const src = process.argv[2]
+  ? fs.readFileSync(process.argv[2], 'utf8')
+  : require('./_frontend-source').readFrontendSource().js;
 
 const APP_CONFIG = { requesterOrganizationId: 'org_requesters' };
 const gsText = (v) => String(v ?? '').trim();

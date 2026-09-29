@@ -9,7 +9,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
-const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+// 前端 JS 已從 index.html 拆到 js/，變數名稱沿用 html 以免改動下面每個斷言
+const html = require('../tools/_frontend-source').readFrontendSource(ROOT).js;
 const toml = fs.readFileSync(path.join(ROOT, 'netlify.toml'), 'utf8');
 const rules = require('../netlify/functions/_trip-execution-rules');
 
