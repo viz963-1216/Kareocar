@@ -233,6 +233,38 @@ function resolveDbConfig(rawUrl) {
   };
 }
 
+/**
+ * Supabase 專案 ref 的形式：小寫英數字。實際長度是 20，這裡放寬一點，
+ * 但不接受任何分隔字元——ref 會被拿去跟主機名標籤、使用者名後綴逐段比對，
+ * 帶點或斜線的值會讓比對語意變得模糊。
+ */
+const PROJECT_REF_PATTERN = /^[a-z0-9]{8,40}$/;
+
+function isValidProjectRef(ref) {
+  return PROJECT_REF_PATTERN.test(String(ref == null ? '' : ref));
+}
+
+/**
+ * resolveDbConfig 的結果是否指向指定的 Supabase 專案。
+ *
+ * 為什麼不直接比對主機名：Transaction pooler 的主機名是整個區域共用的
+ * （aws-0-ap-southeast-1.pooler.supabase.com），正式與 Staging 若在同一區，
+ * 主機名完全相同，專案只寫在使用者名的後綴（care_ride_app.<ref>）。
+ * 直連則是 db.<ref>.supabase.co。所以兩處都要看：
+ *   * 主機名的任一標籤等於 ref
+ *   * 使用者名第一個點之後的部分等於 ref
+ * 本機端點（Unix socket、loopback）不可能是遠端專案，一律 false。
+ */
+function referencesProject(cfg, ref) {
+  if (!cfg || cfg.local || !isValidProjectRef(ref)) return false;
+  const target = String(ref);
+  const hostLabels = String(cfg.host || '').toLowerCase().split('.');
+  if (hostLabels.includes(target)) return true;
+  const user = String(cfg.user || '').toLowerCase();
+  const dot = user.indexOf('.');
+  return dot !== -1 && user.slice(dot + 1) === target;
+}
+
 /** resolveDbConfig 的結果轉成 pg 的 client/pool 設定。刻意不含 connectionString。 */
 function pgClientConfig(cfg) {
   const out = {
@@ -248,7 +280,7 @@ function pgClientConfig(cfg) {
 }
 
 module.exports = {
-  resolveDbConfig, isLocalEndpoint,
+  resolveDbConfig, isLocalEndpoint, isValidProjectRef, referencesProject,
   SUPPORTED_PARAMS, OVERRIDE_PARAMS, TLS_MODES, VERIFY_MODES,
   CONNECT_TIMEOUT_MAX_SECONDS, CONFIG_REASONS
 };

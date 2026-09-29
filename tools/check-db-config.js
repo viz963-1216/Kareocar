@@ -8,8 +8,21 @@
  * 所以只能由這裡檢查。
  *
  * ---------------------------------------------------------------------------
- * 這支檢查「只」驗證一件事：連線設定能不能被 resolveDbConfig 接受。
+ * 這支檢查「只」驗證兩件事：
+ *   1. 連線設定能不能被 resolveDbConfig 接受
+ *   2. 非 production 的建置沒有指向正式 Supabase 專案
  *
+ * 第 2 點靠非機密環境變數 PRODUCTION_SUPABASE_PROJECT_REF（正式專案的 ref）。
+ * 比對的是專案 ref 而不是主機名，理由見 _db-config.js 的 referencesProject。
+ * 行為：
+ *   * context 精確等於 production：照常通過，只多印一行 production_target。
+ *   * 其他 context（deploy-preview、branch-deploy、dev、other、unset）：
+ *       - 本機端點：通過（不可能是正式專案）
+ *       - 變數未設定：失敗（PROD_REF_UNSET）。沒有設定就無從判斷，寧可擋下。
+ *       - 指向正式專案：失敗（NONPROD_TARGETS_PRODUCTION）
+ *   * 變數有設定但格式不對：任何 context 都失敗（PROD_REF_INVALID）。
+ *
+
  * 它不驗證、也不能用來宣稱：
  *   * 資料庫連得上（沒有建立 Pool、沒有發出任何連線）
  *   * RLS 政策如預期生效
@@ -26,7 +39,7 @@
  */
 
 const path = require('node:path');
-const { resolveDbConfig, CONFIG_REASONS } = require(
+const { resolveDbConfig, referencesProject, isValidProjectRef, CONFIG_REASONS } = require(
   path.join(__dirname, '..', 'netlify', 'functions', '_db-config.js'));
 
 const PREFIX = 'DB_CONFIG_CHECK';
@@ -34,8 +47,11 @@ const PREFIX = 'DB_CONFIG_CHECK';
 /** 只認這幾個 context，其他一律歸成 other／unset，不反射原值。 */
 const KNOWN_CONTEXTS = Object.freeze(['production', 'deploy-preview', 'branch-deploy', 'dev']);
 
-/** reason 的完整白名單：解析模組登記的分類，加上一個統一的未知分類。 */
-const REASONS = Object.freeze([...CONFIG_REASONS, 'UNKNOWN']);
+/** 正式專案防呆自己的拒絕分類。 */
+const GUARD_REASONS = Object.freeze(['PROD_REF_INVALID', 'PROD_REF_UNSET', 'NONPROD_TARGETS_PRODUCTION']);
+
+/** reason 的完整白名單：解析模組登記的分類、防呆的分類，加上一個統一的未知分類。 */
+const REASONS = Object.freeze([...CONFIG_REASONS, ...GUARD_REASONS, 'UNKNOWN']);
 
 function normalizeContext(raw) {
   const value = String(raw == null ? '' : raw).trim();
@@ -67,6 +83,26 @@ function check({ env = process.env, resolve = resolveDbConfig } = {}) {
     return { ok: false, lines };
   }
 
+  // ---------------------------------------------------------- 正式專案防呆
+  // ref 本身不是機密，但照樣不輸出：輸出只用固定詞彙。
+  const rawRef = String(env.PRODUCTION_SUPABASE_PROJECT_REF == null
+    ? '' : env.PRODUCTION_SUPABASE_PROJECT_REF).trim();
+  const fail = (reason) => {
+    lines.push(`${PREFIX} result=FAIL reason=${reason}`);
+    lines.push(`${PREFIX} production_validated=no`);
+    return { ok: false, lines };
+  };
+  if (rawRef && !isValidProjectRef(rawRef)) return fail('PROD_REF_INVALID');
+
+  let productionTarget;
+  if (!rawRef) productionTarget = cfg.local ? 'no' : 'unconfigured';
+  else productionTarget = referencesProject(cfg, rawRef) ? 'yes' : 'no';
+
+  if (context !== 'production') {
+    if (productionTarget === 'unconfigured') return fail('PROD_REF_UNSET');
+    if (productionTarget === 'yes') return fail('NONPROD_TARGETS_PRODUCTION');
+  }
+
   // production_validated 只有在 CONTEXT 精確等於 production 且解析成功時才是 yes。
   const productionValidated = context === 'production' ? 'yes' : 'no';
 
@@ -76,6 +112,7 @@ function check({ env = process.env, resolve = resolveDbConfig } = {}) {
   // params 的內容一定來自 _db-config 的固定白名單，不是使用者輸入。
   lines.push(`${PREFIX} params=${cfg.params && cfg.params.length ? cfg.params.join(',') : 'none'}`);
   lines.push(`${PREFIX} role_first_segment=ok`);
+  lines.push(`${PREFIX} production_target=${productionTarget}`);
   lines.push(`${PREFIX} production_validated=${productionValidated}`);
   return { ok: true, lines };
 }
@@ -87,9 +124,11 @@ if (require.main === module) {
     // 只印分類，不印任何細節。非零退出會讓這次 Netlify 建置失敗，
     // 因此該次建置不會發布；已發布的版本繼續在線上。
     console.error(`${PREFIX} 連線設定檢查未通過，中止建置。`
-      + '原因分類見上方 reason；完整訊息刻意不輸出，因為它含有主機名與使用者名。');
+      + '原因分類見上方 reason；完整訊息刻意不輸出，因為它含有主機名與使用者名。'
+      + 'NONPROD_TARGETS_PRODUCTION 表示非 production 的建置連到了正式資料庫；'
+      + 'PROD_REF_UNSET 表示尚未設定 PRODUCTION_SUPABASE_PROJECT_REF。');
     process.exit(1);
   }
 }
 
-module.exports = { check, classify, normalizeContext, REASONS, KNOWN_CONTEXTS, PREFIX };
+module.exports = { check, classify, normalizeContext, REASONS, GUARD_REASONS, KNOWN_CONTEXTS, PREFIX };

@@ -22,8 +22,8 @@ const ROOT = path.join(__dirname, '..');
 const CLI = path.join(ROOT, 'tools', 'check-db-config.js');
 const CONFIG_MODULE = path.join(ROOT, 'netlify', 'functions', '_db-config.js');
 
-const { check, classify, normalizeContext, REASONS } = require(CLI);
-const { resolveDbConfig } = require(CONFIG_MODULE);
+const { check, classify, normalizeContext, REASONS, GUARD_REASONS } = require(CLI);
+const { resolveDbConfig, referencesProject, isValidProjectRef } = require(CONFIG_MODULE);
 
 // 這些字串只要出現在任何輸出裡就是洩漏
 const M = {
@@ -35,13 +35,27 @@ const M = {
   param: 'zzparammarkerzz',
   message: 'ZZMESSAGEMARKERZZ'
 };
-const ALL_MARKERS = Object.values(M);
+const ALL_MARKERS = [...Object.values(M), 'zzprodrefmarkerzz', 'zzstagingrefmarkerzz'];
 
 const VALID_REMOTE = `postgresql://care_ride_app.${M.user}:${M.pass}@db.${M.host}.example.com:6543/${M.db}?sslmode=require`;
 const VALID_LOCAL = 'postgresql://care_ride_app@127.0.0.1:5432/careride_local?sslmode=disable';
 
+// 合成的專案 ref（小寫英數字，與真實 Supabase ref 同形）。PROD 當正式、STAGING 當其他專案。
+const PROD_REF = 'zzprodrefmarkerzz';
+const STAGING_REF = 'zzstagingrefmarkerzz';
+// 同一區的 pooler 主機名是共用的，專案只在使用者名後綴
+const POOLER_HOST = 'aws-0-ap-southeast-1.pooler.supabase.com';
+const PROD_POOLER = `postgresql://care_ride_app.${PROD_REF}:${M.pass}@${POOLER_HOST}:6543/postgres?sslmode=require`;
+const STAGING_POOLER = `postgresql://care_ride_app.${STAGING_REF}:${M.pass}@${POOLER_HOST}:6543/postgres?sslmode=require`;
+const PROD_DIRECT = `postgresql://care_ride_app:${M.pass}@db.${PROD_REF}.supabase.co:5432/postgres?sslmode=require`;
+const STAGING_DIRECT = `postgresql://care_ride_app:${M.pass}@db.${STAGING_REF}.supabase.co:5432/postgres?sslmode=require`;
+
 let pass = 0;
 const ok = (name) => { console.log('  PASS', name); pass += 1; };
+
+// 子行程會繼承這裡的環境。開發機若剛好設了正式 ref，「未設定」的案例就測不到，
+// 所以先從父行程清掉，每個案例需要時再明確帶入。
+delete process.env.PRODUCTION_SUPABASE_PROJECT_REF;
 
 /** 跑 CLI，回傳 { code, stdout, stderr }。不會丟出例外。 */
 function runCli(env) {
@@ -76,6 +90,7 @@ const LINE_SHAPES = [
   /^DB_CONFIG_CHECK tls=(plaintext-local|encrypted-no-verify)$/,
   /^DB_CONFIG_CHECK params=(none|[a-z_,]+)$/,
   /^DB_CONFIG_CHECK role_first_segment=ok$/,
+  /^DB_CONFIG_CHECK production_target=(yes|no|unconfigured)$/,
   /^DB_CONFIG_CHECK production_validated=(yes|no)$/
 ];
 
@@ -193,6 +208,7 @@ for (const [reason, url] of REJECTIONS) {
 {
   const covered = new Set(REJECTIONS.map(([r]) => r));
   covered.add('MISSING');
+  for (const r of GUARD_REASONS) covered.add(r);   // 下方「正式專案防呆」逐一測試
   const missing = REASONS.filter((r) => r !== 'UNKNOWN' && !covered.has(r));
   assert.deepEqual(missing, [], `這些拒絕分類沒有測試覆蓋：${missing.join('、')}`);
   ok('解析模組登記的每一個拒絕分類都有測試覆蓋');
@@ -254,7 +270,7 @@ for (const [ctx, expectContext, expectValidated] of [
   [undefined, 'unset', 'no'],
   ['Production', 'other', 'no']
 ]) {
-  const env = { DATABASE_URL: VALID_REMOTE };
+  const env = { DATABASE_URL: VALID_REMOTE, PRODUCTION_SUPABASE_PROJECT_REF: PROD_REF };
   if (ctx !== undefined) env.CONTEXT = ctx;
   const r = runCli(ctx === undefined ? { ...env, CONTEXT: '' } : env);
   assert.equal(r.code, 0);
@@ -272,6 +288,111 @@ for (const [ctx, expectContext, expectValidated] of [
   assert.ok(r.stdout.includes('result=FAIL reason=PARAM_UNSUPPORTED'));
   assert.ok(r.stdout.includes('production_validated=no'));
   ok('非 production context 解析失敗同樣 exit 1（一樣擋建置）');
+}
+
+
+// --------------------------------------------------------------------------
+console.log('--- 正式專案防呆（PRODUCTION_SUPABASE_PROJECT_REF）---');
+{
+  assert.equal(isValidProjectRef(PROD_REF), true);
+  for (const bad of ['', 'short', 'Has-Upper', 'a.b.c.d.e.f.g.h', 'abc/defghij', ' spaced ref ']) {
+    assert.equal(isValidProjectRef(bad), false, `「${bad}」不應是合法 ref`);
+  }
+  ok('isValidProjectRef 只接受小寫英數字');
+
+  const r = (url) => resolveDbConfig(url);
+  assert.equal(referencesProject(r(PROD_POOLER), PROD_REF), true, 'pooler：ref 在使用者名後綴');
+  assert.equal(referencesProject(r(PROD_DIRECT), PROD_REF), true, '直連：ref 在主機名標籤');
+  assert.equal(referencesProject(r(STAGING_POOLER), PROD_REF), false, '同區 pooler、不同專案不算');
+  assert.equal(referencesProject(r(STAGING_DIRECT), PROD_REF), false);
+  assert.equal(referencesProject(r(VALID_LOCAL), PROD_REF), false, '本機端點不可能是正式專案');
+  assert.equal(referencesProject(
+    r(`postgresql://care_ride_app.x${PROD_REF}@${POOLER_HOST}/d`), PROD_REF), false, '後綴要完全相等，不是包含');
+  assert.equal(referencesProject(
+    r(`postgresql://care_ride_app@db.${PROD_REF}x.supabase.co/d`), PROD_REF), false, '主機名標籤要完全相等');
+  assert.equal(referencesProject(r(PROD_POOLER), 'Bad.Ref'), false, '不合法的 ref 一律 false');
+  ok('referencesProject：pooler 看使用者名後綴、直連看主機名標籤、同區共用主機名不誤判');
+}
+
+const NON_PROD_CONTEXTS = ['deploy-preview', 'branch-deploy', 'dev', 'Production', undefined];
+const ctxEnv = (ctx) => (ctx === undefined ? { CONTEXT: '' } : { CONTEXT: ctx });
+const ctxLabel = (ctx) => (ctx === undefined ? 'unset' : ctx);
+
+for (const ctx of NON_PROD_CONTEXTS) {
+  for (const [label, url] of [['pooler', PROD_POOLER], ['直連', PROD_DIRECT]]) {
+    const res = runCli({ ...ctxEnv(ctx), DATABASE_URL: url, PRODUCTION_SUPABASE_PROJECT_REF: PROD_REF });
+    assert.equal(res.code, 1, `${ctxLabel(ctx)} 以${label}指向正式專案必須 exit 1`);
+    assert.ok(res.stdout.includes('result=FAIL reason=NONPROD_TARGETS_PRODUCTION'),
+      `${ctxLabel(ctx)}/${label}：實際輸出 → ${res.stdout.trim().replace(/\n/g, ' | ')}`);
+    assert.ok(res.stdout.includes('production_validated=no'));
+    assert.ok(res.stderr.includes('NONPROD_TARGETS_PRODUCTION'), 'stderr 應說明原因分類');
+    assertLineShapes(`${ctxLabel(ctx)}/${label}`, res.stdout.trim().split('\n'));
+    assertNoLeak(`${ctxLabel(ctx)}/${label}`, res.stdout, res.stderr);
+  }
+  ok(`context=${ctxLabel(ctx)} 指向正式專案（pooler 與直連）→ NONPROD_TARGETS_PRODUCTION / exit 1`);
+}
+
+for (const ctx of NON_PROD_CONTEXTS) {
+  const res = runCli({ ...ctxEnv(ctx), DATABASE_URL: STAGING_POOLER, PRODUCTION_SUPABASE_PROJECT_REF: PROD_REF });
+  assert.equal(res.code, 0, `${ctxLabel(ctx)} 指向其他專案應通過`);
+  assert.ok(res.stdout.includes('production_target=no'));
+  assertLineShapes(`staging ${ctxLabel(ctx)}`, res.stdout.trim().split('\n'));
+  assertNoLeak(`staging ${ctxLabel(ctx)}`, res.stdout, res.stderr);
+}
+ok('非 production context 指向同區 pooler 的其他專案 → PASS / production_target=no');
+
+for (const [label, url, target] of [['pooler', PROD_POOLER, 'yes'], ['直連', PROD_DIRECT, 'yes'],
+  ['其他專案', STAGING_POOLER, 'no']]) {
+  const res = runCli({ CONTEXT: 'production', DATABASE_URL: url, PRODUCTION_SUPABASE_PROJECT_REF: PROD_REF });
+  assert.equal(res.code, 0, `production 以${label}應照常通過`);
+  assert.ok(res.stdout.includes(`production_target=${target}`));
+  assert.ok(res.stdout.includes('production_validated=yes'));
+  assertNoLeak(`production ${label}`, res.stdout, res.stderr);
+}
+ok('production context 照常通過，production_target 只是資訊');
+
+// 未設定 ref
+for (const ctx of NON_PROD_CONTEXTS) {
+  for (const unset of [undefined, '', '   ']) {
+    const env = { ...ctxEnv(ctx), DATABASE_URL: STAGING_POOLER, PRODUCTION_SUPABASE_PROJECT_REF: unset };
+    if (unset === undefined) delete env.PRODUCTION_SUPABASE_PROJECT_REF;
+    const res = runCli(env);
+    assert.equal(res.code, 1, `${ctxLabel(ctx)} 未設定 ref 時必須擋下（無從判斷）`);
+    assert.ok(res.stdout.includes('result=FAIL reason=PROD_REF_UNSET'));
+    assertNoLeak(`unset ${ctxLabel(ctx)}`, res.stdout, res.stderr);
+  }
+}
+ok('非 production context 未設定 ref（未設、空字串、空白）→ PROD_REF_UNSET / exit 1');
+{
+  // runCli 會繼承父行程的環境；明確清掉，確保測到的是「未設定」
+  const env = { CONTEXT: 'deploy-preview', DATABASE_URL: VALID_LOCAL, PRODUCTION_SUPABASE_PROJECT_REF: '' };
+  const res = runCli(env);
+  assert.equal(res.code, 0, '本機端點不可能是正式專案，未設定 ref 也放行');
+  assert.ok(res.stdout.includes('production_target=no'));
+  ok('非 production context 連本機端點、未設定 ref → PASS');
+}
+{
+  const res = runCli({ CONTEXT: 'production', DATABASE_URL: PROD_POOLER, PRODUCTION_SUPABASE_PROJECT_REF: '' });
+  assert.equal(res.code, 0, 'production 未設定 ref 不擋，現有正式建置不受影響');
+  assert.ok(res.stdout.includes('production_target=unconfigured'));
+  ok('production context 未設定 ref → PASS / production_target=unconfigured');
+}
+
+// 格式錯誤的 ref：任何 context 都擋
+for (const ctx of ['production', 'deploy-preview']) {
+  const res = runCli({ CONTEXT: ctx, DATABASE_URL: STAGING_POOLER,
+    PRODUCTION_SUPABASE_PROJECT_REF: `db.${M.host}.supabase.co` });
+  assert.equal(res.code, 1, `${ctx}：格式錯誤的 ref 必須擋下`);
+  assert.ok(res.stdout.includes('result=FAIL reason=PROD_REF_INVALID'));
+  assertNoLeak(`invalid ref ${ctx}`, res.stdout, res.stderr);
+}
+ok('ref 格式錯誤（例如誤填主機名）→ 任何 context 都 PROD_REF_INVALID / exit 1，且不反射輸入');
+
+// 解析失敗優先於防呆：沿用原本的分類
+{
+  const res = runCli({ CONTEXT: 'deploy-preview', DATABASE_URL: '', PRODUCTION_SUPABASE_PROJECT_REF: PROD_REF });
+  assert.ok(res.stdout.includes('result=FAIL reason=MISSING'));
+  ok('連線字串本身無效時仍回報原本的解析分類');
 }
 
 // --------------------------------------------------------------------------
