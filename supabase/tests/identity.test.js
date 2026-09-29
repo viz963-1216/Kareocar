@@ -69,7 +69,7 @@ const R_PHONE = '0933111222', R_PW = 'RequesterPass123';
   await t('平台角色一定是 none（不能自己註冊成管理者）', () =>
     sql(`select platform_role from users where id = '${rUserId}'`) === 'none');
   await t('使用者 ID 就是 Supabase Auth 的使用者 ID，auth_provider 記為 supabase', () =>
-    sql(`select auth_provider || '|' || (auth_subject_id = id) from users where id = '${rUserId}'`) === 'supabase|t');
+    sql(`select auth_provider || '|' || (auth_subject_id = id) from users where id = '${rUserId}'`) === 'supabase|true');
   await t('重複手機被擋，而且不會去 Supabase Auth 建帳號', async () => {
     const before = fx.calls.filter((c) => c[0] === 'createUser').length;
     const r = parse(await post(register, { name: '別人', email: 'other@example.com', phone: R_PHONE, password: 'AnotherPass123' }));
