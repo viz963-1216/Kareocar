@@ -36,7 +36,7 @@ const ALLOWED_COLLECTIONS = new Set([
 ]);
 
 // notifications 仍接受前端寫入（派車、中斷等流程的通知）。這些通知沒有後端來源證明，
-// 收件人讀取政策不會放行；竄改系統通知由 0008 的觸發器擋下（見 0008 第 6 節）。
+// 收件人讀取政策不會放行；竄改系統通知由通知觸發器擋下（見 baseline 第 8 部分的第 6 節）。
 
 // 這些欄位絕對不進資料庫，即使前端不小心送上來
 const NEVER_STORE = ['password', 'passwordHash', 'passwordUpdatedAt', 'credential',

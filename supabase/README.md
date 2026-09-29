@@ -8,11 +8,10 @@
 
 | 檔案 | 內容 |
 |---|---|
-| `migrations/0001_schema.sql` | 23 張表、外鍵、索引、updated_at 觸發器 |
-| `migrations/0002_rls.sql` | 輔助函式、55 條 RLS 政策、公開需求池 view、`care_ride_app` 角色 |
-| `migrations/0003_credentials_api.sql` | 密碼憑證的受控存取函式、`claim_booking` 交易函式 |
-| `migrations/0004_bootstrap.sql` | 需求者集散組織；超級管理者的建立步驟（手動） |
-| `migrations/0005_app_runtime.sql` | session 版本欄位、速率限制表（有 TTL）、登入流程用的受控函式 |
+| `migrations/0001_baseline.sql` | 完整 schema：資料表、RLS 政策、`care_ride_app` 角色、身分與登入函式、`app_state`、接案／司機執行／需求者取消、通知來源證明。由原本的 0001–0008 壓縮而成 |
+| `rollback/0001_baseline.down.sql` | 回復 baseline（刪除所有資料表與資料；只用在空資料庫或 Staging 重建） |
+| `migrations_archive/` | 原本的 0001–0008，只供查閱，不再套用 |
+| `tests/migrations.test.sh` | 回復檔齊全、上→下→上 schema 相同、司機政策執行計畫、通知觸發器 |
 | `tests/seed.sql` | 測試資料 |
 | `tests/rls.test.sh` | 31 項 RLS 驗證，含攻擊模擬 |
 | `tests/wiring.test.js` | 18 項端到端測試：Function 實際程式碼跑在真實 Postgres 上 |
@@ -20,13 +19,13 @@
 
 ## 套用到你的 Supabase
 
-在 Supabase 主控台的 **SQL Editor**，依序貼上並執行 `0001` → `0002` → `0003` → `0004`。中間不要跳號，後面的檔案依賴前面建立的函式。
+在空的資料庫依檔名順序套用 `migrations/*.sql`（目前只有 `0001_baseline.sql`）。正式與 Staging 由 migration 的 CI 部署流程套用；手動在 **SQL Editor** 貼上只用在一次性的空資料庫。
 
 ### 接著一定要做的兩件事
 
 **1. 給 `care_ride_app` 設密碼**
 
-`0002` 建立了這個角色但沒有密碼。在 SQL Editor 執行（密碼自己產一組長的，不要用這裡的範例字串）：
+baseline 建立了這個角色但沒有密碼。在 SQL Editor 執行（密碼自己產一組長的，不要用這裡的範例字串）：
 
 ```sql
 alter role care_ride_app with password '換成你自己產生的長密碼';

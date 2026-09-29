@@ -104,52 +104,8 @@ jobs:
       - name: 業務權限整合測試（接案／司機執行／需求者取消 + RLS）
         run: bash supabase/tests/run-business-flow.sh
 
-      - name: migration 0008 部署行為（不改寫、鎖、lock_timeout、重試、執行計畫）
-        run: bash supabase/tests/migration-0008-deploy.test.sh
-
-  compat-old-code:
-    # 部署順序是先 migration、後程式。這一段時間線上是「舊程式 + 新資料庫」，
-    # 這裡用 main 上的 handler 對含 0008 與不含 0008 的兩個庫各跑一次比對。
-    name: 舊程式 × 新資料庫相容性 (node 24)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_HOST_AUTH_METHOD: trust
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
-    env:
-      PGHOST: 127.0.0.1
-      PGPORT: '5432'
-      PGUSER: postgres
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-
-      - name: 安裝 psql 與測試相依
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client
-          npm install --ignore-scripts --no-audit --no-fund
-
-      - name: 取得 0008 前的固定發布版本作為舊程式
-        run: git fetch --no-tags --depth=1 origin 6539c75b4c4131bb2eef1304db0c21100fd888b8
-
-      - name: 舊程式 × 新資料庫
-        run: bash supabase/tests/run-compat-old-code.sh
+      - name: migration 往返（回復檔齊全、上→下→上、司機政策執行計畫、通知觸發器）
+        run: bash supabase/tests/migrations.test.sh
 
   browser-e2e:
     # 在真的 Chrome 裡操作 index.html：調度接案、司機執行（含離線／返回／服務
