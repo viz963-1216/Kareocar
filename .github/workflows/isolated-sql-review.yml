@@ -93,7 +93,7 @@ jobs:
 
       # tests/run.sh 會跑 tests/*.test.js，已包含 reset-transaction.test.js
       # （記憶體 PG 替身的離線交易回歸），不需要再單獨跑一次。
-      - name: 離線回歸測試（Apps Script 層 + 離線交易回歸）
+      - name: 離線回歸測試（純 Node，含離線交易回歸）
         run: bash tests/run.sh
 
       - name: 實際 migration + seed 情境 + 重設交易／併發測試

@@ -6,89 +6,18 @@
 >
 > **本輪改了前後端契約，必須整包部署**：`/identity/update-account` 新增 `currentPassword`、gateway envelope 新增 `clientIp`。只替換 `index.html` 會導致帳號更新失敗。
 
-## 1. Apps Script：整包更新
+## 1. Apps Script（已移除）
 
-同一個 Apps Script 專案中更新下列檔案：
-
-- `AuthCore.gs`（根目錄原本重複的那份已刪除，唯一來源是 `apps-script/AuthCore.gs`）
-- `IdentityApi.gs`
-- `GoogleAuth.gs`
-- `DatabaseApi.gs`
-- `AppStateApi.gs`
-- `Router.gs`
-- `WebApp.gs`
-
-保留既有 Google Sheet schema / Booking / Audit helper；不要同時留另一份同名 `routeRequest_`、`readDatabaseTable_` 或 `doPost` 實作。
-
-### 必要 Script Properties
-
-至少設定：
-
-- `GOOGLE_CLIENT_ID`
-- `AUTH_PASSWORD_PEPPER`：至少 32 個隨機字元
-- `AUTH_SESSION_SECRET`：至少 32 個隨機字元
-- `NETLIFY_GATEWAY_SECRET`：至少 32 個隨機字元
-- `SPREADSHEET_ID`（若目前專案使用此名稱指定正式 Sheet）
-
-選用（V12.26.0 新增）：
-
-- `AUTH_PBKDF2_ITERATIONS`：密碼雜湊迭代次數，預設 6000。部署後執行一次 `authBenchmarkPbkdf2_()`，把單次驗證調到 200–500ms。調高不會讓既有帳號失效。
-
-正式啟用忘記密碼時另需：
-
-- `PASSWORD_RESET_SMS_WEBHOOK_URL`：HTTPS SMS webhook
-- `PASSWORD_RESET_SMS_WEBHOOK_SECRET`：與 SMS gateway 約定的 secret
-
-系統只會把 `{phone, message}` POST 到此 webhook，並帶 `X-Care-Ride-Secret`。OTP 本身只以 salt + HMAC hash 保存在 Apps Script Script Properties，Google Sheet 不保存 OTP 明文。
-
-> 所有 secret 都不可放進 HTML、公開 GitHub repo 或 Google Sheet。
-
-### 超級管理者正式密碼
-
-若尚未初始化，可在 Apps Script 編輯器手動執行：
-
-```javascript
-authBootstrapSuperAdminPassword_("你的09手機", "至少12碼的強密碼")
-```
-
-或設定 `BOOTSTRAP_SUPERADMIN_PHONE` / `BOOTSTRAP_SUPERADMIN_PASSWORD` 兩個 Script Property 後執行 `authBootstrapSuperAdminFromProperties_()`，執行完屬性會自動刪除。
-
-舊名稱 `bootstrapSuperAdminPassword_v12_25_77` 與 `bootstrapSuperAdminFromProperties_v12_25_79` 保留為別名。
-
-### 重新部署 Apps Script Web App
-
-部署 → 管理部署作業 → 建立新版本／更新 Web App：
-
-- 執行身分：你自己
-- 可存取範圍：依目前 Netlify gateway 架構設定
-- 外部 API 仍需 `NETLIFY_GATEWAY_SECRET`
-- 記錄最新 `/exec` URL
-
-Apps Script 改碼後若沒有更新部署，Netlify 仍會命中舊程式。
+Apps Script、Google Sheets 與社群登入（Google／Apple／Facebook）已從系統移除
+（#15），身分與資料全部在 Postgres。不要再部署任何 `.gs` 檔。Netlify 上的
+`APPS_SCRIPT_WEB_APP_URL`、`APPS_SCRIPT_GATEWAY_SECRET`、`GOOGLE_CLIENT_ID`
+已經沒有程式讀取，可以刪除。
 
 ## 2. Netlify：整包部署
 
-環境變數：
-
-- `APPS_SCRIPT_WEB_APP_URL` = 最新 Apps Script `/exec`
-- `APPS_SCRIPT_GATEWAY_SECRET` = Apps Script 的 `NETLIFY_GATEWAY_SECRET`
-- `GOOGLE_CLIENT_ID` = 同一組 Google OAuth Web Client ID
-
-部署以下全部內容：
-
-- `index.html`
-- `netlify.toml`
-- `netlify/functions/`
-
-V12.25.79 新增／使用的 Identity API：
-
-- `/api/identity/request-password-reset`
-- `/api/identity/confirm-password-reset`
-- `/api/identity/update-account`
-
-既有正式資料寫入：
-
-- `/api/state-mutate`
+環境變數見 [supabase/README.md](supabase/README.md)（`DATABASE_URL`、
+`AUTH_SESSION_SECRET`、`AUTH_PASSWORD_PEPPER`、`PRODUCTION_SUPABASE_PROJECT_REF`
+等）。部署內容：`index.html`、`_headers`、`netlify.toml`、`netlify/functions/`。
 
 ## 3. Health Gate
 

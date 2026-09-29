@@ -11,7 +11,7 @@
  * 的人還是接管不了帳號。改完之後 bump session 版本，把所有裝置上的舊 token 踢掉。
  */
 
-const { json, parseBody, handleError } = require('./_apps-script');
+const { json, parseBody, handleError } = require('./_http');
 const { withUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
 

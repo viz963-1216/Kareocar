@@ -18,7 +18,7 @@
  * 前端送來的格式與 state-mutate 完全相同，差別只在這裡會把記錄攤平成 typed 欄位。
  */
 
-const { json, parseBody, handleError } = require('./_apps-script');
+const { json, parseBody, handleError } = require('./_http');
 const { withUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
 

@@ -44,7 +44,7 @@ async function run(kind) {
       // 驗證成功但挑戰綁的是別的使用者
       return {userId:kind==='mismatch'?'someone-else':'synthetic'};
     },async clearChallenge(){state.challengeCleared=true;}};
-  const helpers={'./_db':mod.exports,'./_auth-pg':auth,'./_auth-reset':reset,'./_apps-script':{
+  const helpers={'./_db':mod.exports,'./_auth-pg':auth,'./_auth-reset':reset,'./_http':{
     json:(statusCode,body)=>({statusCode,body}),parseBody:e=>JSON.parse(e.body),handleError:e=>({error:e.code||e.message})}};
   const h=load('v2-confirm-password-reset.js',helpers).handler;
   const out=await h({httpMethod:'POST',body:JSON.stringify({phone:'0900000099',otp:'111111',newPassword:'synthetic-password'})});

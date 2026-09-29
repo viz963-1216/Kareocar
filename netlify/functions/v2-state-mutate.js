@@ -15,7 +15,7 @@
  * 整批在同一筆交易裡：任何一筆失敗就整批不落地，不會留下寫到一半的狀態。
  */
 
-const { json, parseBody, handleError } = require('./_apps-script');
+const { json, parseBody, handleError } = require('./_http');
 const { withUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
 

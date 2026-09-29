@@ -12,7 +12,7 @@
  * 啟動（資料庫必須是本機隔離庫，這支會拒絕其他主機）：
  *
  *   DATABASE_URL=postgresql://care_ride_app@127.0.0.1:5432/careride_e2e_test?sslmode=disable \
- *   AUTH_SESSION_SECRET=... AUTH_PASSWORD_PEPPER=... GOOGLE_CLIENT_ID=local.apps.googleusercontent.com \
+ *   AUTH_SESSION_SECRET=... AUTH_PASSWORD_PEPPER=... \
  *   PORT=8888 node tools/local-dev-server.js
  */
 const http = require('node:http');
@@ -26,7 +26,7 @@ const MIME = {
   '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8'
 };
 // 這些目錄是伺服器端程式、測試與版本庫內部資料，正式站也不該被當成靜態檔下載
-const PRIVATE_PREFIXES = ['netlify', 'supabase', 'tests', 'tools', 'apps-script', 'node_modules', '.git', '.github'];
+const PRIVATE_PREFIXES = ['netlify', 'supabase', 'tests', 'tools', 'node_modules', '.git', '.github'];
 
 function parseRedirects(tomlText) {
   const routes = new Map();

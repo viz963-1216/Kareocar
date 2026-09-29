@@ -9,7 +9,7 @@
  * 全部在同一筆交易裡，所以不會出現「密碼換了但舊 session 還活著」的空窗。
  */
 
-const { json, parseBody, handleError } = require('./_apps-script');
+const { json, parseBody, handleError } = require('./_http');
 const { withoutUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
 const reset = require('./_auth-reset');

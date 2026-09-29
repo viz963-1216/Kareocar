@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# Backend regression suite for the Apps Script layer.
-#
-# The .gs files are plain ES5, so they run under Node against the small
-# Google Apps Script stand-in in shim.js / sheets.js. No deployment needed.
+# 離線回歸測試：不需要資料庫、不需要部署的純 Node 測試
+# （建置檢查、行程執行規則、前端接線、同步狀態、離線交易回歸等）。
 #
 #   ./tests/run.sh
 #

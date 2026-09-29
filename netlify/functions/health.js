@@ -13,7 +13,7 @@
  * 字串——健康檢查是給維運看的，不是給人拿來探測環境設定的。
  */
 
-const { json } = require('./_apps-script');
+const { json } = require('./_http');
 const { withoutUser } = require('./_db');
 
 const REQUIRED_ENV = ['DATABASE_URL', 'AUTH_SESSION_SECRET', 'AUTH_PASSWORD_PEPPER'];

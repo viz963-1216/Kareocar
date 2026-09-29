@@ -21,7 +21,7 @@
  * 用完之後：到 Netlify 刪掉 BOOTSTRAP_TOKEN，這支端點就自動失效。
  */
 
-const { json, parseBody } = require('./_apps-script');
+const { json, parseBody } = require('./_http');
 const { withoutUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
 

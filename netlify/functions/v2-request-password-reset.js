@@ -8,7 +8,7 @@
  * 逐一測試哪些號碼有註冊。
  */
 
-const { json, parseBody, handleError } = require('./_apps-script');
+const { json, parseBody, handleError } = require('./_http');
 const { withoutUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
 const reset = require('./_auth-reset');
