@@ -354,10 +354,17 @@ async function flowClaim(cdp, baseUrl, tokens) {
     await waitFor(page, `!!document.querySelector('.demand-claim-btn[data-booking=${J(id)}]')`, '接案按鈕出現');
     record(S, '需求池卡片不顯示完整門牌', !(await evaluate(page, "document.body.innerText.includes('188號')")));
     {
-      const card = await evaluate(page, `(document.querySelector('.demand-claim-btn[data-booking=${J(id)}]')?.closest('.list-item')?.innerText||'').slice(0,300)`);
-      const sc = ((await row('bookings', id)) || {}).data?.serverComputed;
-      record(S, '需求池卡片顯示伺服器算的模糊地址（路段＋門牌去尾）', card.includes('文化路一段1xx號附近'),
-        `card=${J(card)} serverComputed.pickup=${J(sc && sc.pickup && sc.pickup.fuzzyAddress)}`);
+      let shown = true;
+      try { await waitFor(page, "document.body.innerText.includes('文化路一段1xx號附近')", '需求池卡片出現模糊地址', 8000); }
+      catch (_) { shown = false; }
+      let detail = '';
+      if (!shown) {
+        const loaded = await latestStateLoad(page, 0).catch((e) => ({ error: e.message }));
+        const poolRow = ((loaded && loaded.pool) || []).find((r) => r.id === id);
+        const text = await evaluate(page, "(document.querySelector('main')||document.body).innerText.slice(0,600)");
+        detail = `stateLoads=${page.stateLoads.length} poolRow=${J(poolRow)} text=${J(text)}`;
+      }
+      record(S, '需求池卡片顯示伺服器算的模糊地址（路段＋門牌去尾）', shown, detail);
     }
     await click(page, `.demand-claim-btn[data-booking=${J(id)}]`);
     const claimed = await waitForDb(async () => { const r = await row('bookings', id); return r && r.organization_id === ORG ? r : null; }, '預約綁定組織');
