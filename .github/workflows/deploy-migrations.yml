@@ -91,6 +91,10 @@ jobs:
             echo '::error::沒有設定 repo secret STAGING_MIGRATION_DATABASE_URL'
             exit 1
           fi
+      - name: 連線字串診斷（不含密碼）
+        env:
+          MIGRATION_DATABASE_URL: ${{ secrets.STAGING_MIGRATION_DATABASE_URL }}
+        run: python3 tools/describe-db-url.py
       - name: 待套用清單
         env:
           MIGRATION_DATABASE_URL: ${{ secrets.STAGING_MIGRATION_DATABASE_URL }}
@@ -120,6 +124,10 @@ jobs:
             echo '::error::沒有設定 repo secret PRODUCTION_MIGRATION_DATABASE_URL'
             exit 1
           fi
+      - name: 連線字串診斷（不含密碼）
+        env:
+          MIGRATION_DATABASE_URL: ${{ secrets.PRODUCTION_MIGRATION_DATABASE_URL }}
+        run: python3 tools/describe-db-url.py
       - name: 待套用清單
         env:
           MIGRATION_DATABASE_URL: ${{ secrets.PRODUCTION_MIGRATION_DATABASE_URL }}
