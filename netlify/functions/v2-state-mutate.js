@@ -59,11 +59,11 @@ const text = (v) => String(v === undefined || v === null ? '' : v).trim();
  * 前端放在 commercialSnapshots 裡的報價金額也一律換成伺服器的報價。
  */
 async function applyServerBookingFields(client, id, record) {
-  const hash = geo.addressHash(record.pickupAddress, record.destination);
+  const hash = geo.addressKey(record.pickupAddress, record.destination);
   const stored = (await client.query(
     `select data->'serverComputed' as sc from app_state where collection = 'bookings' and id = $1`, [id])).rows[0];
   const current = stored && stored.sc && typeof stored.sc === 'object' ? stored.sc : null;
-  record.serverComputed = current && current.addressHash === hash
+  record.serverComputed = current && current.addressKey === hash
     ? current
     : await geo.computeBookingGeo(record.pickupAddress, record.destination);
   if (Array.isArray(record.commercialSnapshots)) {

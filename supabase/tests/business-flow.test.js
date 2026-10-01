@@ -255,7 +255,10 @@ async function scenario1(t) {
 
   // ---- 兩組織同時接案，只能一方成功
   const cid = 'BKG-FLOW-S1C';
-  await mutateAs(t.req, [{ collection: 'bookings', id: cid, record: openBooking(cid) }]);
+  // 勝出的組織本來就會拿到完整預約；用另一個地址，後面「其他組織讀不到 SECRET_ADDRESS」
+  // 的檢查才不會因為這裡由 B 勝出而失敗。
+  await mutateAs(t.req, [{ collection: 'bookings', id: cid,
+    record: { ...openBooking(cid), pickupAddress: '台北市大安區復興南路一段390號' } }]);
   const [ra, rb] = await Promise.all([claimAs(t.dspA, cid, ORG_A), claimAs(t.dspB, cid, ORG_B)]);
   const winners = [ra, rb].filter((r) => r.status === 200);
   const losers = [ra, rb].filter((r) => r.status === 409 && r.error && r.error.code === 'BOOKING_CONFLICT');

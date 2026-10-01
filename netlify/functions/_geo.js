@@ -130,7 +130,7 @@ function fuzzyAddress(place) {
   return `${place.district}${place.route}${maskStreetNumber(place.streetNumber)}附近`;
 }
 
-function addressHash(pickupAddress, destination) {
+function addressKey(pickupAddress, destination) {
   return crypto.createHash('sha256')
     .update(`${String(pickupAddress || '').trim()}\u0000${String(destination || '').trim()}`).digest('hex');
 }
@@ -166,7 +166,7 @@ async function computeBookingGeo(pickupAddress, destination) {
   });
   return {
     schemaVersion: SCHEMA_VERSION,
-    addressHash: addressHash(pickupText, destinationText),
+    addressKey: addressKey(pickupText, destinationText),
     pickup: place(pickup),
     destination: place(dest),
     distanceMeters: route.distanceMeters,
@@ -177,6 +177,6 @@ async function computeBookingGeo(pickupAddress, destination) {
 }
 
 module.exports = {
-  computeBookingGeo, addressHash, fuzzyAddress, maskStreetNumber, serverQuote,
+  computeBookingGeo, addressKey, fuzzyAddress, maskStreetNumber, serverQuote,
   parseGoogleGeocode, parseGoogleRoute, setProvider
 };

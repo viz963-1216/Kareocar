@@ -87,7 +87,7 @@ function booking(id, extra = {}) {
 
   console.log('--- 建立預約時由伺服器計算 ---');
   const forged = booking('BKG-GEO-1', {
-    serverComputed: { addressHash: 'forged', distanceMeters: 1, pickup: { fuzzyAddress: '偽造' } },
+    serverComputed: { addressKey: 'forged', distanceMeters: 1, pickup: { fuzzyAddress: '偽造' } },
     commercialSnapshots: [{ id: 'SNAP-1', quote: { status: 'quoted', estimatedFare: 99999, currency: 'TWD' } }]
   });
   const created = await putBooking(U.req, forged);
@@ -95,7 +95,7 @@ function booking(id, extra = {}) {
   const s1 = await stored('BKG-GEO-1');
   const sc = s1 && s1.serverComputed;
   record('serverComputed 由伺服器產生（前端偽造的值被覆蓋）',
-    sc && sc.addressHash !== 'forged' && sc.distanceMeters > 1 && sc.schemaVersion === 1, sc && sc.addressHash);
+    sc && sc.addressKey !== 'forged' && sc.distanceMeters > 1 && sc.schemaVersion === 1, sc && sc.addressKey);
   record('模糊地址：行政區＋路段＋門牌去尾',
     sc && sc.pickup.fuzzyAddress === '新北市板橋區文化路一段1xx號附近'
       && sc.destination.fuzzyAddress === '臺北市中正區公園路2x號附近', sc && sc.pickup.fuzzyAddress);
@@ -106,10 +106,10 @@ function booking(id, extra = {}) {
 
   console.log('--- 修改預約 ---');
   let before = geocodeCount();
-  const noAddrChange = await putBooking(U.req, { ...s1, aidNeed: '需要攙扶', version: 2, serverComputed: { addressHash: 'forged-again' } });
+  const noAddrChange = await putBooking(U.req, { ...s1, aidNeed: '需要攙扶', version: 2, serverComputed: { addressKey: 'forged-again' } });
   const s1b = await stored('BKG-GEO-1');
   record('沒改地址：不重新定位，沿用原本的 serverComputed',
-    noAddrChange.status === 200 && geocodeCount() === before && s1b.serverComputed.addressHash === sc.addressHash,
+    noAddrChange.status === 200 && geocodeCount() === before && s1b.serverComputed.addressKey === sc.addressKey,
     `${outcome(noAddrChange)} geocode+${geocodeCount() - before}`);
   before = geocodeCount();
   const addrChange = await putBooking(U.req, { ...s1b, destination: '臺北市大安區信義路三段5號', version: 3 });
@@ -117,7 +117,7 @@ function booking(id, extra = {}) {
   record('改了目的地：重新定位並更新模糊地址',
     addrChange.status === 200 && geocodeCount() - before === 2
       && s1c.serverComputed.destination.fuzzyAddress === '臺北市大安區信義路三段附近'
-      && s1c.serverComputed.addressHash !== sc.addressHash,
+      && s1c.serverComputed.addressKey !== sc.addressKey,
     `${outcome(addrChange)} ${s1c.serverComputed.destination.fuzzyAddress}`);
 
   console.log('--- 地址找不到 ---');

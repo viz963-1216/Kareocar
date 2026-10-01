@@ -35,8 +35,8 @@ const googleResult = (components, loc = { lat: 25.04, lng: 121.51 }) => ({
     assert.ok(!f.includes('188'));
   });
   await ok('地址雜湊：前後空白不影響，內容不同就不同', () => {
-    assert.equal(geo.addressHash(' 甲 ', '乙'), geo.addressHash('甲', '乙'));
-    assert.notEqual(geo.addressHash('甲', '乙'), geo.addressHash('甲', '丙'));
+    assert.equal(geo.addressKey(' 甲 ', '乙'), geo.addressKey('甲', '乙'));
+    assert.notEqual(geo.addressKey('甲', '乙'), geo.addressKey('甲', '丙'));
   });
   await ok('伺服器報價：待定價、沒有金額', () => {
     const q = geo.serverQuote();
