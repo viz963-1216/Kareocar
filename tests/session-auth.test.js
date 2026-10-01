@@ -12,6 +12,7 @@ const path = require('node:path');
 process.env.SUPABASE_JWT_SECRET = 'offline-test-secret-0123456789abcdef';
 process.env.SUPABASE_URL = 'https://offline-test.supabase.co';
 process.env.SUPABASE_ANON_KEY = 'offline-anon';
+process.env.SUPABASE_SERVICE_ROLE_KEY = 'offline-service';
 
 const FN = path.join(__dirname, '..', 'netlify', 'functions');
 const supa = require(path.join(FN, '_supabase-auth.js'));
@@ -67,6 +68,23 @@ const rejects = async (p, code) => {
     await rejects(supa.verifyAccessToken(sign(good(), 'k1', other)), 'SESSION_INVALID');
     supa.setProvider(null);
   });
+
+  console.log('--- Supabase Auth 錯誤分類（模擬 HTTP 回應） ---');
+  const realFetch = global.fetch;
+  const respond = (status, body) => { global.fetch = async () => new Response(JSON.stringify(body), { status }); };
+  try {
+    respond(422, { error_code: 'phone_provider_disabled', msg: 'Phone logins are disabled' });
+    await ok('Phone 登入沒啟用 → AUTH_PROVIDER_MISCONFIGURED，不是帳密錯誤', () =>
+      rejects(supa.signInWithPassword('+886912000001', 'x'), 'AUTH_PROVIDER_MISCONFIGURED'));
+    respond(400, { error_code: 'invalid_credentials', msg: 'Invalid login credentials' });
+    await ok('帳密錯誤 → INVALID_CREDENTIALS', () => rejects(supa.signInWithPassword('+886912000001', 'x'), 'INVALID_CREDENTIALS'));
+    respond(429, { error_code: 'over_request_rate_limit' });
+    await ok('429 → LOGIN_RATE_LIMITED', () => rejects(supa.signInWithPassword('+886912000001', 'x'), 'LOGIN_RATE_LIMITED'));
+    respond(422, { error_code: 'phone_exists', msg: 'Phone number already registered' });
+    await ok('手機已註冊 → PHONE_EXISTS', () => rejects(supa.createUser({ phoneE164: '+886912000001', password: 'x' }), 'PHONE_EXISTS'));
+    respond(503, {});
+    await ok('5xx → AUTH_PROVIDER_UNAVAILABLE', () => rejects(supa.signInWithPassword('+886912000001', 'x'), 'AUTH_PROVIDER_UNAVAILABLE'));
+  } finally { global.fetch = realFetch; }
 
   console.log('--- cookie 與請求檢查 ---');
   const tokens = { accessToken: 'AT', refreshToken: 'RT', expiresIn: 3600 };
