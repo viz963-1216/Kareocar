@@ -102,7 +102,7 @@ const decode = (jwt) => JSON.parse(Buffer.from(String(jwt).split('.')[0], 'base6
       return `expires_in=${tokens.expiresIn}，alg=${decode(tokens.accessToken).alg}`;
     });
     if (!loggedIn) {
-      console.log('\n  登入失敗時最常見的原因：Staging 沒有啟用 Phone 登入（Authentication → Sign In / Providers → Phone）。');
+      console.log('\n  AUTH_PROVIDER_MISCONFIGURED 表示 Staging 沒有啟用 Phone 登入（Authentication → Sign In / Providers → Phone）。');
       return;
     }
 
@@ -131,7 +131,7 @@ const decode = (jwt) => JSON.parse(Buffer.from(String(jwt).split('.')[0], 'base6
   } finally {
     if (userId) {
       await step('刪除測試帳號', () => supa.deleteUser(userId));
-      await expectFail('刪除後登不進去', () => supa.signInWithPassword(phone, pw2), 'INVALID_CREDENTIALS');
+      if (tokens) await expectFail('刪除後登不進去', () => supa.signInWithPassword(phone, pw2), 'INVALID_CREDENTIALS');
     }
     console.log(`\n結果：${pass} 通過 / ${fail} 失敗\n`);
     console.log('請把上面的結果（PASS／FAIL 那些行）貼回給 Claude；裡面不含任何金鑰或 token。\n');
