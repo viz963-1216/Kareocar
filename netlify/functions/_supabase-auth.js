@@ -76,6 +76,10 @@ async function call(path, { method = 'POST', key, bearer, body } = {}) {
 // 只依狀態與錯誤碼歸類。
 function providerError(result, fallbackCode, fallbackMessage) {
   const code = String((result.data && (result.data.error_code || result.data.code || result.data.error)) || '');
+  // 排查用：只印 HTTP 狀態與錯誤代碼，不印訊息本文或 token
+  if (process.env.SUPABASE_AUTH_DEBUG === '1') {
+    console.warn(`[supabase-auth] HTTP ${result.status} error_code=${code || '（無）'}`);
+  }
   if (result.status === 429) return authError('LOGIN_RATE_LIMITED', '嘗試過於頻繁，請稍後再試');
   if (/phone_exists|user_already_exists|email_exists/.test(code) || result.status === 422 && /already/i.test(String(result.data && result.data.msg))) {
     return authError('PHONE_EXISTS', '此手機號碼已經註冊');
