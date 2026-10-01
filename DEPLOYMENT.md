@@ -104,11 +104,26 @@ Apps Script、Google Sheets 與社群登入（Google／Apple／Facebook）已從
 `supabase/rollback/<名稱>.down.sql`，隔離 CI 的 `migrations.test.sh` 驗證「上 → 下 → 上」
 後 schema 完全相同。
 
-- **套用到新資料庫**：依檔名順序套用 `supabase/migrations/*.sql`。之後的 schema 變更
-  一律新增 `0002_…`、`0003_…`，不改寫已套用的檔案。
-- **正式與預覽資料庫**：目前的正式 Supabase 是早期以 SQL Editor 手動貼上 0001–0008 建立的，
-  沒有 migration 紀錄，裡面只有測試資料。改用 baseline 時從空資料庫重建，由 migration
-  的 CI 部署流程（#13）套用；執行前需另行取得同意（見 [CLAUDE.md](CLAUDE.md) 授權邊界）。
+- **新增 migration**：一律新增下一個編號（`0003_…`），附 `supabase/rollback/<同名>.down.sql`。
+  已套用的檔案不能改寫——執行器會以 checksum 發現並拒絕。
+- **部署流程**（`.github/workflows/deploy-migrations.yml`，執行器 `tools/apply-migrations.sh`）：
+  1. 合併到 main、且動到 migration 時，先在拋棄式 Postgres 上驗證往返與執行器
+  2. 自動套用到 **Staging**（repo secret `STAGING_MIGRATION_DATABASE_URL`）
+  3. **Production** 只在人工觸發時套用：GitHub → Actions → Deploy migrations → Run workflow，
+     `target` 選 `production`、`confirm` 輸入 `apply-production`
+     （repo secret `PRODUCTION_MIGRATION_DATABASE_URL`）。先在 Staging 確認沒問題再觸發。
+  - 連線用 Supabase 的 **Session pooler**（port 5432，`postgres.<ref>` 使用者）：GitHub
+    Actions 沒有 IPv6，連不到免費方案的直連位址。
+  - 紀錄在 `ops.schema_migrations`。每支 migration 與它的紀錄在同一個交易，設
+    `lock_timeout`，取不到鎖就整筆回滾，可以直接重試。
+  - 本機預覽待套用清單：`MIGRATION_DATABASE_URL=… bash tools/apply-migrations.sh --dry-run`。
+- **Staging 與預覽環境**：Netlify 的 Deploy Previews、Branch deploys 的 `DATABASE_URL` 指向
+  Staging（`care_ride_app.<staging ref>`），正式站指向 Production。建置檢查（#12）會擋下
+  非 production 環境連到正式專案。
+- **正式資料庫第一次改用這個流程**：目前的正式 Supabase 是早期以 SQL Editor 手動貼上
+  0001–0008 建立的，沒有 migration 紀錄，裡面只有測試資料。執行器會拒絕套用到這種資料庫
+  （exit 3），必須先人工清空 public 與 app schema 的物件再觸發。這是正式資料庫寫入，
+  執行前需另行取得同意（見 [CLAUDE.md](CLAUDE.md) 授權邊界）。
 - **回復**：`0001_baseline.down.sql` 會刪除所有資料表與資料，只用在空資料庫或 Staging 重建；
   正式環境有資料之後，改以新的 migration 往前修。
 
