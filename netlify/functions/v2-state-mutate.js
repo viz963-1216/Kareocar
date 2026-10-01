@@ -19,6 +19,7 @@ const { json, parseBody, handleError } = require('./_http');
 const { withUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
 const session = require('./_session');
+const geo = require('./_geo');
 
 const MAX_CHANGES = 200;
 
@@ -33,7 +34,7 @@ const ALLOWED_COLLECTIONS = new Set([
   'trips', 'tripEvents', 'issues', 'systemReports', 'notifications',
   'benefitRulesets', 'benefitRulesetEvents', 'benefitAssessments',
   'benefitAssessmentEvents', 'benefitLatestEstimateRuns',
-  'serviceProofs', 'quoteSnapshots', 'cancellations', 'telemetryEvents'
+  'serviceProofs', 'cancellations', 'telemetryEvents'
 ]);
 
 // notifications 仍接受前端寫入（派車、中斷等流程的通知）。這些通知沒有後端來源證明，
@@ -50,6 +51,26 @@ function sanitize(record) {
 }
 
 const text = (v) => String(v === undefined || v === null ? '' : v).trim();
+
+/**
+ * 預約的伺服器計算欄位（serverComputed：定位、模糊地址、距離、車程、報價）只由伺服器產生。
+ * 前端送上來的同名欄位一律忽略：地址沒變就沿用資料庫裡的值，地址是新的或改過就重新
+ * 定位與計算；找不到地址時整批拒絕（ADDRESS_NOT_FOUND）。
+ * 前端放在 commercialSnapshots 裡的報價金額也一律換成伺服器的報價。
+ */
+async function applyServerBookingFields(client, id, record) {
+  const hash = geo.addressHash(record.pickupAddress, record.destination);
+  const stored = (await client.query(
+    `select data->'serverComputed' as sc from app_state where collection = 'bookings' and id = $1`, [id])).rows[0];
+  const current = stored && stored.sc && typeof stored.sc === 'object' ? stored.sc : null;
+  record.serverComputed = current && current.addressHash === hash
+    ? current
+    : await geo.computeBookingGeo(record.pickupAddress, record.destination);
+  if (Array.isArray(record.commercialSnapshots)) {
+    record.commercialSnapshots = record.commercialSnapshots.map((snap) => (snap && typeof snap === 'object'
+      ? { ...snap, quote: { ...(snap.quote || {}), ...geo.serverQuote() } } : snap));
+  }
+}
 
 /** 從記錄裡找出關聯的行程／預約，讓 RLS 與查詢有得依靠。 */
 function links(collection, record) {
@@ -91,6 +112,8 @@ exports.handler = async (event) => {
           throw auth.authError('COLLECTION_FORBIDDEN', `不允許寫入此資料集合：${collection}`);
         }
         if (!id || id.length > 180) throw auth.authError('VALIDATION_ERROR', '資料 ID 無效');
+
+        if (collection === 'bookings' && !deleted) await applyServerBookingFields(client, id, record);
 
         const { tripId, bookingId } = links(collection, record);
         const orgClaim = text(record.organizationId) || null;

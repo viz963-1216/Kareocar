@@ -111,7 +111,9 @@ exports.handler = async (event) => {
       const pool = (await client.query(
         `select id, pickup_area, destination_area, pickup_at, trip_type,
                 passenger_count, wheelchair_slots, rideshare_consent, version, created_at,
-                pickup_time, return_date, return_time, market_expires_at, aid_need, companions
+                pickup_time, return_date, return_time, market_expires_at, aid_need, companions,
+                pickup_district, pickup_fuzzy_address, destination_district, destination_fuzzy_address,
+                distance_meters, duration_seconds, quote_status
            from app_state_booking_pool
           order by pickup_at nulls last
           limit 500`)).rows;
