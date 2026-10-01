@@ -61,11 +61,22 @@ const decode = (jwt) => JSON.parse(Buffer.from(String(jwt).split('.')[0], 'base6
 
 (async () => {
   console.log('\n安心接送 · Supabase Auth 冒煙測試（Staging）\n');
-  const ref = (await prompt(`Staging 專案 ref [${DEFAULT_STAGING_REF}]：`)) || DEFAULT_STAGING_REF;
+  let ref = '';
+  while (true) {
+    const input = await prompt(`Staging 專案 ref（直接按 Enter 使用 ${DEFAULT_STAGING_REF}）：`);
+    // 貼成整個網址也接受：只取 /project/ 後面那段
+    ref = (input.match(/project\/([a-z0-9]{20})/) || [])[1] || input || DEFAULT_STAGING_REF;
+    if (/^[a-z0-9]{20}$/.test(ref)) break;
+    console.log(`  「${ref.slice(0, 40)}」不是專案 ref（20 個小寫英數字）。直接按 Enter 即可。`);
+  }
   if (ref === PROD_REF) { console.log('拒絕執行：這是正式專案。'); process.exit(2); }
+  console.log(`  使用 ${ref}`);
   process.env.SUPABASE_URL = `https://${ref}.supabase.co`;
   process.env.SUPABASE_ANON_KEY = await prompt('Publishable key（或 legacy anon key）：', { hidden: true });
   process.env.SUPABASE_SERVICE_ROLE_KEY = await prompt('Secret key（或 legacy service_role key）：', { hidden: true });
+  if (!process.env.SUPABASE_ANON_KEY || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.log('沒有輸入金鑰，結束。'); process.exit(2);
+  }
   const jwtSecret = await prompt('Legacy JWT secret（新版專案留空，按 Enter）：', { hidden: true });
   if (jwtSecret) process.env.SUPABASE_JWT_SECRET = jwtSecret;
   process.env.SUPABASE_AUTH_DEBUG = '1';
