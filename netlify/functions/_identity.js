@@ -23,8 +23,9 @@ async function loadIdentity(client, userId) {
   // 前端的 activeMembershipsForUser 會要求「成員資格指向的組織必須在本機存在」，
   // 否則那筆身分會被過濾掉、變成「沒有有效身分」，所以組織要一起帶上。
   const organizations = (await client.query(
-    'select id, org_type, name, active from organizations')).rows.map((o) => ({
-      id: o.id, type: o.org_type, name: o.name || '', active: o.active !== false
+    'select id, org_type, name, active, review_status, review_note from organizations')).rows.map((o) => ({
+      id: o.id, type: o.org_type, name: o.name || '', active: o.active !== false,
+      reviewStatus: o.review_status || 'approved', reviewNote: o.review_note || ''
     }));
 
   return {

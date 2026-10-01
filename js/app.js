@@ -26,6 +26,8 @@ const APP_CONFIG = Object.freeze({
   identityRequestPasswordResetUrl: '/api/v2/request-password-reset',
   identityConfirmPasswordResetUrl: '/api/v2/confirm-password-reset',
   identityUpdateAccountUrl: '/api/v2/update-account',
+  organizationApplyUrl: '/api/v2/organization-apply',
+  organizationReviewUrl: '/api/v2/organization-review',
 });
 
 window.CARE_RIDE_RUNTIME = Object.freeze({
@@ -4703,6 +4705,14 @@ CloudIdentity=Object.freeze({
   async confirmPasswordReset({phone,otp,newPassword}){
     const result=await backendJsonPost(APP_CONFIG.identityConfirmPasswordResetUrl,{phone:String(phone||'').replace(/\D/g,''),otp:String(otp||'').replace(/\D/g,''),newPassword:String(newPassword||'')});return result?.data||{};
   },
+  async applyOrganization(input={}){
+    if(!hasBackendSession())throw backendApiError('登入工作階段已遺失，請重新登入','SESSION_REQUIRED');
+    const result=await backendJsonPost(APP_CONFIG.organizationApplyUrl,input);return result?.data||{};
+  },
+  async reviewOrganization({organizationId,decision,note=''}){
+    if(!hasBackendSession())throw backendApiError('登入工作階段已遺失，請重新登入','SESSION_REQUIRED');
+    const result=await backendJsonPost(APP_CONFIG.organizationReviewUrl,{organizationId,decision,note:String(note||'').trim()});return result?.data||{};
+  },
   async updateAccount({name,phone,newPassword='',currentPassword=''}){
     if(!hasBackendSession())throw backendApiError('登入工作階段已遺失，請重新登入','SESSION_REQUIRED');
     const result=await backendJsonPost(APP_CONFIG.identityUpdateAccountUrl,{name:String(name||'').trim(),phone:String(phone||'').replace(/\D/g,''),newPassword:String(newPassword||''),currentPassword:String(currentPassword||'')});
@@ -5293,7 +5303,7 @@ function render(){
   root.setAttribute('aria-busy','true');
   root.innerHTML='<div class="ui-loading" aria-label="頁面載入中"><div class="ui-skeleton"></div><div class="ui-skeleton"></div><div class="ui-skeleton"></div></div>';
   try{
-    root.innerHTML=renderer?renderer():'<div class="ui-state"><div class="ui-state-icon">○</div><h3>此頁尚未完成</h3><p>請從其他功能繼續操作。</p></div>';
+    root.innerHTML=renderer?orgReviewBanner()+renderer():'<div class="ui-state"><div class="ui-state-icon">○</div><h3>此頁尚未完成</h3><p>請從其他功能繼續操作。</p></div>';
   }catch(error){
     console.error('[介面呈現]',currentView,error);
     root.innerHTML=`<section class="ui-state error"><div class="ui-state-icon">!</div><h3>頁面資料載入失敗</h3><p>頁面：${escapeHTML(activeNav?.label||currentView)}<br>${escapeHTML(error?.message||'未知錯誤')}</p><button class="btn primary" id="retryCurrentViewBtn" type="button">重新載入此頁</button></section>`;
@@ -5693,7 +5703,69 @@ function genericAccount(){
     ${systemReportAccountCard()}${appVersionNote()}
     <button type="button" class="btn danger block account-logout-btn">登出目前帳號</button>`;
 }
-function accountView(){ return role()==='driver'?driverAccount():role()==='requester'?requesterAccount():genericAccount(); }
+function accountView(){ return (role()==='driver'?driverAccount():role()==='requester'?requesterAccount():genericAccount())+(Identity.isSuperAdmin()?'':orgApplicationCard()); }
+
+// ---------------------------------------------------------------- 機構申請與審核
+const ORG_REVIEW_LABELS=Object.freeze({pending:['審核中','yellow'],approved:['已核准','green'],rejected:['已駁回','red'],suspended:['已停權','gray']});
+function orgReviewStatus(o){ return o?.type==='requester_hub'?'approved':(o?.reviewStatus||'approved'); }
+function orgReviewPill(o){ const [label,color]=ORG_REVIEW_LABELS[orgReviewStatus(o)]||ORG_REVIEW_LABELS.approved; return `<span class="pill ${color}">${label}</span>`; }
+// 營運身分（負責人、調度、司機）所屬機構還沒核准時，每一頁上方都提醒：需求池與接案要等審核通過
+function orgReviewBanner(){
+  if(Identity.isSuperAdmin()||!['owner','dispatcher','driver'].includes(role()))return '';
+  const o=currentOrg(),status=orgReviewStatus(o);
+  if(!o||status==='approved')return '';
+  const text=status==='pending'?'機構申請審核中。平台管理員核准前，無法瀏覽需求池與承接案件。'
+    :status==='rejected'?'機構申請未通過。':'機構已被平台停權，暫時無法瀏覽需求池與承接案件。';
+  return `<section class="card org-review-banner"><div class="card-head"><div><h3>${escapeHTML(o.name)} ${orgReviewPill(o)}</h3><p>${text}${o.reviewNote?`<br>原因：${escapeHTML(o.reviewNote)}`:''}</p></div></div></section>`;
+}
+function myOwnedOrganizations(){
+  const userId=Identity.currentUser()?.id;
+  return store.state.memberships.filter(m=>m.userId===userId&&m.role==='owner'&&Identity.membershipStatus(m)==='active').map(m=>Organization.get(m.organizationId)).filter(Boolean);
+}
+function orgApplicationCard(){
+  const owned=myOwnedOrganizations();
+  const pending=owned.find(o=>orgReviewStatus(o)==='pending');
+  const list=owned.length?`<div class="list">${owned.map(o=>`<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(o.name)}</h4><p>${o.reviewNote?`原因：${escapeHTML(o.reviewNote)}`:'負責人身分'}</p></div>${orgReviewPill(o)}</div></div>`).join('')}</div>`:'';
+  if(pending)return `<section class="card"><div class="card-head"><div><h3>機構申請</h3><p>你的申請正在審核中，核准後即可瀏覽需求池與接案。</p></div></div>${list}</section>`;
+  return `<section class="card"><div class="card-head"><div><h3>申請成為服務機構</h3><p>交通／車隊公司或長照／日照機構可以申請加入平台。平台管理員人工審核（立案證明、營業登記）通過後，才能瀏覽需求池與接案。</p></div></div>${list}
+    <div class="form-grid">
+      <div class="form-field"><label for="orgApplyName">機構名稱</label><input id="orgApplyName" maxlength="120" autocomplete="organization" /></div>
+      <div class="form-field"><label for="orgApplyType">機構類型</label><select id="orgApplyType"><option value="transport_provider">交通／車隊公司</option><option value="care_facility">長照／日照機構</option></select></div>
+      <div class="form-field"><label for="orgApplyTaxId">統一編號 <span class="field-optional">選填</span></label><input id="orgApplyTaxId" inputmode="numeric" maxlength="8" /></div>
+      <div class="form-field"><label for="orgApplyPhone">聯絡電話</label><input id="orgApplyPhone" inputmode="tel" maxlength="30" /></div>
+      <div class="form-field"><label for="orgApplyContact">聯絡人</label><input id="orgApplyContact" maxlength="80" /></div>
+      <div class="form-field"><label for="orgApplyDocs">立案／登記文件說明</label><textarea id="orgApplyDocs" maxlength="1000" placeholder="例如：交通部公路總局營業登記字號、長照機構設立許可文號"></textarea></div>
+    </div>
+    <div class="modal-actions"><button type="button" class="btn primary" id="orgApplySubmitBtn">送出申請</button></div></section>`;
+}
+async function submitOrganizationApplication(event){
+  const btn=event?.currentTarget||$('orgApplySubmitBtn');
+  const input={name:$('orgApplyName').value.trim(),orgType:$('orgApplyType').value,taxId:$('orgApplyTaxId').value.trim(),
+    contactPhone:$('orgApplyPhone').value.trim(),contactName:$('orgApplyContact').value.trim(),documentsNote:$('orgApplyDocs').value.trim()};
+  if(!input.name){showToast('請輸入機構名稱');return;}
+  setButtonBusy(btn,true,'送出中…');
+  try{
+    await CloudIdentity.applyOrganization(input);
+    showToast('已送出申請，平台管理員審核後會開放需求池');
+    // 新的負責人身分要重新向伺服器取得
+    setTimeout(()=>location.reload(),900);
+  }catch(error){showToast(error?.message||'送出申請失敗');setButtonBusy(btn,false);}
+}
+async function reviewOrganizationFromAdmin(organizationId,decision){
+  const labels={approve:'核准',reject:'駁回',suspend:'停權'};
+  let note='';
+  if(decision!=='approve'){
+    note=prompt(`請輸入${labels[decision]}原因（會顯示給機構負責人）`)||'';
+    if(!note.trim()){showToast(`${labels[decision]}必須填寫原因`);return;}
+  }else if(!confirm('確定核准這個機構？核准後它的成員可以瀏覽需求池與接案。'))return;
+  try{
+    const r=await CloudIdentity.reviewOrganization({organizationId,decision,note});
+    showToast(`已${labels[decision]}（${(ORG_REVIEW_LABELS[r.reviewStatus]||[])[0]||r.reviewStatus}）`);
+    const sync=await AppStateDatabase.loadAll({silent:true});
+    if(sync?.ok){applyIdentityContext();renderNav();}
+    render();
+  }catch(error){showToast(error?.message||'審核失敗');}
+}
 
 function bookingSchedulingRows(date=selectedTripDate){
   const actorUserId=Identity.currentUser()?.id;
@@ -5786,7 +5858,7 @@ function platformHome(){
 }
 function platformOrganizations(){
   const rows=Organization.list();
-  return `<div class="page-head"><div><h2>組織管理</h2><p>平台超級管理者可修改公司名稱、聯絡電話、統一編號與唯一負責人；「需求者組織」維持系統固定管理。</p></div><div class="page-actions"><button type="button" class="btn primary" id="openAddOrganizationBtn">＋ 新增組織</button></div></div><div class="list">${rows.map(o=>{const isRequesterHub=o.id===APP_CONFIG.requesterOrganizationId||o.type==='requester_hub',memberCount=store.state.memberships.filter(m=>m.organizationId===o.id&&Identity.membershipStatus(m)==='active').length,ownerM=isRequesterHub?null:store.state.memberships.find(m=>m.organizationId===o.id&&m.role==='owner'&&Identity.membershipStatus(m)!=='revoked'),ownerU=ownerM?store.state.users.find(u=>u.id===ownerM.userId):null;return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(o.name)}</h4><p>${isRequesterHub?'系統需求者組織・不可手動新增公司角色':o.type==='transport_provider'?'交通／車隊公司':o.type==='care_facility'?'長照／日照機構':'其他合作組織'}${!isRequesterHub?(o.taxId?`・統編 ${escapeHTML(o.taxId)}`:'・統編未填'):''}<br>${isRequesterHub?`有效需求者：${memberCount} 人`:`聯絡電話：${escapeHTML(o.contactPhone||'未填')}<br>負責人：${escapeHTML(ownerU?.name||'尚未指定')}・有效成員：${memberCount} 人`}</p></div><span class="pill ${isRequesterHub?'purple':o.active!==false?'green':'gray'}">${isRequesterHub?'系統組織':o.active!==false?'有效':'已移除'}</span></div><div class="item-actions">${isRequesterHub?`<button type="button" class="btn outline sm platform-enter-org-btn" data-org="${o.id}">查看需求者</button>`:`<button type="button" class="btn outline sm platform-edit-org-btn" data-org="${o.id}">編輯名稱／聯絡／負責人</button>${o.active!==false?`<button type="button" class="btn outline sm platform-enter-org-btn" data-org="${o.id}">管理成員</button><button type="button" class="btn warning sm platform-org-active-btn" data-org="${o.id}" data-active="false">停用組織</button>`:`<button type="button" class="btn success sm platform-org-active-btn" data-org="${o.id}" data-active="true">重新啟用</button>`}`}</div></div>`;}).join('')}</div>`;
+  return `<div class="page-head"><div><h2>組織管理</h2><p>平台超級管理者可修改公司名稱、聯絡電話、統一編號與唯一負責人；「需求者組織」維持系統固定管理。</p></div><div class="page-actions"><button type="button" class="btn primary" id="openAddOrganizationBtn">＋ 新增組織</button></div></div><div class="list">${rows.map(o=>{const isRequesterHub=o.id===APP_CONFIG.requesterOrganizationId||o.type==='requester_hub',memberCount=store.state.memberships.filter(m=>m.organizationId===o.id&&Identity.membershipStatus(m)==='active').length,ownerM=isRequesterHub?null:store.state.memberships.find(m=>m.organizationId===o.id&&m.role==='owner'&&Identity.membershipStatus(m)!=='revoked'),ownerU=ownerM?store.state.users.find(u=>u.id===ownerM.userId):null;return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(o.name)}</h4><p>${isRequesterHub?'系統需求者組織・不可手動新增公司角色':o.type==='transport_provider'?'交通／車隊公司':o.type==='care_facility'?'長照／日照機構':'其他合作組織'}${!isRequesterHub?(o.taxId?`・統編 ${escapeHTML(o.taxId)}`:'・統編未填'):''}<br>${isRequesterHub?`有效需求者：${memberCount} 人`:`聯絡電話：${escapeHTML(o.contactPhone||'未填')}<br>負責人：${escapeHTML(ownerU?.name||'尚未指定')}・有效成員：${memberCount} 人`}</p></div><span class="pill ${isRequesterHub?'purple':o.active!==false?'green':'gray'}">${isRequesterHub?'系統組織':o.active!==false?'有效':'已移除'}</span>${isRequesterHub?'':orgReviewPill(o)}</div>${!isRequesterHub&&(o.application?.contactName||o.application?.documentsNote||o.reviewNote)?`<p class="small muted">${o.application?.contactName?`聯絡人：${escapeHTML(o.application.contactName)}<br>`:''}${o.application?.documentsNote?`文件：${escapeHTML(o.application.documentsNote)}<br>`:''}${o.reviewNote?`審核備註：${escapeHTML(o.reviewNote)}`:''}</p>`:''}<div class="item-actions">${isRequesterHub?`<button type="button" class="btn outline sm platform-enter-org-btn" data-org="${o.id}">查看需求者</button>`:`${(()=>{const st=orgReviewStatus(o),btn=(d,label,cls)=>`<button type="button" class="btn ${cls} sm platform-org-review-btn" data-org="${o.id}" data-decision="${d}">${label}</button>`;return st==='pending'?btn('approve','核准申請','success')+btn('reject','駁回','warning'):st==='approved'?btn('suspend','停權','warning'):btn('approve',st==='suspended'?'恢復（重新核准）':'重新核准','success');})()}<button type="button" class="btn outline sm platform-edit-org-btn" data-org="${o.id}">編輯名稱／聯絡／負責人</button>${o.active!==false?`<button type="button" class="btn outline sm platform-enter-org-btn" data-org="${o.id}">管理成員</button><button type="button" class="btn warning sm platform-org-active-btn" data-org="${o.id}" data-active="false">停用組織</button>`:`<button type="button" class="btn success sm platform-org-active-btn" data-org="${o.id}" data-active="true">重新啟用</button>`}`}</div></div>`;}).join('')}</div>`;
 }
 
 function platformMembers(){
@@ -6735,6 +6807,8 @@ function bindViewEvents(){
   $('openSystemReportBtn')?.addEventListener('click',openSystemReport);
   document.querySelectorAll('.identity-switch-btn').forEach(btn=>btn.addEventListener('click',()=>switchOrganization(btn.dataset.org)));
   document.querySelectorAll('.platform-enter-org-btn').forEach(btn=>btn.addEventListener('click',()=>{const result=Identity.switchOrganization(btn.dataset.org);if(!result.ok){showToast(result.error);return;}currentView='platform-members';applyIdentityContext();renderNav();render();showToast(`正在管理 ${result.organization?.name||'組織'} 成員`);}));
+  document.querySelectorAll('.platform-org-review-btn').forEach(btn=>btn.addEventListener('click',()=>reviewOrganizationFromAdmin(btn.dataset.org,btn.dataset.decision)));
+  $('orgApplySubmitBtn')?.addEventListener('click',submitOrganizationApplication);
   document.querySelectorAll('.platform-org-active-btn').forEach(btn=>btn.addEventListener('click',()=>openOrganizationStatusConfirm(btn.dataset.org,btn.dataset.active==='true')));
   document.querySelectorAll('.resolve-system-report-btn').forEach(btn=>btn.addEventListener('click',()=>{const result=SystemReport.resolve(btn.dataset.id,Identity.currentUser()?.id);if(!result.ok){showToast(result.error);return;}render();showToast('問題已標記處理');}));
   document.querySelectorAll('.membership-role-select').forEach(select=>select.addEventListener('change',e=>{const result=Identity.setMembershipRole(e.currentTarget.dataset.membership,e.currentTarget.value);if(!result.ok){showToast(result.error);render();return;}render();showToast(`角色已調整為 ${ROLE_LABELS[e.currentTarget.value]||e.currentTarget.value}`);}));
