@@ -9,6 +9,8 @@
 | 檔案 | 內容 |
 |---|---|
 | `migrations/0001_baseline.sql` | 完整 schema：資料表、RLS 政策、`care_ride_app` 角色、身分與登入函式、`app_state`、接案／司機執行／需求者取消、通知來源證明。由原本的 0001–0008 壓縮而成 |
+| `migrations/0002_supabase_auth.sql` | 身分改由 Supabase Auth：移除自製密碼、`sessions_valid_after` 撤銷 session |
+| `migrations/0003_org_review.sql` | 機構申請與審核：`review_status`（pending／approved／rejected／suspended）、`app.apply_organization`、`app.review_organization`；需求池與接案只開放給已核准機構 |
 | `rollback/0001_baseline.down.sql` | 回復 baseline（刪除所有資料表與資料；只用在空資料庫或 Staging 重建） |
 | `migrations_archive/` | 原本的 0001–0008，只供查閱，不再套用 |
 | `tests/migrations.test.sh` | 回復檔齊全、上→下→上 schema 相同、司機政策執行計畫、通知觸發器 |

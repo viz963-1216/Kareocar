@@ -83,10 +83,18 @@ exports.handler = async (event) => {
         });
       }
 
+      // 審核欄位：平台管理員看全部，機構成員看到自己組織的狀態與原因（org_read 政策）
       const orgs = (await client.query(
-        `select id, org_type, name, active from organizations`)).rows;
+        `select id, org_type, name, tax_id, contact_phone, active, review_status, review_note,
+                reviewed_at, application, applied_at
+           from organizations`)).rows;
       for (const o of orgs) {
-        push('organizations', { id: o.id, type: o.org_type, name: o.name || '', active: o.active !== false });
+        push('organizations', {
+          id: o.id, type: o.org_type, name: o.name || '', active: o.active !== false,
+          taxId: o.tax_id || '', contactPhone: o.contact_phone || '',
+          reviewStatus: o.review_status || 'approved', reviewNote: o.review_note || '',
+          reviewedAt: o.reviewed_at, appliedAt: o.applied_at, application: o.application || {}
+        });
       }
 
       const drivers = (await client.query(

@@ -75,6 +75,16 @@
   status = 200
 
 [[redirects]]
+  from = "/api/v2/organization-apply"
+  to = "/.netlify/functions/v2-organization-apply"
+  status = 200
+
+[[redirects]]
+  from = "/api/v2/organization-review"
+  to = "/.netlify/functions/v2-organization-review"
+  status = 200
+
+[[redirects]]
   from = "/api/v2/claim-booking"
   to = "/.netlify/functions/v2-claim-booking"
   status = 200
