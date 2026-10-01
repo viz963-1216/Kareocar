@@ -29,6 +29,7 @@ const applyFn = require('../../netlify/functions/v2-organization-apply');
 const reviewFn = require('../../netlify/functions/v2-organization-review');
 const loadFn = require('../../netlify/functions/v2-state-load');
 const mutateFn = require('../../netlify/functions/v2-state-mutate');
+const bookingWriteFn = require('../../netlify/functions/v2-booking-write');
 const checkFn = require('../../netlify/functions/v2-geocode-check');
 
 const U = { root: 'USR-GEO-ROOT', req: 'USR-GEO-REQ', op: 'USR-GEO-OP' };
@@ -52,7 +53,8 @@ async function call(handler, method, userId, body) {
 }
 const outcome = (r) => `${r.status} ${r.error ? r.error.code : 'ok'}`;
 const mutate = (userId, changes) => call(mutateFn.handler, 'POST', userId, { changes });
-const putBooking = (userId, b) => mutate(userId, [{ collection: 'bookings', id: b.id, record: b }]);
+const writeBookings = (userId, changes) => call(bookingWriteFn.handler, 'POST', userId, { changes });
+const putBooking = (userId, b) => writeBookings(userId, [{ collection: 'bookings', id: b.id, record: b }]);
 const stored = async (id) => {
   const row = (await admin.query(`select data from app_state where collection = 'bookings' and id = $1`, [id])).rows[0];
   return row ? row.data : null;
@@ -126,7 +128,7 @@ function booking(id, extra = {}) {
     badDest.status === 400 && badDest.error.code === 'ADDRESS_NOT_FOUND'
       && JSON.stringify(badDest.error).includes('destination'), outcome(badDest));
   record('找不到地址時什麼都沒寫入', (await stored('BKG-GEO-2')) === null);
-  const badBatch = await mutate(U.req, [
+  const badBatch = await writeBookings(U.req, [
     { collection: 'bookings', id: 'BKG-GEO-3', record: booking('BKG-GEO-3') },
     { collection: 'bookings', id: 'BKG-GEO-4', record: booking('BKG-GEO-4', { pickupAddress: 'NOT-FOUND 路' }) }]);
   record('同一批裡有一筆找不到：整批不寫入',

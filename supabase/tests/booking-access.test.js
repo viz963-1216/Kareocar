@@ -1,0 +1,218 @@
+'use strict';
+/**
+ * 預約寫入與存取撤銷（#22）的整合測試。
+ *
+ * 經過實際的 handler（booking-write、state-mutate、claim-booking、cancel-booking、state-load），
+ * handler 以 care_ride_app 連線，RLS、0005 的撤銷函式全部生效。postgres 連線只用來建立身分
+ * fixture 與讀取資料庫實際狀態。
+ *
+ * 只允許本機隔離端點與固定測試庫名稱。
+ */
+const { Pool } = require('pg');
+
+const host = process.env.PGHOST;
+const isSocket = Boolean(host) && host.startsWith('/tmp/care-ride-');
+const isLocalTcp = host === 'localhost' || host === '127.0.0.1';
+if ((!isSocket && !isLocalTcp) || process.env.PGDATABASE !== 'careride_access_test') {
+  throw Error('Requires dedicated local endpoint and careride_access_test database');
+}
+process.env.DATABASE_URL = isSocket
+  ? `postgresql://care_ride_app@${encodeURIComponent(host)}:${process.env.PGPORT}/careride_access_test?sslmode=disable`
+  : `postgresql://care_ride_app@${host}:${process.env.PGPORT}/careride_access_test?sslmode=disable`;
+process.env.AUTH_SESSION_SECRET = 'synthetic-session-secret-access-0123456789';
+process.env.AUTH_PASSWORD_PEPPER = 'synthetic-password-pepper-access-0123456789';
+const fx = require('./_auth-fixture');
+const F = require('../../tests/_trip-fixtures');
+
+const admin = new Pool({ host, port: Number(process.env.PGPORT), database: 'careride_access_test', user: 'postgres' });
+const db = require('../../netlify/functions/_db');
+const bookingWriteFn = require('../../netlify/functions/v2-booking-write');
+const mutateFn = require('../../netlify/functions/v2-state-mutate');
+const claimFn = require('../../netlify/functions/v2-claim-booking');
+const cancelFn = require('../../netlify/functions/v2-cancel-booking');
+const loadFn = require('../../netlify/functions/v2-state-load');
+
+const ORG_A = 'ORG-ACC-A';
+const ORG_B = 'ORG-ACC-B';
+const U = { req: 'USR-ACC-REQ', dspA: 'USR-ACC-DSPA', dspB: 'USR-ACC-DSPB', drvA: 'USR-ACC-DRVA' };
+const DRIVER_A = 'DRV-ACC-A';
+const ADDRESS = '新北市板橋區文化路一段188號';
+
+const results = [];
+function record(name, ok, detail = '') {
+  results.push({ name, ok });
+  console.log(`  ${ok ? 'PASS' : 'FAIL'} ${name}${detail ? `  (${detail})` : ''}`);
+}
+async function call(handler, method, userId, body) {
+  const res = await handler({
+    httpMethod: method,
+    headers: userId ? { host: '127.0.0.1', cookie: `cr_at=${fx.mintAccessToken(userId)}` } : { host: '127.0.0.1' },
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
+  let parsed = {};
+  try { parsed = JSON.parse(res.body); } catch (_) { parsed = { raw: res.body }; }
+  return { status: res.statusCode, ...parsed };
+}
+const outcome = (r) => `${r.status} ${r.error ? `${r.error.code} ${r.error.message}` : 'ok'}`;
+const writeBooking = (userId, record) => call(bookingWriteFn.handler, 'POST', userId, { changes: [{ collection: 'bookings', id: record.id, record }] });
+const mutate = (userId, changes) => call(mutateFn.handler, 'POST', userId, { changes });
+const claim = (userId, bookingId, organizationId) => call(claimFn.handler, 'POST', userId, { bookingId, organizationId });
+const cancel = (userId, bookingId) => call(cancelFn.handler, 'POST', userId, { bookingId, reasonCode: 'requester_no_longer_needed' });
+const load = (userId) => call(loadFn.handler, 'GET', userId);
+const row = async (collection, id) => (await admin.query(
+  'select organization_id, data from app_state where collection = $1 and id = $2', [collection, id])).rows[0];
+const sees = (loaded, collection, id) => ((loaded.data && loaded.data.collections[collection]) || []).some((r) => r.id === id);
+const inPool = (loaded, id) => ((loaded.data && loaded.data.pool) || []).some((r) => r.id === id);
+
+function booking(id, extra = {}) {
+  return {
+    id, state: 'open', claimStatus: 'open', status: 'open', version: 1,
+    requestedByUserId: U.req, name: '合成需求者', phone: '0911000001',
+    pickupDate: '2099-01-01', pickupTime: '09:00', pickupAddress: ADDRESS, destination: '臺北市中正區公園路20號',
+    tripType: '單程', passengerCount: 1, wheelchairSlots: 0, rideshareConsent: true, ...extra
+  };
+}
+/** 承接機構的調度員以預約端點更新預約（模擬前端 transition 後送出的整筆資料）。 */
+async function opsUpdate(userId, id, patch) {
+  const current = (await row('bookings', id)).data;
+  return writeBooking(userId, { ...current, ...patch });
+}
+async function newClaimed(id) {
+  const c = await writeBooking(U.req, booking(id));
+  const k = await claim(U.dspA, id, ORG_A);
+  return c.status === 200 && k.status === 200;
+}
+
+(async () => {
+  await admin.query(`
+    insert into organizations (id, org_type, name, tax_id, contact_phone, active) values
+      ('${ORG_A}','transport_provider','合成承運 A','12345678','02-1111-2222',true),
+      ('${ORG_B}','transport_provider','合成承運 B','87654321','02-3333-4444',true);
+    insert into users (id, display_name, phone_e164, platform_role, active) values
+      ('${U.req}','合成需求者','+886944000001','none',true),
+      ('${U.dspA}','合成調度 A','+886944000002','none',true),
+      ('${U.dspB}','合成調度 B','+886944000003','none',true),
+      ('${U.drvA}','合成司機 A','+886944000004','none',true);
+    insert into memberships (id, user_id, organization_id, role, status) values
+      ('M-ACC-REQ','${U.req}','ORG-REQ-001','requester','active'),
+      ('M-ACC-DSPA','${U.dspA}','${ORG_A}','dispatcher','active'),
+      ('M-ACC-DSPB','${U.dspB}','${ORG_B}','dispatcher','active'),
+      ('M-ACC-DRVA','${U.drvA}','${ORG_A}','driver','active');
+    insert into drivers (id, user_id, organization_id, duty_status, active) values
+      ('${DRIVER_A}','${U.drvA}','${ORG_A}','on_duty',true);
+  `);
+
+  console.log('--- 建立與狀態規則 ---');
+  const created = await writeBooking(U.req, booking('BKG-ACC-1'));
+  record('需求者建立公開預約', created.status === 200, outcome(created));
+  const viaState = await mutate(U.req, [{ collection: 'bookings', id: 'BKG-ACC-X', record: booking('BKG-ACC-X') }]);
+  record('一般寫入端點不接受預約', viaState.status === 403 && viaState.error.code === 'COLLECTION_FORBIDDEN', outcome(viaState));
+  const forgedOwner = await writeBooking(U.req, booking('BKG-ACC-2', { requestedByUserId: U.dspB }));
+  record('不能替其他帳號建立預約', forgedOwner.status === 400, outcome(forgedOwner));
+  const selfClaim = await writeBooking(U.req, { ...(await row('bookings', 'BKG-ACC-1')).data, state: 'claimed', organizationId: ORG_A });
+  record('需求者不能自己把預約改成已承接', selfClaim.status === 400 && (await row('bookings', 'BKG-ACC-1')).organization_id === null, outcome(selfClaim));
+  const expire = await writeBooking(U.req, { ...(await row('bookings', 'BKG-ACC-1')).data, pickupTime: '10:00' });
+  record('需求者可以修改公開中的預約', expire.status === 200, outcome(expire));
+  const forgedFields = await writeBooking(U.req, { ...(await row('bookings', 'BKG-ACC-1')).data, claimedByUserId: U.dspA, cancelledAt: '2099-01-01T00:00:00Z' });
+  const afterForged = (await row('bookings', 'BKG-ACC-1')).data;
+  record('伺服器決定的欄位（承接人、取消紀錄）沿用資料庫的值', forgedFields.status === 200
+    && !afterForged.claimedByUserId && !afterForged.cancelledAt, JSON.stringify({ c: afterForged.claimedByUserId, x: afterForged.cancelledAt }));
+
+  console.log('--- 承接機構退回公開池 ---');
+  record('（前提）A 接案', (await claim(U.dspA, 'BKG-ACC-1', ORG_A)).status === 200);
+  const aSees = await load(U.dspA);
+  record('承接機構 A 看得到完整預約', sees(aSees, 'bookings', 'BKG-ACC-1'));
+  const bBefore = await load(U.dspB);
+  record('其他機構 B 看不到這筆預約', !sees(bBefore, 'bookings', 'BKG-ACC-1') && !JSON.stringify(bBefore.data.collections).includes('188號'));
+  const release = await opsUpdate(U.dspA, 'BKG-ACC-1', { state: 'open', claimStatus: 'open', status: 'open', organizationId: null, claimedByUserId: null, claimedAt: null });
+  const released = await row('bookings', 'BKG-ACC-1');
+  record('A 退回公開池：organization_id 清空，記下前一個承接機構', release.status === 200 && released.organization_id === null
+    && JSON.stringify(released.data.previousOrganizationIds) === JSON.stringify([ORG_A]), outcome(release));
+  const aAfter = await load(U.dspA);
+  record('退回後 A 立即讀不到這筆預約的個資（只在遮蔽的需求池裡）',
+    !sees(aAfter, 'bookings', 'BKG-ACC-1') && inPool(aAfter, 'BKG-ACC-1')
+      && !JSON.stringify(aAfter.data.collections).includes('188號'));
+  const aWriteBack = await opsUpdate(U.dspA, 'BKG-ACC-1', { state: 'claimed', organizationId: ORG_A });
+  record('退回後 A 不能再寫這筆預約', aWriteBack.status === 403, outcome(aWriteBack));
+  const bClaim = await claim(U.dspB, 'BKG-ACC-1', ORG_B);
+  record('B 可以重新接案並看到完整預約', bClaim.status === 200 && sees(await load(U.dspB), 'bookings', 'BKG-ACC-1'), outcome(bClaim));
+
+  console.log('--- 不受理 ---');
+  record('（前提）A 接第二筆', await newClaimed('BKG-ACC-3'));
+  const reject = await opsUpdate(U.dspA, 'BKG-ACC-3', { state: 'rejected', claimStatus: 'rejected', status: 'rejected' });
+  record('A 不受理：原機構立即讀不到', reject.status === 200 && (await row('bookings', 'BKG-ACC-3')).organization_id === null
+    && !sees(await load(U.dspA), 'bookings', 'BKG-ACC-3'), outcome(reject));
+  const reqSeesRejected = await load(U.req);
+  record('需求者仍看得到自己被不受理的預約', sees(reqSeesRejected, 'bookings', 'BKG-ACC-3'));
+
+  console.log('--- 需求者重大修改需重新承接 ---');
+  record('（前提）A 接第三筆', await newClaimed('BKG-ACC-4'));
+  const amend = await writeBooking(U.req, { ...(await row('bookings', 'BKG-ACC-4')).data,
+    pickupAddress: '新北市板橋區縣民大道二段7號', state: 'open', claimStatus: 'open', status: 'open', organizationId: null });
+  record('需求者改地址讓原承接失效：A 立即讀不到、預約回到需求池', amend.status === 200
+    && (await row('bookings', 'BKG-ACC-4')).organization_id === null && !sees(await load(U.dspA), 'bookings', 'BKG-ACC-4')
+    && inPool(await load(U.dspA), 'BKG-ACC-4'), outcome(amend));
+
+  console.log('--- 排車後的規則 ---');
+  record('（前提）A 接第四筆', await newClaimed('BKG-ACC-5'));
+  const tripId = 'TRP-ACC-5';
+  const trip = F.makeTrip({ id: tripId, organizationId: ORG_A, driverId: DRIVER_A, vehicleId: 'VEH-ACC-A',
+    bookingId: 'BKG-ACC-5', startAt: F.addMinutes(new Date().toISOString(), 24 * 60),
+    extra: { pickupAddress: ADDRESS, passengerSummary: '合成需求者' } });
+  const schedule = await opsUpdate(U.dspA, 'BKG-ACC-5', { state: 'scheduled', status: 'scheduled', claimStatus: 'claimed', tripId });
+  const tripWrite = await mutate(U.dspA, [{ collection: 'trips', id: tripId, record: trip }]);
+  record('A 排車：預約 scheduled、行程寫入', schedule.status === 200 && tripWrite.status === 200, `${outcome(schedule)} / ${outcome(tripWrite)}`);
+  const lockedEdit = await writeBooking(U.req, { ...(await row('bookings', 'BKG-ACC-5')).data, pickupTime: '11:00' });
+  record('排車後需求者不能改時間', lockedEdit.status === 400, outcome(lockedEdit));
+  const backToOpen = await opsUpdate(U.dspA, 'BKG-ACC-5', { state: 'open' });
+  record('已排車的預約不能直接退回公開池', backToOpen.status === 400, outcome(backToOpen));
+  const opsCancel = await opsUpdate(U.dspA, 'BKG-ACC-5', { state: 'cancelled' });
+  record('預約端點不接受改成已取消', opsCancel.status === 400, outcome(opsCancel));
+  const driverRead = await load(U.drvA);
+  record('司機讀得到指派給自己的行程', sees(driverRead, 'trips', tripId));
+
+  console.log('--- 需求者取消 ---');
+  const cancelled = await cancel(U.req, 'BKG-ACC-5');
+  record('需求者取消已排車預約', cancelled.status === 200, outcome(cancelled));
+  const bRow = await row('bookings', 'BKG-ACC-5');
+  record('取消後預約的 organization_id 清空、記下前一個承接機構', bRow.organization_id === null
+    && JSON.stringify(bRow.data.previousOrganizationIds) === JSON.stringify([ORG_A]));
+  const aAfterCancel = await load(U.dspA);
+  record('取消後 A 讀不到這筆預約', !sees(aAfterCancel, 'bookings', 'BKG-ACC-5'));
+  const tRow = await row('trips', tripId);
+  const tripText = JSON.stringify(tRow.data);
+  record('被取消的行程仍屬於 A（營運紀錄），狀態 cancelled', tRow.organization_id === ORG_A && tRow.data.status === 'cancelled');
+  record('被取消的行程移除乘客姓名、電話、完整地址', !tripText.includes('188號') && !tripText.includes('0911000001')
+    && !tripText.includes('合成乘客') && tRow.data.pickupAddress === '新北市板橋區' && Boolean(tRow.data.piiRedactedAt),
+    tRow.data.pickupAddress);
+  const aTrip = (aAfterCancel.data.collections.trips || []).find((t) => t.id === tripId);
+  record('A 讀到的取消行程沒有個資', Boolean(aTrip) && !JSON.stringify(aTrip).includes('188號'));
+  const inProgress = 'BKG-ACC-6';
+  record('（前提）A 接第五筆', await newClaimed(inProgress));
+  const runTrip = F.makeTrip({ id: 'TRP-ACC-6', organizationId: ORG_A, driverId: DRIVER_A, vehicleId: 'VEH-ACC-A',
+    bookingId: inProgress, startAt: new Date().toISOString(), extra: { status: 'in_progress' } });
+  await opsUpdate(U.dspA, inProgress, { state: 'scheduled', status: 'scheduled', tripId: 'TRP-ACC-6' });
+  await mutate(U.dspA, [{ collection: 'trips', id: 'TRP-ACC-6', record: runTrip }]);
+  const cancelRunning = await cancel(U.req, inProgress);
+  record('已開始的行程取消被拒，並說明原因', cancelRunning.status === 400 && /已開始/.test(cancelRunning.error.message)
+    && (await row('bookings', inProgress)).organization_id === ORG_A, outcome(cancelRunning));
+
+  console.log('--- 需求者只看得到承接單位名稱 ---');
+  const reqLoad = await load(U.req);
+  const orgs = reqLoad.data.collections.organizations || [];
+  const orgB = orgs.find((o) => o.id === ORG_B);
+  record('需求者看得到承接單位 B 的名稱', Boolean(orgB) && orgB.name === '合成承運 B', JSON.stringify(orgB));
+  record('只有名稱：沒有統編、電話、審核資料', orgB && !('taxId' in orgB) && !('contactPhone' in orgB)
+    && !('application' in orgB) && !JSON.stringify(orgs).includes('87654321'));
+  record('看不到承接單位的成員', !(reqLoad.data.collections.memberships || []).some((m) => m.organizationId === ORG_B)
+    && !(reqLoad.data.collections.users || []).some((u) => u.id === U.dspB));
+  record('沒有承接過自己預約的機構（A 已撤銷）看不到名稱', !orgs.some((o) => o.id === ORG_A && o.name)
+    || (reqLoad.data.collections.bookings || []).some((b) => b.organizationId === ORG_A));
+  const reqBooking = (reqLoad.data.collections.bookings || []).find((b) => b.id === 'BKG-ACC-1');
+  record('需求者看到自己的預約已被 B 承接', reqBooking && reqBooking.state === 'claimed' && reqBooking.organizationId === ORG_B);
+
+  const failed = results.filter((r) => !r.ok);
+  console.log(`\n結果：${results.length - failed.length} 通過 / ${failed.length} 失敗`);
+  process.exitCode = failed.length ? 1 : 0;
+})().catch((e) => { console.error(e); process.exitCode = 1; })
+  .finally(async () => { await db.getPool().end(); await admin.end(); });

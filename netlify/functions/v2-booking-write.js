@@ -1,0 +1,119 @@
+'use strict';
+
+/**
+ * POST /api/v2/booking-write  —— 預約的建立與修改
+ *
+ * body: { changes: [{ collection: 'bookings', id, record }] }（與 state-mutate 相同的形狀，
+ * 前端的待送出佇列把 bookings 分流到這裡）
+ *
+ * 規則在 _booking-rules.js：誰能把預約改到哪個狀態、哪些欄位只由伺服器決定。
+ * 另外：
+ *   - serverComputed（定位、模糊地址、距離、報價）由伺服器計算，見 _bookings.js
+ *   - 退回公開池、不受理、重大修改需重新承接時，同一交易內撤銷原承接機構
+ *     （app.revoke_booking_organization），原機構立即讀不到
+ *   - 不能刪除預約；接案與取消有各自的端點
+ *
+ * 整批在同一筆交易裡，任何一筆不合規則就整批不寫入。
+ */
+
+const { json, parseBody, handleError } = require('./_http');
+const { withUser, translateDbError } = require('./_db');
+const auth = require('./_auth-pg');
+const session = require('./_session');
+const { applyServerBookingFields, sanitize } = require('./_bookings');
+const { checkBookingWrite } = require('./_booking-rules');
+
+const MAX_CHANGES = 50;
+const text = (v) => String(v === undefined || v === null ? '' : v).trim();
+
+async function isOps(client, organizationId) {
+  if (!organizationId) return false;
+  const { rows } = await client.query(`select app.has_role_in($1, array['owner','dispatcher']) as ok`, [organizationId]);
+  return rows[0].ok === true;
+}
+
+exports.handler = async (event) => {
+  if (event.httpMethod !== 'POST') {
+    return json(405, { ok: false, error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed' } });
+  }
+  try {
+    const claims = await session.requireSession(event);
+    const body = parseBody(event);
+    const changes = Array.isArray(body.changes) ? body.changes : [];
+    if (!changes.length) throw auth.authError('VALIDATION_ERROR', '沒有可儲存的預約異動');
+    if (changes.length > MAX_CHANGES) throw auth.authError('VALIDATION_ERROR', `單次最多 ${MAX_CHANGES} 筆預約`);
+
+    const data = await withUser(claims.userId, async (client) => {
+      await session.assertSessionActive(client, claims);
+      const admin = (await client.query('select app.is_super_admin() as ok')).rows[0].ok === true;
+
+      const results = [];
+      for (const change of changes) {
+        if (text(change.collection) !== 'bookings') {
+          throw auth.authError('COLLECTION_FORBIDDEN', '這支端點只處理預約');
+        }
+        if (change.deleted === true) throw auth.authError('VALIDATION_ERROR', '預約不能刪除，請使用取消功能');
+        const incoming = sanitize(change.record);
+        const id = text(change.id || incoming.id);
+        if (!id || id.length > 180) throw auth.authError('VALIDATION_ERROR', '預約 ID 無效');
+        incoming.id = id;
+
+        const existing = (await client.query(
+          `select data, organization_id, owner_user_id from app_state
+            where collection = 'bookings' and id = $1 and not deleted
+            for update`, [id])).rows[0] || null;
+        const roles = {
+          admin,
+          ownsExisting: Boolean(existing) && existing.owner_user_id === claims.userId,
+          opsOfExisting: Boolean(existing) && await isOps(client, existing.organization_id),
+          opsOfClaimedOrg: !existing && await isOps(client, text(incoming.organizationId))
+        };
+        if (existing && !roles.admin && !roles.ownsExisting && !roles.opsOfExisting) {
+          throw auth.authError('FORBIDDEN', `沒有權限修改預約 ${id}`);
+        }
+
+        let checked;
+        try {
+          checked = checkBookingWrite({ actorUserId: claims.userId, record: incoming, existing, roles });
+        } catch (error) {
+          throw auth.authError(error.code || 'VALIDATION_ERROR', error.message);
+        }
+        const record = checked.record;
+        await applyServerBookingFields(client, id, record);
+
+        const upsert = await client.query(
+          `insert into app_state (collection, id, organization_id, booking_id, data)
+             values ('bookings', $1, $2, $1, $3)
+           on conflict (collection, id) do update
+             set data = excluded.data, deleted = false
+           returning version, updated_at`,
+          [id, existing ? null : (text(record.organizationId) || null), JSON.stringify(record)]);
+        if (!upsert.rows.length) throw auth.authError('FORBIDDEN', `沒有權限寫入預約 ${id}`);
+
+        if (checked.revoke) {
+          await client.query('select app.revoke_booking_organization($1)', [id]);
+        }
+        const saved = (await client.query(
+          `select organization_id, version, updated_at from app_state where collection = 'bookings' and id = $1`, [id])).rows[0];
+        results.push({
+          collection: 'bookings', id, state: record.state || 'open',
+          organizationId: saved ? saved.organization_id : null,
+          version: saved ? saved.version : upsert.rows[0].version,
+          updatedAt: saved ? saved.updated_at : upsert.rows[0].updated_at,
+          revoked: checked.revoke
+        });
+      }
+
+      await client.query(
+        `insert into audit_events (id, event_type, actor_user_id, entity_type, entity_id, reason_code, details)
+         values ($1,'booking.batch_written',$2,'booking','batch','BOOKING_WRITE',$3)`,
+        [`AUD-${Date.now()}-${auth.randomHex(4)}`, claims.userId,
+         JSON.stringify({ count: results.length, revoked: results.filter((r) => r.revoked).map((r) => r.id) })]);
+      return { ok: true, results, count: results.length };
+    });
+
+    return json(200, { ok: true, data });
+  } catch (error) {
+    return handleError(translateDbError(error));
+  }
+};

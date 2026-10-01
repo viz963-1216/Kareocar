@@ -97,6 +97,15 @@ exports.handler = async (event) => {
         });
       }
 
+      // 需求者看得到承接自己預約的機構名稱（只有名稱）。自己是成員的機構上面已經有完整資料。
+      // active: false 讓前端不會把它當成可切換或可承接的組織，只用來顯示名稱。
+      const known = new Set(orgs.map((o) => o.id));
+      const serving = (await client.query('select id, name from app.my_booking_service_organizations()')).rows;
+      for (const o of serving) {
+        if (known.has(o.id)) continue;
+        push('organizations', { id: o.id, name: o.name || '', type: '', active: false, limited: true });
+      }
+
       const drivers = (await client.query(
         `select id, user_id, organization_id, fleet_id, duty_status, service_area, active from drivers`)).rows;
       for (const d of drivers) {

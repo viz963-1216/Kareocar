@@ -44,6 +44,7 @@ const admin = new Pool({ host, port: Number(process.env.PGPORT), database: 'care
 const db = require('../../netlify/functions/_db');
 const load = require('../../netlify/functions/v2-state-load');
 const mutate = require('../../netlify/functions/v2-state-mutate');
+const bookingWrite = require('../../netlify/functions/v2-booking-write');
 const claimFn = require('../../netlify/functions/v2-claim-booking');
 const executeFn = require('../../netlify/functions/v2-trip-execute');
 const cancelFn = require('../../netlify/functions/v2-cancel-booking');
@@ -81,6 +82,7 @@ async function call(handler, method, token, body) {
 }
 const loadAs = (token) => call(load.handler, 'GET', token);
 const mutateAs = (token, changes) => call(mutate.handler, 'POST', token, { changes });
+const bookingWriteAs = (token, changes) => call(bookingWrite.handler, 'POST', token, { changes });
 const claimAs = (token, bookingId, organizationId) =>
   call(claimFn.handler, 'POST', token, { bookingId, organizationId });
 const executeAs = (token, body) => call(executeFn.handler, 'POST', token, body);
@@ -201,7 +203,7 @@ async function scenario1(t) {
   const S = '情境1 接案';
   const id = 'BKG-FLOW-S1';
 
-  const created = await mutateAs(t.req, [{ collection: 'bookings', id, record: openBooking(id) }]);
+  const created = await bookingWriteAs(t.req, [{ collection: 'bookings', id, record: openBooking(id) }]);
   record(S, '需求者建立公開預約', created.status === 200, outcome(created));
 
   const loadA = await loadAs(t.dspA);
@@ -220,11 +222,17 @@ async function scenario1(t) {
     `bookings=${JSON.stringify(idsIn(loadA, 'bookings'))}`);
 
   // #6 原本的寫法：透過一般寫入管道接案。修正後這條路仍必須被拒。
+  const forgedClaim = { ...openBooking(id), state: 'claimed', claimStatus: 'claimed', status: 'claimed',
+    organizationId: ORG_A, claimedByUserId: U.dspA, version: 2 };
   await expectRejected(S, '[安全] 透過 state-mutate 接案', mutateAs(t.dspA, [{
-    collection: 'bookings', id,
-    record: { ...openBooking(id), state: 'claimed', claimStatus: 'claimed', status: 'claimed',
-              organizationId: ORG_A, claimedByUserId: U.dspA, version: 2 }
+    collection: 'bookings', id, record: forgedClaim
+  }]), { status: 403, code: 'COLLECTION_FORBIDDEN' }, [['bookings', id]]);
+  await expectRejected(S, '[安全] 透過預約端點接案', bookingWriteAs(t.dspA, [{
+    collection: 'bookings', id, record: forgedClaim
   }]), { status: 403, code: 'FORBIDDEN' }, [['bookings', id]]);
+  await expectRejected(S, '[安全] 需求者自己把預約改成已承接', bookingWriteAs(t.req, [{
+    collection: 'bookings', id, record: forgedClaim
+  }]), { status: 400, code: 'VALIDATION_ERROR' }, [['bookings', id]]);
 
   await expectRejected(S, '調度員 A 代表未加入的組織 B 接案', claimAs(t.dspA, id, ORG_B),
     { status: 403, code: 'FORBIDDEN' }, [['bookings', id]]);
@@ -257,7 +265,7 @@ async function scenario1(t) {
   const cid = 'BKG-FLOW-S1C';
   // 勝出的組織本來就會拿到完整預約；用另一個地址，後面「其他組織讀不到 SECRET_ADDRESS」
   // 的檢查才不會因為這裡由 B 勝出而失敗。
-  await mutateAs(t.req, [{ collection: 'bookings', id: cid,
+  await bookingWriteAs(t.req, [{ collection: 'bookings', id: cid,
     record: { ...openBooking(cid), pickupAddress: '台北市大安區復興南路一段390號' } }]);
   const [ra, rb] = await Promise.all([claimAs(t.dspA, cid, ORG_A), claimAs(t.dspB, cid, ORG_B)]);
   const winners = [ra, rb].filter((r) => r.status === 200);
@@ -496,7 +504,7 @@ async function scenario3(t) {
   const bookingId = 'BKG-FLOW-S3';
   const tripId = 'TRP-FLOW-S3';
 
-  const created = await mutateAs(t.req, [{ collection: 'bookings', id: bookingId, record: openBooking(bookingId) }]);
+  const created = await bookingWriteAs(t.req, [{ collection: 'bookings', id: bookingId, record: openBooking(bookingId) }]);
   record(S, '需求者建立預約', created.status === 200, outcome(created));
 
   // 狀態 fixture（非斷言）：刻意不走情境 1 的接案端點，讓本情境只驗取消。
@@ -522,7 +530,15 @@ async function scenario3(t) {
       record: { ...bookingBefore.data, state: 'cancelled', status: 'cancelled' } },
     { collection: 'trips', id: tripId, expectedRevision: tripBefore.revision,
       record: { ...tripBefore.data, status: 'cancelled' } }
-  ]), { status: 403, code: 'FORBIDDEN' }, watched);
+  ]), { status: 403, code: 'COLLECTION_FORBIDDEN' }, watched);
+  await expectRejected(S, '[安全] 透過預約端點把預約改成已取消', bookingWriteAs(t.req, [
+    { collection: 'bookings', id: bookingId,
+      record: { ...bookingBefore.data, state: 'cancelled', status: 'cancelled' } }
+  ]), { status: 400, code: 'VALIDATION_ERROR' }, watched);
+  await expectRejected(S, '[安全] 需求者改已排車預約的接送地址', bookingWriteAs(t.req, [
+    { collection: 'bookings', id: bookingId,
+      record: { ...bookingBefore.data, pickupAddress: '新北市板橋區文化路一段999號' } }
+  ]), { status: 400, code: 'VALIDATION_ERROR' }, watched);
 
   await expectRejected(S, '其他需求者取消此預約',
     cancelAs(t.req2, { bookingId, reasonCode: 'requester_no_longer_needed' }),
@@ -592,7 +608,7 @@ async function scenario3(t) {
 
   // ---- 尚未承接的預約：沒有行程，只通知需求者
   const openId = 'BKG-FLOW-S3O';
-  await mutateAs(t.req, [{ collection: 'bookings', id: openId, record: openBooking(openId) }]);
+  await bookingWriteAs(t.req, [{ collection: 'bookings', id: openId, record: openBooking(openId) }]);
   const openCancel = await cancelAs(t.req, { bookingId: openId, reasonCode: 'requester_no_longer_needed' });
   const openNtfs = await notificationsFor(openId);
   record(S, '取消尚未承接的預約：成功、只通知需求者',
@@ -601,7 +617,7 @@ async function scenario3(t) {
 
   // ---- 同時送出兩次取消（重複點擊、兩個分頁）
   const cc = 'BKG-FLOW-S3CC';
-  await mutateAs(t.req, [{ collection: 'bookings', id: cc, record: openBooking(cc) }]);
+  await bookingWriteAs(t.req, [{ collection: 'bookings', id: cc, record: openBooking(cc) }]);
   const pair = await Promise.all([
     cancelAs(t.req, { bookingId: cc, reasonCode: 'requester_no_longer_needed' }),
     cancelAs(t.req, { bookingId: cc, reasonCode: 'requester_no_longer_needed' })]);
@@ -615,7 +631,7 @@ async function scenario3(t) {
   const rb = 'BKG-FLOW-S3R';
   const rt1 = 'TRP-FLOW-S3R-1';
   const rt2 = 'TRP-FLOW-S3R-2';
-  await mutateAs(t.req, [{ collection: 'bookings', id: rb, record: openBooking(rb) }]);
+  await bookingWriteAs(t.req, [{ collection: 'bookings', id: rb, record: openBooking(rb) }]);
   await fixtureScheduled(rb, rt1);
   const two = await mutateAs(t.dspA, [
     { collection: 'trips', id: rt1, record: scheduledTrip(rt1, DRIVER.a1, { bookingId: rb, bookingIds: [rb] }) },
@@ -631,8 +647,8 @@ async function scenario3(t) {
   const p1 = 'BKG-FLOW-S3P1';
   const p2 = 'BKG-FLOW-S3P2';
   const pt = 'TRP-FLOW-S3P';
-  await mutateAs(t.req, [{ collection: 'bookings', id: p1, record: openBooking(p1) }]);
-  await mutateAs(t.req2, [{ collection: 'bookings', id: p2, record: openBooking(p2, U.req2) }]);
+  await bookingWriteAs(t.req, [{ collection: 'bookings', id: p1, record: openBooking(p1) }]);
+  await bookingWriteAs(t.req2, [{ collection: 'bookings', id: p2, record: openBooking(p2, U.req2) }]);
   await fixtureScheduled(p1, pt);
   await fixtureScheduled(p2, pt);
   const pooled = await mutateAs(t.dspA, [{ collection: 'trips', id: pt,

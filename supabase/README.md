@@ -11,6 +11,7 @@
 | `migrations/0001_baseline.sql` | 完整 schema：資料表、RLS 政策、`care_ride_app` 角色、身分與登入函式、`app_state`、接案／司機執行／需求者取消、通知來源證明。由原本的 0001–0008 壓縮而成 |
 | `migrations/0002_supabase_auth.sql` | 身分改由 Supabase Auth：移除自製密碼、`sessions_valid_after` 撤銷 session |
 | `migrations/0003_org_review.sql` | 機構申請與審核：`review_status`（pending／approved／rejected／suspended）、`app.apply_organization`、`app.review_organization`；需求池與接案只開放給已核准機構 |
+| `migrations/0005_booking_access_revoke.sql` | 退回公開池、不受理、重大修改需重新承接、需求者取消後，原承接機構立即失去預約存取（`app.revoke_booking_organization`）；取消的行程移除乘客個資；需求者只看得到承接單位名稱（`app.my_booking_service_organizations`） |
 | `migrations/0004_pool_fuzzy_address.sql` | 需求池多露出伺服器計算的模糊地址、行政區、距離、車程與報價狀態（來自預約的 `serverComputed`）；完整地址、姓名、電話、經緯度仍不露出 |
 | `rollback/0001_baseline.down.sql` | 回復 baseline（刪除所有資料表與資料；只用在空資料庫或 Staging 重建） |
 | `migrations_archive/` | 原本的 0001–0008，只供查閱，不再套用 |
@@ -139,6 +140,19 @@ PGHOST=/tmp/pgrun PGPORT=5433 bash supabase/tests/rls.test.sh
 | `AUTH_PASSWORD_PEPPER` | 忘記密碼驗證碼的雜湊 pepper | 是 |
 | `PRODUCTION_SUPABASE_PROJECT_REF` | 正式專案 ref，建置檢查用 | 否 |
 | `GOOGLE_MAPS_API_KEY` | Google Maps 金鑰（要開 Geocoding API 與 Routes API）。建立預約或改地址時定位、算距離；沒設定時建立預約會回 503 | 是 |
+
+### 預約寫入（/api/v2/booking-write）
+
+預約不再經 `state-mutate` 寫入（回 `COLLECTION_FORBIDDEN`），改走 `v2-booking-write`，規則在
+`netlify/functions/_booking-rules.js`：
+
+- 需求者：只能建立公開待接的預約；公開中可修改或過期；已承接時可修改，重大修改會回到公開池
+- 承接機構的負責人、調度員：已承接 → 排車、退回公開池、不受理
+- 進入排車後，需求者不能改時間與地址
+- 接案走 `claim-booking`、取消走 `cancel-booking`；預約不能刪除
+- 需求者、承接人、取消紀錄等欄位一律沿用資料庫的值
+
+退回公開池、不受理、重大修改時，同一交易內撤銷原承接機構，原機構立即讀不到。
 
 ### 預約的伺服器計算欄位（serverComputed）
 

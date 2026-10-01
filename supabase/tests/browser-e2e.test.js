@@ -37,6 +37,7 @@ const { Pool } = require('pg');
 const admin = new Pool({ host, port: Number(process.env.PGPORT), database: 'careride_e2e_test', user: 'postgres' });
 const db = require('../../netlify/functions/_db');
 const mutate = require('../../netlify/functions/v2-state-mutate');
+const bookingWrite = require('../../netlify/functions/v2-booking-write');
 const { createServer } = require('../../tools/local-dev-server');
 const F = require('../../tests/_trip-fixtures');
 
@@ -282,7 +283,9 @@ async function row(collection, id) {
   return rows[0] || null;
 }
 async function apiMutate(token, changes) {
-  const res = await mutate.handler({ httpMethod: 'POST', headers: { host: '127.0.0.1', cookie: `cr_at=${token}` }, body: JSON.stringify({ changes }) });
+  // 預約走 booking-write（與前端的分流相同）
+  const handler = changes.every((c) => c.collection === 'bookings') ? bookingWrite.handler : mutate.handler;
+  const res = await handler({ httpMethod: 'POST', headers: { host: '127.0.0.1', cookie: `cr_at=${token}` }, body: JSON.stringify({ changes }) });
   return res.statusCode;
 }
 function openBooking(id) {
@@ -396,6 +399,13 @@ async function flowClaim(cdp, baseUrl, tokens) {
         Boolean(reqBooking) && reqBooking.state === dbRow.data.state && reqBooking.organizationId === dbRow.organization_id
           && reqBooking.state === dspBooking.state && reqBooking.organizationId === dspBooking.organizationId,
         reqBooking ? `state=${reqBooking.state} organizationId=${reqBooking.organizationId}` : '需求者載入結果沒有此預約');
+      await goView(reqPage, 'requester-bookings');
+      let orgShown = true;
+      try { await waitFor(reqPage, "document.body.innerText.includes('合成承運 E2E')", '我的預約顯示承接單位名稱', 8000); }
+      catch (_) { orgShown = false; }
+      const reqOrg = (reqData.collections.organizations || []).find((o) => o.id === ORG);
+      record(S, '需求者的「我的預約」顯示承接單位名稱，而且只拿到名稱',
+        orgShown && Boolean(reqOrg) && !('taxId' in reqOrg) && !('contactPhone' in reqOrg), JSON.stringify(reqOrg));
     } finally {
       await finishPage(reqPage, S);
     }
