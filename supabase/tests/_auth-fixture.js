@@ -96,6 +96,35 @@ const fakeProvider = {
 };
 supabaseAuth.setProvider(fakeProvider);
 
+// ---- 假的地址定位與路線（Google Maps 的替身）----
+// 地址含「不存在」或 NOT-FOUND 視為找不到；其他依字串決定性地產生座標、行政區、路段與門牌。
+const geo = require(path.join(FN, '_geo.js'));
+const geoCalls = [];
+const hashInt = (text) => parseInt(crypto.createHash('sha256').update(String(text)).digest('hex').slice(0, 8), 16);
+geo.setProvider({
+  async geocode(address) {
+    geoCalls.push(['geocode', address]);
+    if (/不存在|NOT-FOUND/i.test(address)) {
+      throw Object.assign(new Error(`找不到這個地址：${address}`), { code: 'ADDRESS_NOT_FOUND' });
+    }
+    const text = String(address).replace(/\s+/g, '');
+    const m = text.match(/^(.{2}[市縣])(.{1,3}?[區鄉鎮市])(.*?)(\d+)號/);
+    const h = hashInt(text);
+    return {
+      lat: 25 + (h % 1000) / 10000, lng: 121.5 + (h % 997) / 10000,
+      district: m ? `${m[1]}${m[2]}` : '合成市合成區',
+      route: m && m[3] ? m[3] : '合成路',
+      streetNumber: m ? m[4] : '123',
+      formattedAddress: text
+    };
+  },
+  async route(from, to) {
+    geoCalls.push(['route']);
+    const d = 1000 + (hashInt(`${from.lat},${from.lng}>${to.lat},${to.lng}`) % 20000);
+    return { distanceMeters: d, durationSeconds: Math.round(d / 8) };
+  }
+});
+
 /** 在假的 Supabase Auth 裡建立帳號（資料庫的 users 列由測試自己建立，id 要相同）。 */
 function addUser(userId, phone, password) {
   byPhone.set(toE164(phone), { id: String(userId), password: String(password) });
@@ -181,4 +210,4 @@ function adapt(mod) {
   };
 }
 
-module.exports = { SECRET, mintAccessToken, addUser, setSeedPassword, adapt, headersFor, cookiesFrom, setCookieLines, calls, toE164 };
+module.exports = { SECRET, mintAccessToken, addUser, setSeedPassword, adapt, headersFor, cookiesFrom, setCookieLines, calls, geoCalls, toE164 };

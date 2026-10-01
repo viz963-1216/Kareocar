@@ -89,10 +89,10 @@ const get = (tok) => load.handler({ httpMethod: 'GET', headers: tok ? { authoriz
     const res = await get(victim);
     return !/hash|salt|pepper|passwordHash/i.test(res.body);
   });
-  await t('調度員的需求池只到行政區，看不到門牌', async () => {
+  await t('調度員的需求池只有模糊地址（路段＋門牌去尾），看不到完整門牌', async () => {
     const r = parse(await get(dispatcher));
     const text = JSON.stringify(r.data.pool || []);
-    return (r.data.pool || []).length >= 1 && !/文化路|100號/.test(text);
+    return (r.data.pool || []).length >= 1 && !/100號/.test(text) && text.includes('文化路一段1xx號附近');
   });
   await t('需求者的需求池是空的', async () => {
     const r = parse(await get(victim));

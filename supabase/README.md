@@ -11,6 +11,7 @@
 | `migrations/0001_baseline.sql` | 完整 schema：資料表、RLS 政策、`care_ride_app` 角色、身分與登入函式、`app_state`、接案／司機執行／需求者取消、通知來源證明。由原本的 0001–0008 壓縮而成 |
 | `migrations/0002_supabase_auth.sql` | 身分改由 Supabase Auth：移除自製密碼、`sessions_valid_after` 撤銷 session |
 | `migrations/0003_org_review.sql` | 機構申請與審核：`review_status`（pending／approved／rejected／suspended）、`app.apply_organization`、`app.review_organization`；需求池與接案只開放給已核准機構 |
+| `migrations/0004_pool_fuzzy_address.sql` | 需求池多露出伺服器計算的模糊地址、行政區、距離、車程與報價狀態（來自預約的 `serverComputed`）；完整地址、姓名、電話、經緯度仍不露出 |
 | `rollback/0001_baseline.down.sql` | 回復 baseline（刪除所有資料表與資料；只用在空資料庫或 Staging 重建） |
 | `migrations_archive/` | 原本的 0001–0008，只供查閱，不再套用 |
 | `tests/migrations.test.sh` | 回復檔齊全、上→下→上 schema 相同、司機政策執行計畫、通知觸發器 |
@@ -137,6 +138,17 @@ PGHOST=/tmp/pgrun PGPORT=5433 bash supabase/tests/rls.test.sh
 | `AUTH_SESSION_SECRET` | 速率限制鍵的 HMAC 金鑰（名稱沿用） | 是 |
 | `AUTH_PASSWORD_PEPPER` | 忘記密碼驗證碼的雜湊 pepper | 是 |
 | `PRODUCTION_SUPABASE_PROJECT_REF` | 正式專案 ref，建置檢查用 | 否 |
+| `GOOGLE_MAPS_API_KEY` | Google Maps 金鑰（要開 Geocoding API 與 Routes API）。建立預約或改地址時定位、算距離；沒設定時建立預約會回 503 | 是 |
+
+### 預約的伺服器計算欄位（serverComputed）
+
+建立預約或改了上下車地址時，`v2-state-mutate` 用 Google 定位兩個地址並算路線，把結果
+寫進預約的 `serverComputed`（模糊地址、行政區、經緯度、距離、車程、報價狀態）。前端送來
+的 `serverComputed` 與報價金額一律被覆蓋；地址找不到回 400 `ADDRESS_NOT_FOUND`（`field`
+指出是哪個地址），整批不寫入。地址沒改就沿用原本的結果，不重複呼叫 Google。
+
+平台目前不訂車資，報價固定是 `pricing_pending`、沒有金額。送出前前端會先呼叫
+`/api/v2/geocode-check` 提示地址問題，這支不保存任何東西。
 
 ### 身分驗證（Supabase Auth）
 

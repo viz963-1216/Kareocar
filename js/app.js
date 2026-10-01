@@ -27,6 +27,7 @@ const APP_CONFIG = Object.freeze({
   identityConfirmPasswordResetUrl: '/api/v2/confirm-password-reset',
   identityUpdateAccountUrl: '/api/v2/update-account',
   organizationApplyUrl: '/api/v2/organization-apply',
+  geocodeCheckUrl: '/api/v2/geocode-check',
   organizationReviewUrl: '/api/v2/organization-review',
 });
 
@@ -453,7 +454,7 @@ const AUTHORITATIVE_STATE_COLLECTIONS=Object.freeze([
   'organizations','users','memberships','membershipEvents','drivers','vehicles','careRecipients','careRecipientRelations','careRecipientEvents','careRecipientMergeEvents',
   'bookings','bookingEvents','bookingRevisions','dispatchPlans','trips','tripEvents','issues','systemReports','notifications',
   'benefitRulesets','benefitRulesetEvents','benefitAssessments','benefitAssessmentEvents','benefitLatestEstimateRuns',
-  'serviceProofs','quoteSnapshots','cancellations','telemetryEvents'
+  'serviceProofs','cancellations','telemetryEvents'
 ]);
 // 這三個集合有自己的 typed 資料表，寫入走 identity-write 而不是 state-mutate。
 // users 不在裡面：建立帳號只能透過註冊或建立員工的端點。
@@ -564,7 +565,7 @@ function authoritativeQueueChanges_(changes){
 }
 function clearProductionSensitiveCache_(){
   if(!authoritativeProduction_())return;
-  const clear=['organizations','users','memberships','externalIdentities','membershipEvents','drivers','vehicles','careRecipients','careRecipientRelations','careRecipientEvents','careRecipientMergeEvents','bookings','bookingEvents','bookingRevisions','dispatchPlans','trips','tripEvents','issues','systemReports','notifications','benefitAssessments','benefitAssessmentEvents','serviceProofs','quoteSnapshots','cancellations','telemetryEvents','kpiDaily'];
+  const clear=['organizations','users','memberships','externalIdentities','membershipEvents','drivers','vehicles','careRecipients','careRecipientRelations','careRecipientEvents','careRecipientMergeEvents','bookings','bookingEvents','bookingRevisions','dispatchPlans','trips','tripEvents','issues','systemReports','notifications','benefitAssessments','benefitAssessmentEvents','serviceProofs','cancellations','telemetryEvents','kpiDaily'];
   clear.forEach(k=>{if(Array.isArray(store.state[k]))store.state[k]=[];});store.save();
 }
 authoritativeLoadQueue_();
@@ -1274,8 +1275,15 @@ function bookingPoolProjection(row){
   const needs=[row.aid_need,wheelchairs?`輪椅 ${wheelchairs} 位`:'',companions?`陪同 ${companions} 人`:''].filter(Boolean).join('・')||'一般接送需求';
   return Object.freeze({id:String(row.id),version:Math.max(1,Number(row.version)||1),state:BOOKING_STATE.OPEN,marketExpiresAt:row.market_expires_at||'',
     pickupDate:String(row.pickup_at||''),pickupTime:String(row.pickup_time||''),tripType:String(row.trip_type||'單程'),returnDate:String(row.return_date||''),returnTime:String(row.return_time||''),
-    pickupArea:row.pickup_area||'區域未填',destinationArea:row.destination_area||'區域未填',destinationLabel:row.destination_area||'未填',
+    // 伺服器算好的模糊地址（路段＋門牌去尾）優先；舊資料沒有時退回只到行政區
+    pickupArea:row.pickup_fuzzy_address||row.pickup_area||'區域未填',destinationArea:row.destination_fuzzy_address||row.destination_area||'區域未填',destinationLabel:row.destination_district||row.destination_area||'未填',
+    routeSummary:poolRouteSummary(row.distance_meters,row.duration_seconds),
     needsSummary:needs,serviceConstraints:Object.freeze({requiresAccessibleVehicle:wheelchairs>0,requiresEscort:false,companions}),source:'demand_pool'});
+}
+function poolRouteSummary(distanceMeters,durationSeconds){
+  const km=Number(distanceMeters),sec=Number(durationSeconds);
+  const parts=[Number.isFinite(km)&&distanceMeters!==null?`距離約 ${(km/1000).toFixed(km<10000?1:0)} 公里`:'',Number.isFinite(sec)&&durationSeconds!==null?`車程約 ${Math.max(1,Math.round(sec/60))} 分鐘`:''].filter(Boolean);
+  return parts.join('・');
 }
 function bookingPublicArea(address=''){
   const text=String(address||'').replace(/臺/g,'台').replace(/\s+/g,'');
@@ -4660,9 +4668,10 @@ async function backendJsonPost(url,payload={}){
   const response=await apiFetch(url,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},cache:'no-store',body:JSON.stringify(payload)});
   const result=await response.json().catch(()=>null);
   if(response.status===404)throw backendApiError('Netlify Functions 尚未部署；請部署完整正式專案，不要只替換 index.html','FUNCTION_NOT_DEPLOYED');
-  if(!response.ok||!result?.ok)throw backendApiError(result?.error?.message||`後端請求失敗（HTTP ${response.status}）`,result?.error?.code||`HTTP_${response.status}`);
+  if(!response.ok||!result?.ok)throw Object.assign(backendApiError(result?.error?.message||`後端請求失敗（HTTP ${response.status}）`,result?.error?.code||`HTTP_${response.status}`),result?.error?.field?{field:result.error.field}:{});
   return result;
 }
+window.backendJsonPost=backendJsonPost;
 
 CloudIdentity=Object.freeze({
   hasSession:hasBackendSession,
@@ -5521,7 +5530,7 @@ function demandMarket(){
   return `<div class="page-head"><div><h2>公開需求接案池</h2><p>僅服務端工作角色與平台管理者可查看；需求者本人不會看到此頁。未接案前只顯示必要、去識別化資訊。</p></div><div class="page-actions"><input class="inline-date" id="demandMarketDateInput" type="date" min="${dateKey()}" value="${escapeHTML(demandMarketDate)}" /><button class="btn outline sm" id="clearDemandDateBtn" type="button">全部日期</button></div></div>
   <div class="metric-grid"><div class="metric"><span>公開待接</span><strong>${rows.length}</strong><small>尚未綁定任何組織</small></div><div class="metric"><span>你的身分</span><strong style="font-size:16px">${escapeHTML(ROLE_LABELS[role()]||role()||'-')}</strong><small>${canClaim?'可接案':'僅可查看'}</small></div><div class="metric"><span>接案單位</span><strong style="font-size:14px">${escapeHTML(org?.name||'—')}</strong><small>${canClaim?'接案後鎖定到此組織':'需切換至服務端組織身分'}</small></div><div class="metric"><span>我尚未排車的接案</span><strong>${myClaims.length}</strong><small>可在排車前退回公開池</small></div></div>
   <section class="card"><div class="smart-modal-hint"><strong>接案流程：</strong>需求者送單 → 公開需求池 → 調度人員／負責人依時間與區域接案 → 預約綁定承接組織 → 調度再安排實際司機與車輛。司機不會看到公開需求池；接案前服務端管理角色也不會取得完整聯絡資料。<br><strong>接案評分：</strong>0–100 分只代表目前組織的資源適配度，綜合可執行資源、預估空車、服務區域、既有需求共乘機會與工作量；不會自動搶單或改變併發鎖。<br><strong>有效期限：</strong>一般需求在預定接送前 30 分鐘停止公開接案；若建立時已距接送不足 30 分鐘，則可接案到預定接送時間。</div></section>
-  <div class="list">${rows.map(b=>{const fit=membershipOrgId?Dispatch.marketFitScore(b,membershipOrgId,userId):null,fitClass=fit?.hardBlocked?'bad':fit?.score>=80?'good':fit?.score>=60?'warn':'bad';return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(b.pickupDate)} ${escapeHTML(b.pickupTime)}｜匿名需求</h4><p>${escapeHTML(b.pickupArea)} → ${escapeHTML(b.destinationArea)}<br>行程：${escapeHTML(b.tripType)}${b.tripType==='來回'&&b.returnDate?`・回程 ${escapeHTML(b.returnDate)} ${escapeHTML(b.returnTime)}`:''}<br>目的地概略：${escapeHTML(b.destinationLabel)}<br>${escapeHTML(b.needsSummary)}<br><span class="muted small">接案有效至：${b.marketExpiresAt?escapeHTML(formatDateTime(b.marketExpiresAt)):'依接送時間截止'}</span></p></div><span class="pill blue">公開待接</span></div>${fit?`<div class="market-fit"><div class="market-fit-head"><span class="market-fit-title">目前公司的接案適配</span><span class="market-fit-score ${fitClass}">${fit.hardBlocked?'不建議':`${fit.score}/100・${escapeHTML(fit.grade)}`}</span></div><div class="market-fit-reasons">${fit.reasons.map(r=>`• ${escapeHTML(r)}`).join('<br>')}${fit.breakdown&&Object.keys(fit.breakdown).length?`<br><strong>分數：</strong>資源 ${fit.breakdown.feasibility||0}・空車 ${fit.breakdown.deadhead||0}・區域 ${fit.breakdown.area||0}・共乘 ${fit.breakdown.pooling||0}・負載 ${fit.breakdown.balance||0}`:''}</div></div>`:''}<div class="item-actions">${canClaim?`<button type="button" class="btn primary sm demand-claim-btn" data-booking="${b.id}" data-version="${b.version}" ${fit?.hardBlocked?'disabled title="目前沒有可執行資源組合"':''}>由 ${escapeHTML(org?.name||'目前組織')} 接案</button>`:'<span class="pill gray">目前身分僅可查看</span>'}</div></div>`;}).join('')||'<div class="empty">目前沒有符合條件的公開需求。</div>'}</div>
+  <div class="list">${rows.map(b=>{const fit=membershipOrgId?Dispatch.marketFitScore(b,membershipOrgId,userId):null,fitClass=fit?.hardBlocked?'bad':fit?.score>=80?'good':fit?.score>=60?'warn':'bad';return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(b.pickupDate)} ${escapeHTML(b.pickupTime)}｜匿名需求</h4><p>${escapeHTML(b.pickupArea)} → ${escapeHTML(b.destinationArea)}<br>行程：${escapeHTML(b.tripType)}${b.tripType==='來回'&&b.returnDate?`・回程 ${escapeHTML(b.returnDate)} ${escapeHTML(b.returnTime)}`:''}<br>目的地概略：${escapeHTML(b.destinationLabel)}${b.routeSummary?`<br>${escapeHTML(b.routeSummary)}`:''}<br>${escapeHTML(b.needsSummary)}<br><span class="muted small">接案有效至：${b.marketExpiresAt?escapeHTML(formatDateTime(b.marketExpiresAt)):'依接送時間截止'}</span></p></div><span class="pill blue">公開待接</span></div>${fit?`<div class="market-fit"><div class="market-fit-head"><span class="market-fit-title">目前公司的接案適配</span><span class="market-fit-score ${fitClass}">${fit.hardBlocked?'不建議':`${fit.score}/100・${escapeHTML(fit.grade)}`}</span></div><div class="market-fit-reasons">${fit.reasons.map(r=>`• ${escapeHTML(r)}`).join('<br>')}${fit.breakdown&&Object.keys(fit.breakdown).length?`<br><strong>分數：</strong>資源 ${fit.breakdown.feasibility||0}・空車 ${fit.breakdown.deadhead||0}・區域 ${fit.breakdown.area||0}・共乘 ${fit.breakdown.pooling||0}・負載 ${fit.breakdown.balance||0}`:''}</div></div>`:''}<div class="item-actions">${canClaim?`<button type="button" class="btn primary sm demand-claim-btn" data-booking="${b.id}" data-version="${b.version}" ${fit?.hardBlocked?'disabled title="目前沒有可執行資源組合"':''}>由 ${escapeHTML(org?.name||'目前組織')} 接案</button>`:'<span class="pill gray">目前身分僅可查看</span>'}</div></div>`;}).join('')||'<div class="empty">目前沒有符合條件的公開需求。</div>'}</div>
   ${myClaims.length?`<section class="card" style="margin-top:16px"><div class="card-head"><div><h3>我已接案・尚未排車</h3><p>原接案人可在建立行程前退回公開需求池。</p></div><span class="pill yellow">${myClaims.length} 筆</span></div><div class="list">${myClaims.map(b=>`<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(b.pickupDate)} ${escapeHTML(b.pickupTime)}｜${escapeHTML(b.name)}</h4><p>${bookingLegSummary(b)}<br>${escapeHTML(Booking.needsText(b))}</p></div><span class="pill yellow">已接案</span></div><div class="item-actions"><button type="button" class="btn warning sm booking-release-btn" data-booking="${b.id}">退回公開池</button><button type="button" class="btn outline sm booking-history-btn" data-booking="${b.id}">異動歷史</button></div></div>`).join('')}</div></section>`:''}`;
 }
 
@@ -5609,7 +5618,22 @@ function requesterAccount(){
   const selfCard=selfRecipient?`<section class="card"><div class="card-head"><div><h3>我的接送資料</h3><p>這是你本人的固定接送需求，不是「服務對象管理」功能。</p></div><button type="button" class="btn outline sm" id="editRequesterSelfProfileBtn" data-recipient="${selfRecipient.id}">編輯</button></div><div class="meta">常用上車地址：${escapeHTML(CareRecipient.primaryAddress(selfRecipient)||'未填')}<br>固定需求：${escapeHTML(careRecipientFixedNeedsText(selfRecipient))}</div></section>`:`<section class="card"><div class="card-head"><h3>我的接送資料</h3></div><div class="smart-modal-hint">尚未建立你的接送主檔。第一次送出預約時，系統會依你的帳號身分自動建立本人服務對象主檔。</div></section>`;
   return `<div class="page-head"><div><h2>我的帳戶</h2><p>需求者本人帳號身分與固定接送資料</p></div></div><section class="card"><div class="account-card">${accountAvatar(u,'☺')}<div><h3>${escapeHTML(u?.name||'')}</h3><p>${formatPhone(u?.phone||'')}${u?.email?`・${escapeHTML(u.email)}`:''}</p></div></div></section>${profilePhotoSection(u,'☺')}${identityMembershipCard()}${selfCard}<section class="card"><div class="card-head"><h3>需求者身分</h3></div><div class="meta">角色：${ROLE_LABELS[m?.role]||m?.role}<br>你只能建立與查看自己的接送需求，不會看到「服務對象」或「需求接案」功能。服務端接案後，你也不會因此加入該公司的組織身分。</div></section>${systemReportAccountCard()}${appVersionNote()}<button type="button" class="btn danger block account-logout-btn">登出目前帳號</button>`;
 }
-function submitRequesterBooking(){
+// 送出前先請伺服器檢查兩個地址找不找得到，找不到就標在對應的輸入框。
+// 寫入時伺服器會再算一次，這裡只是讓需求者立即知道。
+async function checkBookingAddresses_(pickupAddress,destination){
+  if(typeof hasBackendSession!=='function'||!hasBackendSession())return {ok:true,skipped:true};
+  try{
+    await window.backendJsonPost(APP_CONFIG.geocodeCheckUrl,{pickupAddress,destination});
+    return {ok:true};
+  }catch(error){
+    if(error?.code==='ADDRESS_NOT_FOUND'||error?.code==='ROUTE_NOT_FOUND'){
+      const field=error.field||(error.code==='ROUTE_NOT_FOUND'?'destination':'pickupAddress');
+      return {ok:false,error:field==='destination'?`目的地找不到，請確認路名與門牌（${error.message}）`:`上車地址找不到，請確認路名與門牌（${error.message}）`};
+    }
+    return {ok:false,error:error?.message||'地址檢查失敗，請稍後再試',toast:true};
+  }
+}
+async function submitRequesterBooking(){
   const editing=editingRequesterBookingId?Booking.get(editingRequesterBookingId):null;
   const permission=editing?'booking.edit_own':'booking.create_own';
   if(!Identity.can(permission)){showToast(editing?'你沒有修改預約權限':'你沒有建立預約權限');return;}
@@ -5618,6 +5642,10 @@ function submitRequesterBooking(){
     ...(roundTrip?[{id:'rqReturnDate',message:'來回預約需要回程日期'},{id:'rqReturnTime',message:'來回預約需要回程時間'}]:[])
   ]))return;
   const input={pickupDate:$('rqDate').value,pickupTime:$('rqTime').value,pickupAddress:$('rqPickup').value.trim(),pickupAccessNote:$('rqPickupAccessNote').value.trim(),destination:$('rqDestination').value.trim(),destinationAccessNote:$('rqDestinationAccessNote').value.trim(),tripType:$('rqTripType').value,returnDate:roundTrip?$('rqReturnDate').value:'',returnTime:roundTrip?$('rqReturnTime').value:'',aidNeed:$('rqAidNeed').value,companions:$('rqCompanions').value,specialNeed:$('rqSpecialNeed').value.trim(),poolingConsent:$('rqPoolingConsent').value,note:$('rqNote').value.trim()};
+  if(!editing||editing.pickupAddress!==input.pickupAddress||editing.destination!==input.destination){
+    const checked=await checkBookingAddresses_(input.pickupAddress,input.destination);
+    if(!checked.ok){if(checked.toast)showToast(checked.error);else routeFieldError(checked.error,[['上車','rqPickup'],['目的地','rqDestination']]);return;}
+  }
   const result=editing?Booking.amendOwn(editing.id,Identity.currentUser()?.id,input,'需求者於 App 修改預約'):Booking.createForRequester(input,Identity.currentUser()?.id);
   if(!result.ok){routeFieldError(result.error,[['日期','rqDate'],['時間','rqTime'],['上車','rqPickup'],['地址','rqPickup'],['目的地','rqDestination'],['回程日期','rqReturnDate'],['回程時間','rqReturnTime'],['共乘','rqPoolingConsent']]);return;}
   if(!editing)clearRequesterDraft();

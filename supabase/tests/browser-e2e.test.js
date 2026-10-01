@@ -352,7 +352,21 @@ async function flowClaim(cdp, baseUrl, tokens) {
     await goView(page, 'demand-market');
     if (await evaluate(page, "!!document.getElementById('clearDemandDateBtn')")) await click(page, '#clearDemandDateBtn');
     await waitFor(page, `!!document.querySelector('.demand-claim-btn[data-booking=${J(id)}]')`, '接案按鈕出現');
-    record(S, '需求池卡片不顯示完整門牌', !(await evaluate(page, "document.body.innerText.includes('188號')")));
+    {
+      let shown = true;
+      try { await waitFor(page, "document.body.innerText.includes('文化路一段1xx號附近')", '需求池卡片出現模糊地址', 8000); }
+      catch (_) { shown = false; }
+      let detail = '';
+      if (!shown) {
+        const loaded = await latestStateLoad(page, 0).catch((e) => ({ error: e.message }));
+        const poolRow = ((loaded && loaded.pool) || []).find((r) => r.id === id);
+        const text = await evaluate(page, "(document.querySelector('main')||document.body).innerText.slice(0,600)");
+        detail = `stateLoads=${page.stateLoads.length} poolRow=${J(poolRow)} text=${J(text)}`;
+      }
+      record(S, '需求池卡片顯示伺服器算的模糊地址（路段＋門牌去尾）', shown, detail);
+      // 等卡片渲染出模糊地址之後再檢查，否則畫面還沒渲染時這項會白白通過
+      record(S, '需求池卡片不顯示完整門牌', shown && !(await evaluate(page, "document.body.innerText.includes('188號')")));
+    }
     await click(page, `.demand-claim-btn[data-booking=${J(id)}]`);
     const claimed = await waitForDb(async () => { const r = await row('bookings', id); return r && r.organization_id === ORG ? r : null; }, '預約綁定組織');
     record(S, '按「接案」後資料庫綁定調度員組織、狀態 claimed',
