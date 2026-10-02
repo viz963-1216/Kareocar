@@ -120,6 +120,9 @@ jobs:
       - name: 通知整合測試（承接、排車、指派、改派、完成各自通知正確收件人；收件人只讀得到自己的）
         run: bash supabase/tests/run-notifications.sh
 
+      - name: 補助規則版本與伺服器試算整合測試（草稿／核准／取代／駁回、只有一個 approved、預約估算記錄版本、前端金額被忽略）
+        run: bash supabase/tests/run-benefit.sh
+
       - name: 身分、session、帳號與 RLS 測試（run-all：session／identity／orgs／identity-write／state／load／wiring／rls）
         run: bash supabase/tests/run-all.sh
 

@@ -30,7 +30,12 @@ const DEDICATED_ENDPOINTS = {
   bookings: '/api/v2/booking-write',
   trips: '/api/v2/trip-write（司機執行用 /api/v2/trip-execute）',
   cancellations: '/api/v2/cancel-booking',
-  notifications: '後端流程（前端不能建立或修改通知）'
+  notifications: '後端流程（前端不能建立或修改通知）',
+  benefitRulesets: '/api/v2/benefit-ruleset',
+  benefitRulesetEvents: '/api/v2/benefit-ruleset',
+  benefitAssessments: '/api/v2/benefit-assess',
+  benefitAssessmentEvents: '/api/v2/benefit-assess',
+  benefitLatestEstimateRuns: '瀏覽器本機（試算預覽不存檔）'
 };
 
 const ALLOWED_COLLECTIONS = new Set([
@@ -38,8 +43,6 @@ const ALLOWED_COLLECTIONS = new Set([
   'careRecipientEvents', 'careRecipientMergeEvents',
   'bookingEvents', 'bookingRevisions', 'dispatchPlans',
   'tripEvents', 'issues', 'systemReports',
-  'benefitRulesets', 'benefitRulesetEvents', 'benefitAssessments',
-  'benefitAssessmentEvents', 'benefitLatestEstimateRuns',
   'serviceProofs', 'telemetryEvents'
 ]);
 

@@ -19,6 +19,7 @@ const { json, handleError } = require('./_http');
 const { withUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
 const session = require('./_session');
+const benefit = require('./_benefit');
 
 const MAX_ROWS = 5000;
 
@@ -42,7 +43,9 @@ exports.handler = async (event) => {
       const rows = (await client.query(
         `select collection, id, data, organization_id, owner_user_id, version, revision, updated_at
            from app_state
-          where not deleted and collection <> 'notifications'
+          where not deleted
+            and collection not in ('notifications', 'benefitRulesets', 'benefitRulesetEvents',
+                                   'benefitAssessments', 'benefitAssessmentEvents', 'benefitLatestEstimateRuns')
           order by updated_at
           limit $1`, [MAX_ROWS])).rows;
 
@@ -74,6 +77,24 @@ exports.handler = async (event) => {
           createdAt: n.created_at, sentAt: n.sent_at, error: null
         });
       }
+
+      // ---- 補助規則版本與試算（#23）：從資料表讀，前端唯讀 ----
+      const rulesets = (await client.query('select * from benefit_rulesets order by created_at')).rows;
+      for (const r of rulesets) {
+        const ruleset = benefit.rulesetFromRow(r);
+        push('benefitRulesets', ruleset);
+        // 前端的版本歷史由資料表的時間欄位組出來
+        for (const [eventType, at, actorUserId] of [['created', r.created_at, r.created_by_user_id],
+          ['approved', r.approved_at, r.approved_by_user_id], ['superseded', r.superseded_at, null],
+          ['rejected', r.rejected_at, r.rejected_by_user_id]]) {
+          if (!at) continue;
+          push('benefitRulesetEvents', { id: `${r.id}:${eventType}`, rulesetId: r.id, eventType, actorUserId,
+            detail: eventType === 'rejected' ? r.review_note || '' : `${r.code} ${r.version}`, createdAt: at });
+        }
+      }
+      const assessments = (await client.query(
+        `select data, created_at from benefit_assessments where source = 'server' order by created_at desc limit 500`)).rows;
+      for (const a of assessments) push('benefitAssessments', { ...(a.data || {}), createdAt: a.created_at });
 
       // ---- 身分：從 typed 資料表轉成前端形狀 ----
       const users = (await client.query(
