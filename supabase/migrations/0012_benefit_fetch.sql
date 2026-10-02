@@ -24,8 +24,14 @@ create table benefit_source_fetches (
 );
 create index benefit_source_fetches_run_idx on benefit_source_fetches (run_id);
 alter table benefit_source_fetches enable row level security;
-create policy benefit_source_fetches_read on benefit_source_fetches for select using (app.is_super_admin());
+-- 平台管理者，以及系統排程（沒有登入者）判斷附表是否改版時讀得到
+create policy benefit_source_fetches_read on benefit_source_fetches for select
+  using (app.is_super_admin() or app.current_user_id() is null);
 grant select on benefit_source_fetches to care_ride_app;
+
+-- 規則版本是公開資訊；系統排程（沒有登入者）也要讀得到目前核准的版本來比對差異
+drop policy if exists benefit_rulesets_read on benefit_rulesets;
+create policy benefit_rulesets_read on benefit_rulesets for select using (true);
 
 alter table benefit_rulesets
   add column origin       text not null default 'manual',

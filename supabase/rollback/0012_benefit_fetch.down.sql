@@ -40,3 +40,5 @@ alter table benefit_rulesets
   drop column source_hash,
   drop column origin;
 drop table if exists benefit_source_fetches;
+drop policy if exists benefit_rulesets_read on benefit_rulesets;
+create policy benefit_rulesets_read on benefit_rulesets for select using (app.current_user_id() is not null);
