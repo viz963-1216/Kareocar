@@ -1,160 +1,139 @@
-# 安心接送 V12.26.1｜正式上線部署說明
+# 部署與上線
 
-> V12.26.0 移除全部 demo 程式碼，並修正 7 項安全問題（詳見 [SECURITY_HARDENING.md](SECURITY_HARDENING.md)）。
->
-> V12.26.1 另外改了資料存放位置（密碼憑證改存工作表、暫時狀態改用 CacheService），部署步驟見 [MIGRATION_12_26_1.md](MIGRATION_12_26_1.md)。
->
-> **本輪改了前後端契約，必須整包部署**：`/identity/update-account` 新增 `currentPassword`、gateway envelope 新增 `clientIp`。只替換 `index.html` 會導致帳號更新失敗。
+系統架構見 [README.md](README.md)；資料庫、API 與業務規則見 [supabase/README.md](supabase/README.md)。
 
-## 1. Apps Script（已移除）
+依 [CLAUDE.md](CLAUDE.md) 的授權邊界：正式資料庫寫入、正式部署、安裝軟體都要另外取得同意；
+金鑰與密碼只在 Netlify、Supabase、GitHub 的設定畫面或本機終端機的隱藏輸入裡處理，不貼進
+對話、不進 git。
 
-Apps Script、Google Sheets 與社群登入（Google／Apple／Facebook）已從系統移除
-（#15），身分與資料全部在 Postgres。不要再部署任何 `.gs` 檔。Netlify 上的
-`APPS_SCRIPT_WEB_APP_URL`、`APPS_SCRIPT_GATEWAY_SECRET`、`GOOGLE_CLIENT_ID`
-已經沒有程式讀取，可以刪除。
+## 1. 部署流程
 
-## 2. Netlify：整包部署
+### 前端與 API（Netlify）
 
-環境變數見 [supabase/README.md](supabase/README.md)（`DATABASE_URL`、
-`SUPABASE_URL`、`SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_ROLE_KEY`、`AUTH_SESSION_SECRET`、
-`AUTH_PASSWORD_PEPPER`、`PRODUCTION_SUPABASE_PROJECT_REF` 等）。`BOOTSTRAP_TOKEN` 與
-`AUTH_PBKDF2_ITERATIONS` 已不再使用，可以刪除；超級管理者的建立方式見 supabase/README.md。部署內容：`index.html`、`_headers`、`netlify.toml`、`netlify/functions/`。
+- 合併到 `main` 時，Netlify 依 `netlify.toml` 建置並部署：靜態檔（`index.html`、`js/`、`css/`、
+  `_headers`）、`netlify/functions/` 的 API 與排程。
+- PR 會產生 Deploy Preview，連的是 **Staging** 資料庫。
+- 建置時 `tools/check-db-config.js` 只解析連線設定（不連線）：非 production 的建置若指向正式
+  Supabase 專案就失敗。
+- 前端、API、migration 必須一起更新：只換其中一個會造成前後端契約不一致。所以 migration 要先
+  套用（見下一節），再讓 API 上線。
 
-## 3. Health Gate
+### 資料庫 migration（GitHub Actions）
 
-部署後開啟：
+`.github/workflows/deploy-migrations.yml`，執行器 `tools/apply-migrations.sh`：
 
-`https://你的正式網域/api/health`
+1. 合併到 main、且動到 `supabase/migrations/` 時，先在拋棄式 Postgres 上驗證每支 migration 的
+   「上 → 下 → 上」與執行器。
+2. 自動套用到 **Staging**（repo secret `STAGING_MIGRATION_DATABASE_URL`）。
+3. **Production 只在人工觸發時套用**：GitHub → Actions → Deploy migrations → Run workflow，
+   `target` 選 `production`、`confirm` 輸入 `apply-production`
+   （repo secret `PRODUCTION_MIGRATION_DATABASE_URL`）。先在 Staging 確認沒問題再觸發。
 
-正式開放使用者前至少要確認：
+- 連線用 Supabase 的 **Session pooler**（port 5432，`postgres.<ref>` 使用者）：GitHub Actions
+  沒有 IPv6，連不到直連位址。
+- 紀錄在 `ops.schema_migrations`。每支 migration 與它的紀錄在同一個交易，設 `lock_timeout`，
+  取不到鎖就整筆回滾，可以直接重試。已套用的檔案被改寫時，執行器以 checksum 發現並拒絕。
+- 新增 migration：用下一個編號，附 `supabase/rollback/<同名>.down.sql`。正式環境有資料之後，
+  出錯以新的 migration 往前修，不跑回復檔。
+- 本機預覽待套用清單：`MIGRATION_DATABASE_URL=… bash tools/apply-migrations.sh --dry-run`。
 
-- `ok: true`
-- `spreadsheetReady: true`
-- `appStateReady: true`
-- `rowAuthorizationVersion: "12.25.79"`
-- `authConfigured: true`
-- `googleClientConfigured: true`
-- `passwordResetProviderConfigured: true`（若要開放忘記密碼）
+### 排程（Netlify Scheduled Functions）
 
-如果 SMS 尚未配置，忘記密碼會明確回 `RESET_PROVIDER_UNAVAILABLE`，不會顯示假成功。
+| Function | 頻率 | 做什麼 |
+|---|---|---|
+| `retention-anonymize` | 每日 | 行程日期超過保存期限的預約與行程匿名化，每筆寫稽核紀錄 |
+| `benefit-rules-fetch` | 每日 | 抓長照交通補助公告；內容有變就產生規則草稿；失敗時告警，現行版本不變 |
 
-## 4. V12.25.79 P0 驗收流程
+兩者也可以由平台管理者在畫面上手動執行（「組織管理 → 個資保存與條款」、「補助規則與資格 →
+立即抓取公告」）。
 
-### A. 密碼與 Session
+## 2. 環境變數與設定
 
-1. 正常帳密登入成功。
-2. 連續輸入錯誤密碼：伺服器端會累計；達門檻後 API 本身也會鎖定，不能繞過前端 CAPTCHA。
-3. 忘記密碼取得 OTP → 真實 SMS webhook 收到簡訊。
-4. 使用錯 OTP 必須失敗。
-5. 正確 OTP + 新密碼成功後：舊密碼失效，舊 Session Token 也失效。
-6. 超級管理者在「我的帳戶」改密碼後，舊 Session 同樣失效並取得新 Session。
-7. 檢查 Google Sheet `應用狀態`：任何 `users` JSON 都不得含 `password`、`passwordHash`、credential、access token、refresh token、id token。
+### Netlify（每個 deploy context 各自設定）
 
-### B. Server ACK
+| 變數 | 用途 | 機密 |
+|---|---|---|
+| `DATABASE_URL` | `care_ride_app` 角色的 Transaction pooler 連線字串（不能用 `postgres`） | 是 |
+| `SUPABASE_URL` | `https://<ref>.supabase.co` | 否 |
+| `SUPABASE_ANON_KEY` | 公開金鑰，密碼登入與換 token 用 | 否 |
+| `SUPABASE_SERVICE_ROLE_KEY` | 秘密金鑰，建立、更新、刪除登入帳號用 | **是** |
+| `SUPABASE_JWT_SECRET` | 選用；舊版 HS256 專案才需要，新版自動用 JWKS | 是 |
+| `AUTH_SESSION_SECRET` | 速率限制鍵的 HMAC 金鑰 | 是 |
+| `AUTH_PASSWORD_PEPPER` | 忘記密碼驗證碼的雜湊 pepper | 是 |
+| `PRODUCTION_SUPABASE_PROJECT_REF` | 正式專案 ref；所有 context 設同一個值，建置檢查用 | 否 |
+| `GOOGLE_MAPS_API_KEY` | Geocoding API 與 Routes API；沒設定時建立預約會失敗 | 是 |
+| `PASSWORD_RESET_SMS_WEBHOOK_URL`、`PASSWORD_RESET_SMS_WEBHOOK_SECRET` | 忘記密碼簡訊（#19 換成台灣廠商） | 是 |
 
-1. 建立／修改組織、車輛、服務對象、預約、派車、Trip 等。
-2. Network 正常時：前端在 server 回覆前只可顯示「正在寫入」，取得 ACK 後才顯示完成。
-3. 模擬 `/api/state-mutate` 失敗：畫面不得宣告成功；本機 optimistic change 必須 rollback 或明確保持未確認狀態。
-4. 離線時不得把 LocalStorage 當成正式寫入成功。
+### Supabase
 
-### C. Trip revision / 多裝置
+- 每個專案都要給 `care_ride_app` 設密碼（`alter role care_ride_app with password …`）。
+- **Authentication → Sign In / Providers → Phone** 啟用。Staging 用 Twilio 假值即可（手機＋密碼
+  登入不發簡訊）；**正式專案不可用假值**，等 #19 接上真的簡訊廠商。
+- 超級管理者的建立方式見 supabase/README.md 的「身分驗證」。
 
-1. 裝置 A 取得 Trip revision 1。
-2. 裝置 B 也取得 revision 1。
-3. A 更新成 revision 2 成功。
-4. B 再以 `expectedRevision:1` 寫入，後端必須回 HTTP 409 / `TRIP_CONFLICT`。
-5. B 重新同步後才能再次修改。
-6. Trip offline outbox 只有取得 Google Sheet authoritative ACK 後才能標示 synced；正式模式不可出現 `prototype_local_ack`。
+### GitHub
 
-### D. Row Authorization / Booking
+| 名稱 | 種類 | 用途 |
+|---|---|---|
+| `STAGING_MIGRATION_DATABASE_URL` | secret | 套用 migration 到 Staging |
+| `PRODUCTION_MIGRATION_DATABASE_URL` | secret | 套用 migration 到 Production（人工觸發） |
+| `STAGING_URL` | variable，選用 | 每週 ZAP 排程掃描的網址；PR 的掃描不需要 |
 
-延續 V12.25.78 的既有驗收：
+### 平台設定（上線後在畫面上設定）
 
-- requester 僅本人資料
-- driver 僅本人被指派行程與履約必要資料
-- owner / dispatcher 僅自己組織資料
-- super_admin 跨組織
-- 公開需求接案前 server-side 去識別
-- 公開需求競爭接案第二家必須收到 409 `BOOKING_CONFLICT`
+- **條款版本**：律師完成個資告知與服務條款後，平台管理者在「組織管理 → 個資保存與條款」填入
+  版本與網址。版本空白時不要求同意；發布後沒同意最新版本的使用者不能建立預約。
+- **保存期限**：預設 5 年，同一個畫面可以改（1–30 年）。
+- **補助規則**：第一次排程抓取會產生草稿，平台管理者核對自付比例（附表五）後核准，補助估算
+  才會開始有金額。
 
-## 5. 密碼安全模型
+## 3. 部署後確認
 
-正式密碼不再由 AppState `users` JSON 保存。
+1. `GET https://<網域>/api/health` 回 HTTP 200，內容 `ok: true`、`configured: true`、
+   `database: true`。缺任何必要變數或連不到資料庫時回 503。
+2. 以 Staging 跑一次冒煙測試：`node tools/smoke-supabase-auth.js`（註冊、登入、更新 session、
+   登出、撤銷）。
+3. 用一般帳號走一次：註冊 → 同意條款（若已發布）→ 建立預約 → 機構接案 → 排車 → 司機執行到
+   完成 → 需求者看到通知。
+4. GitHub Actions 的「資安掃描」在最新的 main 上是綠的。
 
-- Google Sheet `使用者`：身分與聯絡欄位
-- Apps Script Script Properties：salt + HMAC password credential
-- Session：signed token + session version
-- Password reset：OTP hash + TTL + attempt count
-- AppState frontend + backend：雙重 sanitize password / credential / token 欄位
+## 上線檢查清單
 
-即使前端誤把敏感欄位帶到 `/api/state-mutate`，後端 `AppStateApi.gs` 也會再次移除。
+### 需要外部帳號或人工決定
 
-## 6. 仍屬外部部署條件，不是程式碼 P0
+- [ ] **律師文件**：個資告知、服務條款完成；在平台設定填入版本與網址
+- [ ] **簡訊廠商**（#19）：選定台灣廠商並開通；Supabase 正式專案的 Phone provider 改用真的廠商；
+      忘記密碼的簡訊測試成功
+- [ ] **監控與告警**（#17）：Sentry、`/api/health` 存活檢查、Email 與 Discord 告警（`_alerts.js`
+      目前只寫稽核紀錄與 Function 記錄）
+- [ ] **Google Maps**：正式與 Staging 的 `GOOGLE_MAPS_API_KEY`，在 Google Cloud 限制可用的 API
+      與用量上限
+- [ ] **Supabase Pro 與 PITR**（#28）：正式專案開啟 point-in-time recovery，在 Staging 做一次還原
+      演練並把步驟寫成文件
+- [ ] **Netlify 方案**：正式上線前確認團隊方案與額度（目前降為免費方案時合併不會部署）
 
-- 必須實際提供可用的 HTTPS SMS webhook，否則正式忘記密碼會安全地拒絕服務。
-- Apple / Facebook 若未完成 server-side token verification，正式版仍不應開放；Google + 手機密碼可先正式使用。
-- 上線最後仍需在真正 Netlify domain → Netlify Function → Apps Script `/exec` → 正式 Google Sheet → 真 SMS provider 跑一次 production E2E。
+### 正式資料庫
 
-本封版包的本地自動化驗證不等同於已部署 production E2E。
+- [ ] 目前的正式 Supabase 是早期以 SQL Editor 手動建立的，沒有 migration 紀錄，執行器會拒絕
+      （exit 3）。上線前需清空 public 與 app schema 後，以人工觸發套用全部 migration。
+      **這是正式資料庫寫入，需另外取得同意。**
+- [ ] 套用後在 SQL Editor 給 `care_ride_app` 設密碼，更新 Netlify production 的 `DATABASE_URL`
+- [ ] 建立平台超級管理者帳號
 
-## 7. 資料庫 schema：baseline migration
+### 營運設定
 
-`supabase/migrations/` 目前只有一支 `0001_baseline.sql`，由原本的 0001–0008 壓縮而成
-（原檔在 `supabase/migrations_archive/`，只供查閱，不再套用）。每支 migration 都附
-`supabase/rollback/<名稱>.down.sql`，隔離 CI 的 `migrations.test.sh` 驗證「上 → 下 → 上」
-後 schema 完全相同。
+- [ ] 第一家機構經「機構申請 → 平台審核」上線（試營運）
+- [ ] 第一次補助規則草稿核對附表五並核准
+- [ ] 確認保存期限（預設 5 年）符合律師意見
+- [ ] 選擇性：設定 `STAGING_URL` 讓 ZAP 每週掃描；Netlify 的 Deploy Previews 若不需要協作工具列
+      可關閉（ZAP 對它的三項低風險提示會消失）
 
-- **新增 migration**：一律新增下一個編號（`0003_…`），附 `supabase/rollback/<同名>.down.sql`。
-  已套用的檔案不能改寫——執行器會以 checksum 發現並拒絕。
-- **部署流程**（`.github/workflows/deploy-migrations.yml`，執行器 `tools/apply-migrations.sh`）：
-  1. 合併到 main、且動到 migration 時，先在拋棄式 Postgres 上驗證往返與執行器
-  2. 自動套用到 **Staging**（repo secret `STAGING_MIGRATION_DATABASE_URL`）
-  3. **Production** 只在人工觸發時套用：GitHub → Actions → Deploy migrations → Run workflow，
-     `target` 選 `production`、`confirm` 輸入 `apply-production`
-     （repo secret `PRODUCTION_MIGRATION_DATABASE_URL`）。先在 Staging 確認沒問題再觸發。
-  - 連線用 Supabase 的 **Session pooler**（port 5432，`postgres.<ref>` 使用者）：GitHub
-    Actions 沒有 IPv6，連不到免費方案的直連位址。
-  - 紀錄在 `ops.schema_migrations`。每支 migration 與它的紀錄在同一個交易，設
-    `lock_timeout`，取不到鎖就整筆回滾，可以直接重試。
-  - 本機預覽待套用清單：`MIGRATION_DATABASE_URL=… bash tools/apply-migrations.sh --dry-run`。
-- **Staging 與預覽環境**：Netlify 的 Deploy Previews、Branch deploys 的 `DATABASE_URL` 指向
-  Staging（`care_ride_app.<staging ref>`），正式站指向 Production。建置檢查（#12）會擋下
-  非 production 環境連到正式專案。
-- **正式資料庫第一次改用這個流程**：目前的正式 Supabase 是早期以 SQL Editor 手動貼上
-  0001–0008 建立的，沒有 migration 紀錄，裡面只有測試資料。執行器會拒絕套用到這種資料庫
-  （exit 3），必須先人工清空 public 與 app schema 的物件再觸發。這是正式資料庫寫入，
-  執行前需另行取得同意（見 [CLAUDE.md](CLAUDE.md) 授權邊界）。
-- **回復**：`0001_baseline.down.sql` 會刪除所有資料表與資料，只用在空資料庫或 Staging 重建；
-  正式環境有資料之後，改以新的 migration 往前修。
+### 已知、接受的限制
 
-### 通知來源與可見範圍
-
-| 來源 | 產生位置 | 寫入 | 收件人讀得到 |
-|---|---|---|---|
-| 需求者取消（trip_cancelled、booking_cancelled） | 後端 `app.cancel_app_state_booking` | 是，並寫入來源證明 `app.notification_provenance` | 是（收件人讀取政策比對來源證明上的收件人） |
-| 派車建立、行程完成（含服務證明補齊、異常結案自動完成）、中斷、恢復、終止、交接（三種）、路線重排、資源重派 | 前端 `Notification.queue`，經 state-mutate | 是，與舊版相同；沒有來源證明，自帶任何欄位（`source`、`serverCreated`、`created_at`）都不影響 | 否，與舊版相同（只有寫入者本人與行程組織營運方讀得到） |
-
-- 用戶端寫入、收件人是別人的通知，收件人讀不到（隔離 CI 業務流程測試情境 4 實測）。
-- **尚未完成的遷移範圍**：要讓前端流程的通知也被收件人讀到，必須把這 11 處改由後端
-  流程在對應交易內建立（派車建立、行程完成、中斷、恢復、終止、交接、路線重排、
-  資源重派）。本輪未做；現況與舊版相同，沒有退化。
-
-
-### 福利額度（原有的後端缺口，列為待辦與產品決策；本輪不修）
-
-- **現況（程式靜態推導）**：福利核定 `benefitAuthorizations`、帳本 `benefitLedger`、
-  核定事件 `benefitAuthorizationEvents` 沒有資料表、RLS 或端點，不在前端同步集合，
-  state-mutate 也不接受；前端不再把整份資料存進 localStorage。扣額（建立預約）、釋放
-  （修改、取消、過期、不受理）、結算（行程完成）、重開（正式修正）都只在當次頁面的
-  記憶體裡計算，重新整理後消失。這是 PR #7 之前就存在的狀況。
-- **本 PR 只修正**：取消改為非同步後，福利包裝沒有等待結果、不會呼叫本機釋放。改為
-  `await` 後恢復呼叫，但**結果仍不持久化**，不能視為福利額度已修好。「成功只釋放一次、
-  重試不重複、失敗不釋放、重新整理後一致」均未驗證，最後一項在現況下必然不成立。
-- **最小修正範圍**：
-  1. 資料表 `benefit_authorizations`、`benefit_ledger`（只增不改，唯一鍵防同一預約
-     重複扣額或釋放）與 RLS。
-  2. 後端流程在同一交易內處理：建立預約扣額、`app.cancel_app_state_booking` 以淨額
-     釋放（淨額為 0 不寫）、行程完成結算、正式修正重開；不接受前端送來的餘額或金額。
-  3. state-load 回傳核定與帳本，前端改讀伺服器，不再以本機試算值當餘額。
-  4. 產品決定：核定資料由誰建立、是否已有正式核定資料需要匯入。
-  5. 對應的整合與瀏覽器測試。
+- **預約與行程仍存在 `app_state`（jsonb）**：寫入已改走專用端點並由伺服器檢查，搬到正式資料表
+  排在上線後（#43）。
+- **平台使用費**：向機構依筆數收費的功能排在上線後（#40）。平台不訂車資，報價固定是「由雙方議定」。
+- **給付辦法附表（自付比例）不自動解析**：附表是 PDF，伺服器只偵測改版；改版時草稿會要求人工核對。
+- **畫面上仍有 `style="…"` 屬性**：CSP 保留 `style-src-attr 'unsafe-inline'`；內嵌 `<style>`
+  與 script 都已禁止。
+- **沒有外部滲透測試**：資安以內部的 RLS 測試、依賴套件掃描與 ZAP baseline 為主。

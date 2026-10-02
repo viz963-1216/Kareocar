@@ -1,8 +1,7 @@
-# Supabase — schema 與 RLS
+# Supabase：schema、RLS、API 與業務規則
 
-原本 Google Sheet 的 22 張工作表在 Postgres 的對應版本，加上取代手寫授權的 Row Level Security 政策。
-
-**目前狀態**：schema 與 RLS 完成（31 項測試），「登入 + 讀預約」已接線並通過 18 項端到端測試。其餘路徑仍走 Apps Script，兩套並存，前端可逐條切換。
+Postgres（Supabase）是唯一的真實資料來源。這份文件說明 migration、`care_ride_app` 連線角色、
+API 端點與各項業務規則。部署流程與上線檢查清單見 [DEPLOYMENT.md](../DEPLOYMENT.md)。
 
 ## 檔案
 
@@ -11,26 +10,27 @@
 | `migrations/0001_baseline.sql` | 完整 schema：資料表、RLS 政策、`care_ride_app` 角色、身分與登入函式、`app_state`、接案／司機執行／需求者取消、通知來源證明。由原本的 0001–0008 壓縮而成 |
 | `migrations/0002_supabase_auth.sql` | 身分改由 Supabase Auth：移除自製密碼、`sessions_valid_after` 撤銷 session |
 | `migrations/0003_org_review.sql` | 機構申請與審核：`review_status`（pending／approved／rejected／suspended）、`app.apply_organization`、`app.review_organization`；需求池與接案只開放給已核准機構 |
-| `migrations/0012_benefit_fetch.sql` | 福利公告抓取紀錄 `benefit_source_fetches`、自動抓取草稿（origin、內容雜湊、差異）；自動草稿不能手動修改 |
-| `migrations/0011_account_deletion.sql` | 刪除帳號與個資申請 `deletion_requests`（pending／cancelled／rejected／completed）；平台管理者核准時在同一交易內匿名化與停用帳號 |
-| `migrations/0010_consent_retention.sql` | 平台設定 `app_settings`（保存期限、條款版本）、同意紀錄 `consent_records`、到期資料匿名化 `app.anonymize_expired_records` |
-| `migrations/0009_benefit_ledger.sql` | 正式核定額度 `benefit_authorizations` 與僅追加帳本 `benefit_ledger`：建立預約保留、取消／不受理／過期釋放、完成結算、修正回轉；只能經受控函式寫入 |
-| `migrations/0008_benefit_rulesets.sql` | 補助規則版本 `benefit_rulesets`（draft／approved／superseded／rejected，同一 program code 只有一個 approved）與伺服器試算；只能經受控函式寫入 |
-| `migrations/0007_server_notifications.sql` | 通知改存 `notifications` 資料表，只有後端函式（`app.enqueue_notification`、`app.notify_booking_requester`）寫得進去；收件人只讀得到自己的通知 |
-| `migrations/0006_trip_resource_scope.sql` | `app.trip_resource_scope`：行程寫入時查司機、車輛、預約歸屬哪個機構（只回傳歸屬與狀態） |
-| `migrations/0005_booking_access_revoke.sql` | 退回公開池、不受理、重大修改需重新承接、需求者取消後，原承接機構立即失去預約存取（`app.revoke_booking_organization`）；取消的行程移除乘客個資；需求者只看得到承接單位名稱（`app.my_booking_service_organizations`） |
 | `migrations/0004_pool_fuzzy_address.sql` | 需求池多露出伺服器計算的模糊地址、行政區、距離、車程與報價狀態（來自預約的 `serverComputed`）；完整地址、姓名、電話、經緯度仍不露出 |
-| `rollback/0001_baseline.down.sql` | 回復 baseline（刪除所有資料表與資料；只用在空資料庫或 Staging 重建） |
-| `migrations_archive/` | 原本的 0001–0008，只供查閱，不再套用 |
-| `tests/migrations.test.sh` | 回復檔齊全、上→下→上 schema 相同、司機政策執行計畫、通知觸發器 |
-| `tests/seed.sql` | 測試資料 |
-| `tests/rls.test.sh` | 31 項 RLS 驗證，含攻擊模擬 |
-| `tests/wiring.test.js` | 18 項端到端測試：Function 實際程式碼跑在真實 Postgres 上 |
-| `tests/pg-psql-shim.js` | 測試用的 pg 替身（以 psql 當傳輸層）；正式環境不使用 |
+| `migrations/0005_booking_access_revoke.sql` | 退回公開池、不受理、重大修改需重新承接、需求者取消後，原承接機構立即失去預約存取（`app.revoke_booking_organization`）；取消的行程移除乘客個資；需求者只看得到承接單位名稱（`app.my_booking_service_organizations`） |
+| `migrations/0006_trip_resource_scope.sql` | `app.trip_resource_scope`：行程寫入時查司機、車輛、預約歸屬哪個機構（只回傳歸屬與狀態） |
+| `migrations/0007_server_notifications.sql` | 通知改存 `notifications` 資料表，只有後端函式（`app.enqueue_notification`、`app.notify_booking_requester`）寫得進去；收件人只讀得到自己的通知 |
+| `migrations/0008_benefit_rulesets.sql` | 補助規則版本 `benefit_rulesets`（draft／approved／superseded／rejected，同一 program code 只有一個 approved）與伺服器試算；只能經受控函式寫入 |
+| `migrations/0009_benefit_ledger.sql` | 正式核定額度 `benefit_authorizations` 與僅追加帳本 `benefit_ledger`：建立預約保留、取消／不受理／過期釋放、完成結算、修正回轉；只能經受控函式寫入 |
+| `migrations/0010_consent_retention.sql` | 平台設定 `app_settings`（保存期限、條款版本）、同意紀錄 `consent_records`、到期資料匿名化 `app.anonymize_expired_records` |
+| `migrations/0011_account_deletion.sql` | 刪除帳號與個資申請 `deletion_requests`（pending／cancelled／rejected／completed）；平台管理者核准時在同一交易內匿名化與停用帳號 |
+| `migrations/0012_benefit_fetch.sql` | 福利公告抓取紀錄 `benefit_source_fetches`、自動抓取草稿（origin、內容雜湊、差異）；自動草稿不能手動修改 |
+| `rollback/<名稱>.down.sql` | 每支 migration 的回復檔（`0001` 的回復會刪除所有資料，只用在空資料庫或 Staging 重建） |
+| `migrations_archive/` | 壓縮成 baseline 之前的 0001–0008，只供查閱，不再套用 |
+| `seed-test-org.sql` | 建立測試機構與負責人的一次性腳本（`tests/seed-test-org.test.sh` 驗證） |
+| `tests/run-all.sh` | session／身分／機構／state／載入／接線／RLS 測試 |
+| `tests/run-*.sh` | 各主題的整合測試（業務流程、機構審核、預約、行程存取、通知、補助、補助抓取、隱私、瀏覽器端對端），每支建立自己的拋棄式資料庫 |
+| `tests/migrations.test.sh`、`tests/apply-migrations.test.sh` | 回復檔齊全、上→下→上 schema 相同；migration 執行器 |
+| `tests/_auth-fixture.js` | 測試用的假外部服務：Supabase Auth、Google Maps |
+| `tests/seed.sql`、`tests/pg-psql-shim.js` | 舊測試的資料與 pg 替身（以 psql 當傳輸層）；正式環境不使用 |
 
 ## 套用到你的 Supabase
 
-在空的資料庫依檔名順序套用 `migrations/*.sql`（目前只有 `0001_baseline.sql`）。正式與 Staging 由 migration 的 CI 部署流程套用；手動在 **SQL Editor** 貼上只用在一次性的空資料庫。
+在空的資料庫依檔名順序套用 `migrations/*.sql`。正式與 Staging 由 migration 的 CI 部署流程套用；手動在 **SQL Editor** 貼上只用在一次性的空資料庫。
 
 ### 接著一定要做的兩件事
 
@@ -69,7 +69,7 @@ postgresql://care_ride_app.abcdefghijklmnop:<你設的密碼>@aws-0-ap-southeast
 
 ## ⚠️ 為什麼一定要換掉 postgres
 
-Postgres 的資料表擁有者**預設會繞過所有 RLS 政策**。用 `postgres` 連線的話，上面 55 條政策一條都不會生效——每個使用者都看得到全部資料，而且不會有任何錯誤訊息告訴你。
+Postgres 的資料表擁有者**預設會繞過所有 RLS 政策**。用 `postgres` 連線的話，所有 RLS 政策都不會生效——每個使用者都看得到全部資料，而且不會有任何錯誤訊息告訴你。
 
 測試裡有一項就是在證明這件事：
 
@@ -94,7 +94,7 @@ await client.query('COMMIT');
 
 第三個參數 `true` 很重要：它讓設定隨交易結束而消失。用 `false` 的話，在連線池裡這個身分會殘留到下一個借到同一條連線的請求上——那是一個很難察覺的跨使用者資料外洩。
 
-身分驗證本身維持現在的手機＋密碼流程（`AuthCore.gs` 那套已經硬化並有 65 項測試），Netlify Function 驗證通過後把 user id 放進上面這個設定即可。
+身分驗證由 Supabase Auth 負責（見下方「身分驗證」），Netlify Function 驗證 access token 後把 user id 放進上面這個設定（`_db.js` 的 `withUser`）。
 
 ## 本機測試
 
@@ -115,145 +115,56 @@ PGHOST=/tmp/pgrun PGPORT=5433 bash supabase/tests/rls.test.sh
 
 ## 設計上的幾個決定
 
-**欄位改用英文 snake_case。** 前端的資料模型（`bookings`、`requestedByUserId`…）本來就是英文，只有 Sheet 那層是中文，所以這樣反而少一層翻譯。
+**欄位用英文 snake_case。** 前端的資料模型（`bookings`、`requestedByUserId`…）本來就是英文。
 
-**每張主要表有一個 `data jsonb`。** 原本 AppState 的 JSON 比正規化的 Sheet 欄位豐富（`legs`、`commercialSnapshots`、`cancellation`…），這些放進 `data`；需要查詢或授權用到的才升格成正式欄位。不會掉資料。
+**預約、行程等營運資料暫存在 `app_state`（jsonb）。** 每列一筆前端模型，`organization_id`、
+`owner_user_id` 等授權用欄位由觸發器 `app.app_state_force_scope` 決定，呼叫端送什麼都不採用；
+版本控制交給 `version`／`revision` 欄位與交易。身分、機構、通知、補助、同意等已經是正式資料表；
+預約與行程搬到正式資料表見 #43。
 
-**「應用狀態」覆蓋層不再需要。** 它存在是因為 Sheet 沒辦法好好更新一列。Postgres 直接 UPDATE 就好，版本控制交給 `version` / `revision` 欄位加上真正的交易。這會讓 `AppStateApi.gs` 那 400 多行在接線完成後整個消失。
+**公開需求池是 view。** `app_state_booking_pool` 從一開始就只選得到行政區、模糊地址、距離、時間
+等欄位，資料庫層面就沒有門牌與姓名可以外洩；只開放給已核准機構的成員。
 
-**公開需求池改成 view。** 原本是把整列讀出來再用程式把姓名電話清掉——那是「先拿到再遮蔽」。現在 `public_booking_pool` 這個 view 從一開始就只選得到已模糊化的欄位，資料庫層面就沒有門牌號碼可以外洩。
+**承接用 `app.claim_app_state_booking()`。** `SELECT … FOR UPDATE` 讓資料庫處理競爭，兩個調度員同
+搶一張單時，後到的一定會收到「已被其他服務單位接走」。
 
-**承接改用 `app.claim_booking()`。** `SELECT ... FOR UPDATE` 讓資料庫處理競爭，取代原本的「版本號比對 + 全域鎖」。兩個調度員同搶一張單時，後到的一定會收到「已被其他服務單位接走」。
+**受控寫入用 security definer 函式。** 通知、補助、同意、刪除申請等資料表，`care_ride_app` 只有
+SELECT；寫入只經檢查身分與狀態的函式，連有漏洞的 handler 也繞不過。
 
-## 已接線的路徑
+## API 端點
 
-| 路由 | Function | 取代 |
-|---|---|---|
-| `POST /api/v2/password-login` | `v2-password-login.js` | Apps Script 的 `passwordLogin_` |
-| `GET /api/v2/bookings` | `v2-bookings.js` | `databaseFilterRows_` 對 bookings 的那一段 |
+全部在 `netlify/functions/`，路由在 `netlify.toml`。除了 `health` 與登入、註冊、忘記密碼以外都要登入。
 
-`?pool=1` 讀公開需求池。舊的 `/api/*` 路由完全沒動，兩套可以並存。
+| 路由 | 用途 |
+|---|---|
+| `GET /api/health` | 設定與資料庫連線狀態 |
+| `POST /api/v2/password-login`、`logout`、`session` | 登入、登出、換新 token |
+| `POST /api/v2/register-requester` | 需求者註冊 |
+| `POST /api/v2/request-password-reset`、`confirm-password-reset` | 忘記密碼 |
+| `POST /api/v2/update-account` | 改密碼、手機 |
+| `POST /api/v2/create-staff` | 機構負責人建立人員帳號 |
+| `GET /api/v2/state-load` | 載入這個身分看得到的全部資料（含需求池、同意狀態） |
+| `POST /api/v2/state-mutate` | 一般資料寫入（白名單） |
+| `POST /api/v2/identity-write` | 機構、成員資格、司機 |
+| `POST /api/v2/organization-apply`、`organization-review` | 機構申請、平台審核 |
+| `POST /api/v2/geocode-check` | 送出預約前檢查地址 |
+| `POST /api/v2/booking-write` | 預約建立與修改 |
+| `POST /api/v2/claim-booking` | 接案 |
+| `POST /api/v2/cancel-booking` | 需求者取消 |
+| `POST /api/v2/trip-write` | 調度建立、改派、中斷、取消行程 |
+| `POST /api/v2/trip-execute` | 司機執行自己的行程 |
+| `POST /api/v2/benefit-ruleset`、`benefit-assess`、`benefit-authorization` | 補助規則、試算、正式核定 |
+| `POST /api/v2/consent` | 同意個資告知與服務條款 |
+| `POST /api/v2/platform-settings` | 保存期限、條款版本、立即匿名化（平台管理者） |
+| `POST /api/v2/account-deletion` | 刪除帳號申請與審核 |
 
-需要的 Netlify 環境變數：
+排程 `retention-anonymize`、`benefit-rules-fetch` 沒有對外路由，由 Netlify 依 `netlify.toml` 執行。
 
-| 變數 | 用途 | 機密 |
-|---|---|---|
-| `DATABASE_URL` | `care_ride_app` 角色的連線字串 | 是 |
-| `SUPABASE_URL` | `https://<ref>.supabase.co` | 否 |
-| `SUPABASE_ANON_KEY` | 公開金鑰（anon 或 `sb_publishable_…`），密碼登入與換 token 用 | 否 |
-| `SUPABASE_SERVICE_ROLE_KEY` | 秘密金鑰（service_role 或 `sb_secret_…`），建立、更新使用者用 | **是** |
-| `SUPABASE_JWT_SECRET` | 選用。舊版 HS256 簽章金鑰；新版專案用非對稱金鑰，會自動從 JWKS 取公鑰 | 是 |
-| `AUTH_SESSION_SECRET` | 速率限制鍵的 HMAC 金鑰（名稱沿用） | 是 |
-| `AUTH_PASSWORD_PEPPER` | 忘記密碼驗證碼的雜湊 pepper | 是 |
-| `PRODUCTION_SUPABASE_PROJECT_REF` | 正式專案 ref，建置檢查用 | 否 |
-| `GOOGLE_MAPS_API_KEY` | Google Maps 金鑰（要開 Geocoding API 與 Routes API）。建立預約或改地址時定位、算距離；沒設定時建立預約會回 503 | 是 |
+### 環境變數
 
-### 預約寫入（/api/v2/booking-write）
+完整清單與說明見 [DEPLOYMENT.md](../DEPLOYMENT.md#2-環境變數與設定)。
 
-預約不再經 `state-mutate` 寫入（回 `COLLECTION_FORBIDDEN`），改走 `v2-booking-write`，規則在
-`netlify/functions/_booking-rules.js`：
-
-- 需求者：只能建立公開待接的預約；公開中可修改或過期；已承接時可修改，重大修改會回到公開池
-- 承接機構的負責人、調度員：已承接 → 排車、退回公開池、不受理
-- 進入排車後，需求者不能改時間與地址
-- 接案走 `claim-booking`、取消走 `cancel-booking`；預約不能刪除
-- 需求者、承接人、取消紀錄等欄位一律沿用資料庫的值
-
-退回公開池、不受理、重大修改時，同一交易內撤銷原承接機構，原機構立即讀不到。
-
-### 長照交通補助（#23）
-
-- 規則版本由平台超級管理者經 `/api/v2/benefit-ruleset` 建立草稿、核准或駁回。核准新版本時，
-  同一 program code 原本的 approved 自動變成 superseded；資料庫的部分唯一索引保證只有一個 approved。
-- 補助試算經 `/api/v2/benefit-assess`，伺服器依目前 approved 版本計算並記錄版本 ID。
-- 建立預約、改日期或改服務對象時，`booking-write` 用服務對象最近一次試算的資料（不是金額）依預約
-  日期重新估算，存在 `serverComputed.benefit`。前端送來的補助金額一律換成伺服器的結果。
-- 規則與試算不再接受 `state-mutate` 寫入。
-- 正式核定額度經 `/api/v2/benefit-authorization` 登錄、調整、撤銷：平台超級管理者，或正在服務這位服務對象的
-  機構負責人／調度員（該機構有他的預約）。核定文號必填。
-- 帳本（`benefit_ledger`，僅追加）由各流程在同一交易內寫入，金額取自預約的伺服器估算：
-
-  | 事件 | 帳本 | 端點 |
-  |---|---|---|
-  | 建立預約、改日期重新估算 | 保留（不超過可用額度） | booking-write |
-  | 需求者取消 | 釋放 | cancel-booking |
-  | 不受理、過期 | 釋放 | booking-write |
-  | 行程完成 | 保留轉為已結算 | trip-execute |
-  | 完成後修正 | 結算回轉為保留 | trip-execute |
-
-  同一個核定以 `FOR UPDATE` 鎖住，同時建立的預約不會超出可用額度。
-
-### 同意紀錄與保存期限（#26）
-
-- 條款版本在 `app_settings.legal_documents`，由平台超級管理者經 `/api/v2/platform-settings` 發布。
-  律師文件完成前版本是 null，不要求同意；發布或改版後，沒同意最新版本的使用者不能建立預約
-  （`CONSENT_REQUIRED`），前端會跳出同意視窗，經 `/api/v2/consent` 記錄版本與時間。
-- 保存期限 `app_settings.retention_years`，預設 5 年，可設定 1–30 年。
-- 每日排程 `retention-anonymize`（netlify.toml）把行程日期超過保存期限的預約與行程匿名化：
-  清除姓名、電話、完整地址、座標、自由文字、定位軌跡、服務證明的收受人與照片；保留行政區、
-  日期、距離、車程、金額。每筆都寫稽核紀錄 `retention.anonymized`。平台管理者也能手動執行。
-- 刪除帳號與個資：使用者在「我的帳戶」經 `/api/v2/account-deletion` 申請或撤回；平台超級管理者在
-  「組織管理」核准或駁回（駁回要填原因）。核准時同一交易內匿名化他的預約與行程、清除服務對象與補助
-  試算的事實資料、刪除寄給他的通知、撤銷成員資格、停用帳號並清除姓名電話，最後刪除 Supabase Auth
-  帳號（失敗就整筆回滾）。同意紀錄與稽核紀錄保留。有未結束的預約或是機構負責人時不能核准。
-
-### 資安掃描（#27，`.github/workflows/security.yml`）
-
-- **依賴套件**：`npm audit --omit=dev --audit-level=high`，有 high 以上弱點就失敗。依 `package-lock.json` 安裝。
-- **ZAP baseline**：被動掃描，有高風險（riskcode 3）就失敗，完整報告（HTML／JSON／Markdown）保存為
-  artifact 30 天。PR 掃該 PR 的 Deploy Preview（指向 Staging 資料庫）；每週排程與手動執行掃
-  repo 變數 `STAGING_URL`（沒設定就略過）。判斷邏輯在 `tools/zap-check-report.js`；確定不是實際風險的
-  高風險規則寫進 `.zap/accepted-high.txt` 並註明原因。
-- **RLS**：資料庫權限的整合測試在 `isolated-sql-review.yml`，每個 PR 與 main 都常態執行。
-
-### 福利規則排程抓取（#24）
-
-- 每日排程 `benefit-rules-fetch`（netlify.toml）經 `_benefit-fetch.js` 的窄介面抓：
-  1966 長照專區「長照服務給付額度表」（解析等級門檻與交通接送四區月額度），以及給付辦法附表 PDF
-  （只用內容雜湊偵測改版，自付比例沿用已核准版本，改版時草稿提醒人工核對）。
-- 每次抓取都記在 `benefit_source_fetches`（網址、時間、HTTP 狀態、內容雜湊）。
-- 解析出的內容與既有版本（含被駁回的）相同時不產生草稿；不同就建立「自動抓取」草稿，附與目前
-  核准版本的差異，平台管理員在「補助規則與資格」審核。核准後舊版本 superseded，新估算用新版本。
-- 抓取或解析失敗時經 `_alerts.js` 送出告警（目前寫稽核紀錄與 Function 記錄；#17 接 Email 與
-  Discord），現行版本不變。平台管理員也可以按「立即抓取公告」。
-- 計算方式 `transport_zone`（`_benefit-transport.js`）：月額度依居住地分區，自付比例依福利身分。
-- 瀏覽器不再連政府網站或 r.jina.ai，CSP 的 `connect-src` 只剩 `'self'`。
-
-### 通知
-
-通知只由後端流程建立，存在 `notifications` 資料表（`care_ride_app` 只有 SELECT），收件人只讀得到自己的：
-
-| 事件 | 產生的地方 | 收件人 |
-|---|---|---|
-| 承接 `booking_claimed` | `claim-booking` | 需求者（帶承接單位名稱） |
-| 排車 `booking_scheduled` | `booking-write` | 需求者 |
-| 指派、改派 `trip_assigned`／`trip_unassigned` | `trip-write` | 新、舊司機 |
-| 調度取消行程 `trip_cancelled` | `trip-write` | 司機 |
-| 需求者取消 `booking_cancelled`、`trip_cancelled` | `cancel-booking` | 需求者、司機 |
-| 完成 `trip_completed` | `trip-execute` | 需求者 |
-
-每則通知有 `dedupe_key`，同一事件重試不會重複。目前只寫入站內（`channel = in_app`、`status = queued`），
-簡訊或 LINE 推送在 #19 接上。
-
-### 行程寫入（/api/v2/trip-write）
-
-調度端建立、改派、中斷、取消行程走 `v2-trip-write`（規則在 `_trip-rules.js`）；司機執行自己的
-行程走 `v2-trip-execute`。行程與取消紀錄都不再接受從 `state-mutate` 寫入。
-
-- 只有行程機構的負責人、調度員可以寫；行程的機構建立後不能改
-- 新行程一律從 `scheduled` 開始；狀態照轉換表走，已開始的行程不能取消（請用中斷）
-- 指派的司機、車輛、新關聯的預約都必須屬於行程的機構
-- 行程不能刪除；用 revision 做樂觀鎖
-
-### 預約的伺服器計算欄位（serverComputed）
-
-建立預約或改了上下車地址時，`v2-state-mutate` 用 Google 定位兩個地址並算路線，把結果
-寫進預約的 `serverComputed`（模糊地址、行政區、經緯度、距離、車程、報價狀態）。前端送來
-的 `serverComputed` 與報價金額一律被覆蓋；地址找不到回 400 `ADDRESS_NOT_FOUND`（`field`
-指出是哪個地址），整批不寫入。地址沒改就沿用原本的結果，不重複呼叫 Google。
-
-平台目前不訂車資，報價固定是 `pricing_pending`、沒有金額。送出前前端會先呼叫
-`/api/v2/geocode-check` 提示地址問題，這支不保存任何東西。
+## 業務規則
 
 ### 身分驗證（Supabase Auth）
 
@@ -282,10 +193,117 @@ Supabase 主控台要設定的：**Authentication → Sign In / Providers → Ph
 （`care_ride_app.<ref>`），直連比對主機名（`db.<ref>.supabase.co`）。非 production
 context 沒設定這個變數時，建置會失敗，因為無從判斷。
 
-## 已知還沒處理
+### 預約寫入（/api/v2/booking-write）
 
-- **前端還沒改**：仍呼叫舊的 `/api/*`；v2 路由已可用但沒有人打
-- **其餘路徑未接線**：註冊、忘記密碼、寫入預約與行程都還在 Apps Script
-- **沒有資料遷移腳本**：這次是乾淨開始，沒有搬舊資料
-- **`kpi_daily` 的主鍵包含 `driver_id`**，因此組織層級（沒有司機）的彙總列需要一個代表「全組織」的 driver_id，接線時要決定怎麼處理
-- **稽核紀錄目前允許任何登入者新增**（`audit_insert with check (true)`），因為寫入者就是應用程式本身；若之後要更嚴格，可改為只允許 security definer 函式寫入
+預約不再經 `state-mutate` 寫入（回 `COLLECTION_FORBIDDEN`），改走 `v2-booking-write`，規則在
+`netlify/functions/_booking-rules.js`：
+
+- 需求者：只能建立公開待接的預約；公開中可修改或過期；已承接時可修改，重大修改會回到公開池
+- 承接機構的負責人、調度員：已承接 → 排車、退回公開池、不受理
+- 進入排車後，需求者不能改時間與地址
+- 接案走 `claim-booking`、取消走 `cancel-booking`；預約不能刪除
+- 需求者、承接人、取消紀錄等欄位一律沿用資料庫的值
+
+退回公開池、不受理、重大修改時，同一交易內撤銷原承接機構，原機構立即讀不到。
+
+### 預約的伺服器計算欄位（serverComputed）
+
+建立預約或改了上下車地址時，`v2-state-mutate` 用 Google 定位兩個地址並算路線，把結果
+寫進預約的 `serverComputed`（模糊地址、行政區、經緯度、距離、車程、報價狀態）。前端送來
+的 `serverComputed` 與報價金額一律被覆蓋；地址找不到回 400 `ADDRESS_NOT_FOUND`（`field`
+指出是哪個地址），整批不寫入。地址沒改就沿用原本的結果，不重複呼叫 Google。
+
+平台目前不訂車資，報價固定是 `pricing_pending`、沒有金額。送出前前端會先呼叫
+`/api/v2/geocode-check` 提示地址問題，這支不保存任何東西。
+
+### 行程寫入（/api/v2/trip-write）
+
+調度端建立、改派、中斷、取消行程走 `v2-trip-write`（規則在 `_trip-rules.js`）；司機執行自己的
+行程走 `v2-trip-execute`。行程與取消紀錄都不再接受從 `state-mutate` 寫入。
+
+- 只有行程機構的負責人、調度員可以寫；行程的機構建立後不能改
+- 新行程一律從 `scheduled` 開始；狀態照轉換表走，已開始的行程不能取消（請用中斷）
+- 指派的司機、車輛、新關聯的預約都必須屬於行程的機構
+- 行程不能刪除；用 revision 做樂觀鎖
+
+### 通知
+
+通知只由後端流程建立，存在 `notifications` 資料表（`care_ride_app` 只有 SELECT），收件人只讀得到自己的：
+
+| 事件 | 產生的地方 | 收件人 |
+|---|---|---|
+| 承接 `booking_claimed` | `claim-booking` | 需求者（帶承接單位名稱） |
+| 排車 `booking_scheduled` | `booking-write` | 需求者 |
+| 指派、改派 `trip_assigned`／`trip_unassigned` | `trip-write` | 新、舊司機 |
+| 調度取消行程 `trip_cancelled` | `trip-write` | 司機 |
+| 需求者取消 `booking_cancelled`、`trip_cancelled` | `cancel-booking` | 需求者、司機 |
+| 完成 `trip_completed` | `trip-execute` | 需求者 |
+
+每則通知有 `dedupe_key`，同一事件重試不會重複。目前只寫入站內（`channel = in_app`、`status = queued`），
+簡訊或 LINE 推送在 #19 接上。
+
+### 長照交通補助（#23）
+
+- 規則版本由平台超級管理者經 `/api/v2/benefit-ruleset` 建立草稿、核准或駁回。核准新版本時，
+  同一 program code 原本的 approved 自動變成 superseded；資料庫的部分唯一索引保證只有一個 approved。
+- 補助試算經 `/api/v2/benefit-assess`，伺服器依目前 approved 版本計算並記錄版本 ID。
+- 建立預約、改日期或改服務對象時，`booking-write` 用服務對象最近一次試算的資料（不是金額）依預約
+  日期重新估算，存在 `serverComputed.benefit`。前端送來的補助金額一律換成伺服器的結果。
+- 規則與試算不再接受 `state-mutate` 寫入。
+- 正式核定額度經 `/api/v2/benefit-authorization` 登錄、調整、撤銷：平台超級管理者，或正在服務這位服務對象的
+  機構負責人／調度員（該機構有他的預約）。核定文號必填。
+- 帳本（`benefit_ledger`，僅追加）由各流程在同一交易內寫入，金額取自預約的伺服器估算：
+
+  | 事件 | 帳本 | 端點 |
+  |---|---|---|
+  | 建立預約、改日期重新估算 | 保留（不超過可用額度） | booking-write |
+  | 需求者取消 | 釋放 | cancel-booking |
+  | 不受理、過期 | 釋放 | booking-write |
+  | 行程完成 | 保留轉為已結算 | trip-execute |
+  | 完成後修正 | 結算回轉為保留 | trip-execute |
+
+  同一個核定以 `FOR UPDATE` 鎖住，同時建立的預約不會超出可用額度。
+
+### 福利規則排程抓取（#24）
+
+- 每日排程 `benefit-rules-fetch`（netlify.toml）經 `_benefit-fetch.js` 的窄介面抓：
+  1966 長照專區「長照服務給付額度表」（解析等級門檻與交通接送四區月額度），以及給付辦法附表 PDF
+  （只用內容雜湊偵測改版，自付比例沿用已核准版本，改版時草稿提醒人工核對）。
+- 每次抓取都記在 `benefit_source_fetches`（網址、時間、HTTP 狀態、內容雜湊）。
+- 解析出的內容與既有版本（含被駁回的）相同時不產生草稿；不同就建立「自動抓取」草稿，附與目前
+  核准版本的差異，平台管理員在「補助規則與資格」審核。核准後舊版本 superseded，新估算用新版本。
+- 抓取或解析失敗時經 `_alerts.js` 送出告警（目前寫稽核紀錄與 Function 記錄；#17 接 Email 與
+  Discord），現行版本不變。平台管理員也可以按「立即抓取公告」。
+- 計算方式 `transport_zone`（`_benefit-transport.js`）：月額度依居住地分區，自付比例依福利身分。
+- 瀏覽器不再連政府網站或 r.jina.ai，CSP 的 `connect-src` 只剩 `'self'`。
+
+### 同意紀錄與保存期限（#26）
+
+- 條款版本在 `app_settings.legal_documents`，由平台超級管理者經 `/api/v2/platform-settings` 發布。
+  律師文件完成前版本是 null，不要求同意；發布或改版後，沒同意最新版本的使用者不能建立預約
+  （`CONSENT_REQUIRED`），前端會跳出同意視窗，經 `/api/v2/consent` 記錄版本與時間。
+- 保存期限 `app_settings.retention_years`，預設 5 年，可設定 1–30 年。
+- 每日排程 `retention-anonymize`（netlify.toml）把行程日期超過保存期限的預約與行程匿名化：
+  清除姓名、電話、完整地址、座標、自由文字、定位軌跡、服務證明的收受人與照片；保留行政區、
+  日期、距離、車程、金額。每筆都寫稽核紀錄 `retention.anonymized`。平台管理者也能手動執行。
+- 刪除帳號與個資：使用者在「我的帳戶」經 `/api/v2/account-deletion` 申請或撤回；平台超級管理者在
+  「組織管理」核准或駁回（駁回要填原因）。核准時同一交易內匿名化他的預約與行程、清除服務對象與補助
+  試算的事實資料、刪除寄給他的通知、撤銷成員資格、停用帳號並清除姓名電話，最後刪除 Supabase Auth
+  帳號（失敗就整筆回滾）。同意紀錄與稽核紀錄保留。有未結束的預約或是機構負責人時不能核准。
+
+### 資安掃描（#27，`.github/workflows/security.yml`）
+
+- **依賴套件**：`npm audit --omit=dev --audit-level=high`，有 high 以上弱點就失敗。依 `package-lock.json` 安裝。
+- **ZAP baseline**：被動掃描，有高風險（riskcode 3）就失敗，完整報告（HTML／JSON／Markdown）保存為
+  artifact 30 天。PR 掃該 PR 的 Deploy Preview（指向 Staging 資料庫）；每週排程與手動執行掃
+  repo 變數 `STAGING_URL`（沒設定就略過）。判斷邏輯在 `tools/zap-check-report.js`；確定不是實際風險的
+  高風險規則寫進 `.zap/accepted-high.txt` 並註明原因。
+- **RLS**：資料庫權限的整合測試在 `isolated-sql-review.yml`，每個 PR 與 main 都常態執行。
+
+## 已知限制
+
+- **預約與行程仍在 `app_state`**：寫入已改走專用端點並由伺服器檢查，搬到正式資料表見 #43。
+- **給付辦法附表（自付比例）不自動解析**：附表是 PDF，排程只用內容雜湊偵測改版。
+- **`kpi_daily` 的主鍵包含 `driver_id`**：組織層級（沒有司機）的彙總列需要一個代表「全組織」的
+  driver_id，接線時要決定怎麼處理。
+- **稽核紀錄允許應用程式角色新增**（`audit_insert with check (true)`），沒有修改或刪除政策。
