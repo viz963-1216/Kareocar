@@ -77,6 +77,7 @@ t('state-mutate 不接受通知',
 t('前端不把通知排入寫入佇列',
   !/const AUTHORITATIVE_STATE_COLLECTIONS=Object\.freeze\(\[[^\]]*'notifications'/.test(html));
 t('Notification.queue 不再寫入本機資料', /queue\(\)\{ return null; \}/.test(html));
+t('state-load 回傳的通知以唯讀方式載入本機', html.includes('db.notifications=Array.isArray(collections.notifications)?collections.notifications:[];'));
 
 console.log('--- 司機執行 ---');
 const queueChanges = functionBody('function authoritativeQueueChanges_(changes){');

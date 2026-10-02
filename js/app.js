@@ -1000,6 +1000,8 @@ const AppStateDatabase={
           if(Array.isArray(collections[name]))db[name]=collections[name];
           else if(!Array.isArray(db[name]))db[name]=[];
         });
+        // 通知是伺服器唯讀的集合（#25）：不在寫入佇列裡，但要從伺服器載入
+        db.notifications=Array.isArray(collections.notifications)?collections.notifications:[];
         db.demandPool=Array.isArray(result.data?.pool)?result.data.pool:[];
         db.integration={...(db.integration||{}),lastSyncStatus:result.data?.truncated?'部分資料已載入':'同步完成',
                         lastSyncDetails:result.data?.truncated?['資料量達到上限，目前僅載入部分資料。']:[],
