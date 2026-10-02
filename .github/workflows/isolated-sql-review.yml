@@ -126,6 +126,9 @@ jobs:
       - name: 同意紀錄、保存期限匿名化與刪除申請整合測試（條款改版要求重新同意、到期資料匿名化、刪除申請狀態與執行、稽核）
         run: bash supabase/tests/run-privacy.sh
 
+      - name: 福利規則排程抓取整合測試（抓取紀錄、內容沒變不產生草稿、差異、核准取代、失敗告警且現行版本不變）
+        run: bash supabase/tests/run-benefit-fetch.sh
+
       - name: 身分、session、帳號與 RLS 測試（run-all：session／identity／orgs／identity-write／state／load／wiring／rls）
         run: bash supabase/tests/run-all.sh
 

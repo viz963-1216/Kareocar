@@ -93,6 +93,14 @@ exports.handler = async (event) => {
             detail: eventType === 'rejected' ? r.review_note || '' : `${r.code} ${r.version}`, createdAt: at });
         }
       }
+      // 公告抓取紀錄（RLS 只放行平台管理者）
+      const fetches = (await client.query(
+        `select id, source_id, url, fetched_at, status, http_status, content_hash, error, run_id
+           from benefit_source_fetches order by fetched_at desc limit 20`)).rows;
+      for (const f of fetches) {
+        push('benefitSourceFetches', { id: f.id, sourceId: f.source_id, url: f.url, fetchedAt: f.fetched_at, status: f.status,
+          httpStatus: f.http_status, contentHash: f.content_hash, error: f.error || '', runId: f.run_id });
+      }
       const assessments = (await client.query(
         `select data, created_at from benefit_assessments where source = 'server' order by created_at desc limit 500`)).rows;
       for (const a of assessments) push('benefitAssessments', { ...(a.data || {}), createdAt: a.created_at });

@@ -7,6 +7,7 @@
  *   { action: 'save_draft', id?, ruleset }   新增或修改草稿
  *   { action: 'approve', id, note? }         核准；同一 program code 原本的 approved 變 superseded
  *   { action: 'reject', id, note }           駁回（必須填原因）
+ *   { action: 'fetch_now' }                  立即抓取公告產生自動草稿（#24）
  *
  * 狀態只有 draft、approved、superseded、rejected；同一個 program code 與服務類型任一時點
  * 只有一個 approved（資料庫部分唯一索引保證）。核准後新的試算與預約估算改用新版本，
@@ -17,6 +18,7 @@ const crypto = require('crypto');
 const auth = require('./_auth-pg');
 const { runAuthenticated, requireId, optionalText, writeAudit } = require('./_business-rpc');
 const benefit = require('./_benefit');
+const { runFetch } = require('./_benefit-fetch');
 
 exports.handler = (event) => runAuthenticated(event, async (client, body, claims) => {
   const action = String(body.action || '').trim();
@@ -57,6 +59,14 @@ exports.handler = (event) => runAuthenticated(event, async (client, body, claims
       details: { code: current.code, version: current.version, note, supersededId: status === 'approved' && previous ? previous.id : null } });
     const row = (await client.query('select * from benefit_rulesets where id = $1', [id])).rows[0];
     return { ruleset: benefit.rulesetFromRow(row), supersededId: status === 'approved' && previous ? previous.id : null };
+  }
+
+  if (action === 'fetch_now') {
+    // 立即執行一次公告抓取（平常由每日排程 benefit-rules-fetch 執行）
+    const result = await runFetch(client);
+    await writeAudit(client, { eventType: 'benefit.ruleset.fetch_triggered', actorUserId: claims.userId,
+      entityType: 'benefit_fetch', entityId: result.runId, details: result });
+    return result;
   }
 
   throw auth.authError('VALIDATION_ERROR', '不支援的動作');
