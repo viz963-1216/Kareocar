@@ -1,0 +1,104 @@
+# 資安 CI（#27）
+#
+#   依賴套件弱點：npm audit，有 high 以上（正式依賴）就失敗。（GitHub dependency review 在私人
+#     repo 需要 Advanced Security，所以不用。）
+#   ZAP baseline：被動掃描 Staging（PR 的 Deploy Preview 指向 Staging 資料庫；排程與手動執行掃
+#     vars.STAGING_URL），有高風險項目就失敗，完整報告保存為 artifact。
+#
+# RLS、資料庫權限的整合測試在 isolated-sql-review.yml，每個 PR 與 main 都常態執行。
+name: 資安掃描
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 19 * * 1'   # 每週一 03:17（台灣時間）
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: '要掃描的網址（留空用 vars.STAGING_URL）'
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-audit:
+    name: 依賴套件弱點（npm audit）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: 安裝依賴（依 package-lock.json）
+        run: npm ci --ignore-scripts --no-fund
+      - name: npm audit（high 以上就失敗）
+        run: npm audit --omit=dev --audit-level=high
+
+  zap-baseline:
+    name: ZAP baseline（Staging）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: 決定掃描目標
+        id: target
+        env:
+          INPUT_URL: ${{ github.event.inputs.target_url }}
+          STAGING_URL: ${{ vars.STAGING_URL }}
+          SITE: ${{ vars.NETLIFY_SITE_NAME || 'kareocar' }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ -n "$PR" ]; then
+            url="https://deploy-preview-${PR}--${SITE}.netlify.app"
+          elif [ -n "$INPUT_URL" ]; then
+            url="$INPUT_URL"
+          else
+            url="$STAGING_URL"
+          fi
+          if [ -z "$url" ]; then
+            echo "::notice::沒有設定 vars.STAGING_URL，略過 ZAP 掃描"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          case "$url" in https://*) ;; *) echo "::error::掃描目標必須是 https 網址"; exit 1 ;; esac
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "掃描目標：$url"
+      - name: 等待目標可以連線（Deploy Preview 可能還在建置）
+        if: steps.target.outputs.skip != 'true'
+        env:
+          URL: ${{ steps.target.outputs.url }}
+        run: |
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$URL" || true)
+            if [ "$code" = "200" ]; then echo "可以連線（第 $i 次）"; exit 0; fi
+            sleep 10
+          done
+          echo "::error::$URL 10 分鐘內都無法連線（最後 HTTP $code）"
+          exit 1
+      - name: 執行 ZAP baseline（被動掃描）
+        if: steps.target.outputs.skip != 'true'
+        env:
+          URL: ${{ steps.target.outputs.url }}
+        run: |
+          mkdir -p zap && chmod 777 zap
+          # -I：警告不讓 zap-baseline 自己失敗，改由下一步依風險等級判斷
+          docker run --rm -v "$PWD/zap:/zap/wrk/:rw" ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t "$URL" -J report.json -r report.html -w report.md -I -m 3
+      - name: 有高風險項目就失敗
+        if: steps.target.outputs.skip != 'true'
+        run: node tools/zap-check-report.js zap/report.json .zap/accepted-high.txt
+      - name: 保存報告
+        if: always() && steps.target.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-baseline-report
+          path: zap/
+          retention-days: 30
