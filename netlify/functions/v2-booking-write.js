@@ -43,12 +43,12 @@ async function applyServerBenefit(client, record, existing) {
     || String(before.pickupDate || '') !== String(record.pickupDate || '')
     || String(before.recipientId || '') !== String(record.recipientId || '');
   const result = stale ? await benefit.bookingBenefit(client, record) : previous;
-  return stale;
   record.serverComputed = { ...(record.serverComputed || {}), benefit: result };
   if (Array.isArray(record.commercialSnapshots)) {
     record.commercialSnapshots = record.commercialSnapshots.map((snap) => (snap && typeof snap === 'object'
       ? { ...snap, benefit: { ...result } } : snap));
   }
+  return stale;
 }
 
 async function isOps(client, organizationId) {
