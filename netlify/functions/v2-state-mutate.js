@@ -35,7 +35,10 @@ const DEDICATED_ENDPOINTS = {
   benefitRulesetEvents: '/api/v2/benefit-ruleset',
   benefitAssessments: '/api/v2/benefit-assess',
   benefitAssessmentEvents: '/api/v2/benefit-assess',
-  benefitLatestEstimateRuns: '瀏覽器本機（試算預覽不存檔）'
+  benefitLatestEstimateRuns: '瀏覽器本機（試算預覽不存檔）',
+  benefitAuthorizations: '/api/v2/benefit-authorization',
+  benefitAuthorizationEvents: '/api/v2/benefit-authorization',
+  benefitLedger: '後端流程（預約保留、取消釋放、完成結算）'
 };
 
 const ALLOWED_COLLECTIONS = new Set([

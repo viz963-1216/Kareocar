@@ -23,6 +23,7 @@ const APP_CONFIG = Object.freeze({
   tripWriteUrl: '/api/v2/trip-write',
   benefitRulesetUrl: '/api/v2/benefit-ruleset',
   benefitAssessUrl: '/api/v2/benefit-assess',
+  benefitAuthorizationUrl: '/api/v2/benefit-authorization',
   identityWriteUrl: '/api/v2/identity-write',
   claimBookingUrl: '/api/v2/claim-booking',
   cancelBookingUrl: '/api/v2/cancel-booking',
@@ -1004,7 +1005,7 @@ const AppStateDatabase={
         // 通知是伺服器唯讀的集合（#25）：不在寫入佇列裡，但要從伺服器載入
         db.notifications=Array.isArray(collections.notifications)?collections.notifications:[];
         // 補助規則版本與試算也是伺服器唯讀（#23）：由 benefit-ruleset／benefit-assess 端點寫入
-        ['benefitRulesets','benefitRulesetEvents','benefitAssessments'].forEach(name=>{db[name]=Array.isArray(collections[name])?collections[name]:[];});
+        ['benefitRulesets','benefitRulesetEvents','benefitAssessments','benefitAuthorizations','benefitAuthorizationEvents','benefitLedger'].forEach(name=>{db[name]=Array.isArray(collections[name])?collections[name]:[];});
         db.demandPool=Array.isArray(result.data?.pool)?result.data.pool:[];
         db.integration={...(db.integration||{}),lastSyncStatus:result.data?.truncated?'部分資料已載入':'同步完成',
                         lastSyncDetails:result.data?.truncated?['資料量達到上限，目前僅載入部分資料。']:[],
@@ -4236,15 +4237,9 @@ Benefit.validate=function(){const base=_p0Validate(),errors=[...base.errors],war
 Benefit.migrate=function(){const base=_p0Migrate();let changed=base.changed||0;store.mutate(db=>{if(!Array.isArray(db.benefitAuthorizations)){db.benefitAuthorizations=[];changed++;}if(!Array.isArray(db.benefitAuthorizationEvents)){db.benefitAuthorizationEvents=[];changed++;}if(!Array.isArray(db.benefitLedger)){db.benefitLedger=[];changed++;}db.benefitAuthorizations=db.benefitAuthorizations.map(a=>({...a,schemaVersion:BENEFIT_AUTH_SCHEMA_VERSION,status:BENEFIT_AUTH_STATUSES.includes(a.status)?a.status:'active',approved:a.approved!==false,currency:a.currency||'TWD',approvedAmount:Math.max(0,Number(a.approvedAmount)||0)}));});return {ok:true,changed};};
 Benefit.initialize=function(){const migration=this.migrate(),validation=this.validate();if(!validation.ok)console.warn('[Benefit P1] validation errors',validation.errors);return {ok:validation.ok,migration,validation};};
 
-const _bookingCreateForRequester=Booking.createForRequester.bind(Booking);Booking.createForRequester=function(input,userId){const r=_bookingCreateForRequester(input,userId);if(r?.ok&&r.booking?.id)Benefit.reserveForBooking(r.booking.id,{actorUserId:userId,reason:'booking_created'});return r;};
-const _bookingAmendOwn=Booking.amendOwn.bind(Booking);Booking.amendOwn=function(id,userId,input,reasonText){const r=_bookingAmendOwn(id,userId,input,reasonText);if(r?.ok){Benefit.releaseForBooking(id,{actorUserId:userId,reason:'booking_amended_reprice'});Benefit.reserveForBooking(id,{actorUserId:userId,reason:'booking_amended'});}return r;};
-const _bookingCancelOwn=Booking.cancelOwn.bind(Booking);Booking.cancelOwn=async function(id,userId,reasonCode,reasonText){const r=await _bookingCancelOwn(id,userId,reasonCode,reasonText);if(r?.ok)Benefit.releaseForBooking(id,{actorUserId:userId,reason:'booking_cancelled'});return r;};
-const _bookingExpireStaleOpen=Booking.expireStaleOpen.bind(Booking);Booking.expireStaleOpen=function(options={}){const r=_bookingExpireStaleOpen(options);for(const id of r?.bookingIds||[])Benefit.releaseForBooking(id,{actorUserId:null,reason:'booking_expired'});return r;};
-const _bookingTransition=Booking.transition.bind(Booking);Booking.transition=function(id,action,context={}){const r=_bookingTransition(id,action,context);if(r?.ok&&action==='reject')Benefit.releaseForBooking(id,{actorUserId:context.userId||null,reason:'booking_rejected'});return r;};
-function p1SettleIfCompleted(result,actorUserId){const t=result?.trip;if(result?.ok&&t?.status==='completed')Benefit.settleFromTrip(t.id,{actorUserId,reason:'trip_completed'});return result;}
-const _tripCaptureProof=Trip.captureProof.bind(Trip);Trip.captureProof=function(tripId,stepId,input,actorUserId,options){return p1SettleIfCompleted(_tripCaptureProof(tripId,stepId,input,actorUserId,options),actorUserId);};
-const _tripDepart=Trip.departCurrentStop.bind(Trip);Trip.departCurrentStop=function(tripId,actorUserId,options){return p1SettleIfCompleted(_tripDepart(tripId,actorUserId,options),actorUserId);};
-const _tripComplete=Trip.completeCurrentStep.bind(Trip);Trip.completeCurrentStep=function(tripId,actorUserId,options){return p1SettleIfCompleted(_tripComplete(tripId,actorUserId,options),actorUserId);};
+// 預約的補助額度保留、取消釋放、完成結算都在伺服器同一交易內處理（#23，migration 0009）：
+// booking-write、cancel-booking、trip-execute。前端不再自行寫帳本，Benefit.reserveForBooking 等
+// 本機函式只留給補助回歸自我測試使用。
 const _tripUndo=Trip.undoLastStep.bind(Trip);Trip.undoLastStep=function(tripId,actorUserId,options={}){const wasCompleted=Trip.get(tripId)?.status==='completed',r=_tripUndo(tripId,actorUserId,options);if(r?.ok&&wasCompleted&&options?.formalCorrection===true)Benefit.reopenSettlementForTrip(tripId,{actorUserId,reason:'formal_trip_correction'});return r;};
 const _tripResolveIssue=Trip.resolveIssue.bind(Trip);Trip.resolveIssue=function(issueId,userId,input={}){const r=_tripResolveIssue(issueId,userId,input);if(r?.ok&&r.tripAutoCompleted){const issue=(store.state.issues||[]).find(x=>x.id===issueId);if(issue?.tripId)Benefit.settleFromTrip(issue.tripId,{actorUserId:userId,reason:'trip_completed_after_issue_resolution'});}return r;};
 }
@@ -6347,10 +6342,12 @@ async function saveBenefitAssessment(){const recipientId=$('benefitAssessmentRec
 
 
 function openBenefitAuthorization(){const actor=Identity.currentUser()?.id,recipients=benefitAccessibleRecipients().filter(r=>Benefit.canManageAuthorization(actor,r.id,orgId()));if(!recipients.length){showToast('目前沒有可管理正式核定的服務對象');return;}$('benefitAuthorizationRecipient').innerHTML=recipients.map(r=>`<option value="${r.id}">${escapeHTML(CareRecipient.displayName(r))}</option>`).join('');$('benefitAuthorizationProgram').value=Benefit.constants.defaultProgramCode;$('benefitAuthorizationValidFrom').value=dateKey();$('benefitAuthorizationValidTo').value='';$('benefitAuthorizationAmount').value='';$('benefitAuthorizationUnits').value='';$('benefitAuthorizationReference').value='';$('benefitAuthorizationSource').value='manual';openModal('benefitAuthorizationModal');}
-function saveBenefitAuthorization(){const actor=Identity.currentUser()?.id,r=Benefit.saveAuthorization({organizationId:Identity.isSuperAdmin()?orgId():orgId(),recipientId:$('benefitAuthorizationRecipient').value,programCode:$('benefitAuthorizationProgram').value,validFrom:$('benefitAuthorizationValidFrom').value,validTo:$('benefitAuthorizationValidTo').value,approvedAmount:$('benefitAuthorizationAmount').value,approvedUnits:$('benefitAuthorizationUnits').value,referenceNo:$('benefitAuthorizationReference').value,source:$('benefitAuthorizationSource').value},actor);if(!r.ok){showToast(r.error);return;}closeModal('benefitAuthorizationModal');render();showToast('正式核定已建立；既有資格試算不會被改寫');}
+// 正式核定、調整、撤銷由伺服器處理（#23，0009）；平台管理者或正在服務這位服務對象的機構
+async function benefitAuthorizationRequest_(payload,successMessage,modalId=null){try{await authoritativeFlush_();await backendJsonPost(APP_CONFIG.benefitAuthorizationUrl,{organizationId:Identity.isSuperAdmin()?null:orgId(),...payload});await AppStateDatabase.loadAll({silent:true});if(modalId)closeModal(modalId);render();showToast(successMessage);}catch(error){showToast(error.message||'正式核定處理失敗');}}
+async function saveBenefitAuthorization(){await benefitAuthorizationRequest_({action:'save',authorization:{recipientId:$('benefitAuthorizationRecipient').value,programCode:$('benefitAuthorizationProgram').value,validFrom:$('benefitAuthorizationValidFrom').value,validTo:$('benefitAuthorizationValidTo').value,approvedAmount:$('benefitAuthorizationAmount').value,approvedUnits:$('benefitAuthorizationUnits').value,referenceNo:$('benefitAuthorizationReference').value,source:$('benefitAuthorizationSource').value}},'正式核定已建立；既有資格試算不會被改寫','benefitAuthorizationModal');}
 function openBenefitAdjustment(id){const a=Benefit.getAuthorization(id);if(!a){showToast('找不到正式核定');return;}$('benefitAdjustmentAuthorizationId').value=id;$('benefitAdjustmentAmount').value='';$('benefitAdjustmentReason').value='';openModal('benefitAdjustmentModal');}
-function saveBenefitAdjustment(){const r=Benefit.adjust($('benefitAdjustmentAuthorizationId').value,$('benefitAdjustmentAmount').value,$('benefitAdjustmentReason').value,Identity.currentUser()?.id);if(!r.ok){showToast(r.error);return;}closeModal('benefitAdjustmentModal');render();showToast('補助額度調整已寫入僅追加帳本');}
-function revokeBenefitAuthorization(id){if(!confirm('確定撤銷此正式核定？已結算歷史仍會保留。'))return;const r=Benefit.revokeAuthorization(id,Identity.currentUser()?.id,'管理者撤銷正式核定');if(!r.ok){showToast(r.error);return;}render();showToast('正式核定已撤銷');}
+async function saveBenefitAdjustment(){await benefitAuthorizationRequest_({action:'adjust',id:$('benefitAdjustmentAuthorizationId').value,amount:$('benefitAdjustmentAmount').value,reason:$('benefitAdjustmentReason').value},'補助額度調整已寫入僅追加帳本','benefitAdjustmentModal');}
+async function revokeBenefitAuthorization(id){if(!confirm('確定撤銷此正式核定？已結算歷史仍會保留。'))return;await benefitAuthorizationRequest_({action:'revoke',id,reason:'管理者撤銷正式核定'},'正式核定已撤銷');}
 
 
 function openBenefitImport(){if(!Benefit.canManageRulesets(Identity.currentUser()?.id)){showToast('只有平台超級管理者可以匯入規則集');return;}$('benefitImportFormat').value='json';$('benefitImportPayload').value='';openModal('benefitImportModal');}

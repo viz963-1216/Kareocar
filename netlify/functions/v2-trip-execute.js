@@ -67,6 +67,14 @@ exports.handler = (event) => runAuthenticated(event, async (client, body, claims
     });
   }
 
+  // 補助額度：完成時結算保留的額度；完成後修正（返回上一步）時回轉結算（0009）
+  const before = String((locked.trip_data && locked.trip_data.status) || '');
+  if (!result.out_duplicate && result.out_status === 'completed' && before !== 'completed') {
+    await client.query('select app.settle_trip_benefit($1)', [tripId]);
+  } else if (!result.out_duplicate && before === 'completed' && result.out_status !== 'completed') {
+    await client.query('select app.reopen_trip_benefit_settlement($1)', [tripId]);
+  }
+
   // 行程完成：通知每一筆預約的需求者（司機讀不到預約，由 definer 函式查收件人）
   if (!result.out_duplicate && result.out_status === 'completed' && (locked.trip_data.status || '') !== 'completed') {
     const data = locked.trip_data || {};

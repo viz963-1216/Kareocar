@@ -9,7 +9,8 @@
  * 規則在 _booking-rules.js：誰能把預約改到哪個狀態、哪些欄位只由伺服器決定。
  * 另外：
  *   - serverComputed（定位、模糊地址、距離、報價）由伺服器計算，見 _bookings.js
- *   - 補助估算（serverComputed.benefit）由伺服器依 approved 規則版本計算，見 _benefit.js
+ *   - 補助估算（serverComputed.benefit）由伺服器依 approved 規則版本計算，見 _benefit.js；
+ *     同一交易內保留或釋放正式核定額度（benefit_ledger，見 0009）
  *   - 退回公開池、不受理、重大修改需重新承接時，同一交易內撤銷原承接機構
  *     （app.revoke_booking_organization），原機構立即讀不到
  *   - 不能刪除預約；接案與取消有各自的端點
@@ -42,6 +43,7 @@ async function applyServerBenefit(client, record, existing) {
     || String(before.pickupDate || '') !== String(record.pickupDate || '')
     || String(before.recipientId || '') !== String(record.recipientId || '');
   const result = stale ? await benefit.bookingBenefit(client, record) : previous;
+  return stale;
   record.serverComputed = { ...(record.serverComputed || {}), benefit: result };
   if (Array.isArray(record.commercialSnapshots)) {
     record.commercialSnapshots = record.commercialSnapshots.map((snap) => (snap && typeof snap === 'object'
@@ -103,7 +105,7 @@ exports.handler = async (event) => {
         }
         const record = checked.record;
         await applyServerBookingFields(client, id, record);
-        await applyServerBenefit(client, record, existing);
+        const benefitRepriced = await applyServerBenefit(client, record, existing);
 
         const upsert = await client.query(
           `insert into app_state (collection, id, organization_id, booking_id, data)
@@ -117,6 +119,15 @@ exports.handler = async (event) => {
         if (checked.revoke) {
           await client.query('select app.revoke_booking_organization($1)', [id]);
         }
+        // 補助額度帳本（0009）：不受理／過期釋放；新預約或重新估算時（先釋放再）保留。
+        // 金額由資料庫函式從剛存好的 serverComputed.benefit 取得。
+        if (['rejected', 'expired'].includes(String(record.state || ''))) {
+          await client.query('select app.release_booking_benefit($1, $2)', [id, `booking_${record.state}`]);
+        } else if (benefitRepriced) {
+          if (existing) await client.query('select app.release_booking_benefit($1, $2)', [id, 'booking_repriced']);
+          await client.query('select app.reserve_booking_benefit($1, $2)', [id, existing ? 'booking_amended' : 'booking_created']);
+        }
+
         // 排車：從未排車進入（部分）已排車時通知需求者
         const fromState = existing ? String((existing.data && existing.data.state) || 'open') : null;
         const toState = String(record.state || 'open');

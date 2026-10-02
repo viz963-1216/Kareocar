@@ -110,6 +110,11 @@
   status = 200
 
 [[redirects]]
+  from = "/api/v2/benefit-authorization"
+  to = "/.netlify/functions/v2-benefit-authorization"
+  status = 200
+
+[[redirects]]
   from = "/api/v2/claim-booking"
   to = "/.netlify/functions/v2-claim-booking"
   status = 200
