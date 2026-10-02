@@ -26,6 +26,7 @@ const APP_CONFIG = Object.freeze({
   benefitAuthorizationUrl: '/api/v2/benefit-authorization',
   consentUrl: '/api/v2/consent',
   platformSettingsUrl: '/api/v2/platform-settings',
+  accountDeletionUrl: '/api/v2/account-deletion',
   identityWriteUrl: '/api/v2/identity-write',
   claimBookingUrl: '/api/v2/claim-booking',
   cancelBookingUrl: '/api/v2/cancel-booking',
@@ -1007,7 +1008,7 @@ const AppStateDatabase={
         // 通知是伺服器唯讀的集合（#25）：不在寫入佇列裡，但要從伺服器載入
         db.notifications=Array.isArray(collections.notifications)?collections.notifications:[];
         // 補助規則版本與試算也是伺服器唯讀（#23）：由 benefit-ruleset／benefit-assess 端點寫入
-        ['benefitRulesets','benefitRulesetEvents','benefitAssessments','benefitAuthorizations','benefitAuthorizationEvents','benefitLedger'].forEach(name=>{db[name]=Array.isArray(collections[name])?collections[name]:[];});
+        ['benefitRulesets','benefitRulesetEvents','benefitAssessments','benefitAuthorizations','benefitAuthorizationEvents','benefitLedger','deletionRequests'].forEach(name=>{db[name]=Array.isArray(collections[name])?collections[name]:[];});
         db.demandPool=Array.isArray(result.data?.pool)?result.data.pool:[];
         db.integration={...(db.integration||{}),lastSyncStatus:result.data?.truncated?'部分資料已載入':'同步完成',
                         lastSyncDetails:result.data?.truncated?['資料量達到上限，目前僅載入部分資料。']:[],
@@ -5768,7 +5769,25 @@ function genericAccount(){
     ${systemReportAccountCard()}${appVersionNote()}
     <button type="button" class="btn danger block account-logout-btn">登出目前帳號</button>`;
 }
-function accountView(){ return (role()==='driver'?driverAccount():role()==='requester'?requesterAccount():genericAccount())+(Identity.isSuperAdmin()?'':orgApplicationCard()); }
+function accountView(){ return (role()==='driver'?driverAccount():role()==='requester'?requesterAccount():genericAccount())+(Identity.isSuperAdmin()?'':orgApplicationCard()+deletionRequestCard()); }
+// 刪除帳號與個資申請（#26）：由平台管理者處理；核准後預約與行程匿名化、帳號停用
+const DELETION_STATUS_LABELS=Object.freeze({pending:'處理中',cancelled:'已撤回',rejected:'已駁回',completed:'已完成'});
+function deletionRequestCard(){
+  const uid=Identity.currentUser()?.id,rows=(store.state.deletionRequests||[]).filter(d=>d.userId===uid),pending=rows.find(d=>d.status==='pending'),last=rows[0];
+  return `<section class="card" id="deletionRequestCard" style="margin-top:16px"><div class="card-head"><div><h3>刪除帳號與個資</h3><p>申請後由平台管理員處理。核准後你的預約與行程紀錄會匿名化（保留統計用的日期、行政區、距離、金額），帳號停用且無法復原。還有未結束的預約時需要先取消。</p></div></div>
+  ${last?`<p>最近一次申請：${escapeHTML(DELETION_STATUS_LABELS[last.status]||last.status)}${last.reviewNote?`（${escapeHTML(last.reviewNote)}）`:''}</p>`:''}
+  <div class="item-actions">${pending?`<button type="button" class="btn outline sm" id="cancelDeletionRequestBtn" data-request="${escapeHTML(pending.id)}">撤回申請</button>`:`<button type="button" class="btn danger sm" id="requestDeletionBtn">申請刪除帳號與個資</button>`}</div></section>`;
+}
+async function accountDeletionRequest_(payload,message){try{await backendJsonPost(APP_CONFIG.accountDeletionUrl,payload);await AppStateDatabase.loadAll({silent:true});render();showToast(message);}catch(error){showToast(error.message||'刪除申請處理失敗');}}
+function bindDeletionRequestCard(){
+  $('requestDeletionBtn')?.addEventListener('click',()=>{const reason=prompt('請簡述申請原因（可留空）');if(reason===null)return;if(!confirm('確定申請刪除帳號與個資？核准後無法復原。'))return;accountDeletionRequest_({action:'request',reason},'已送出刪除申請，平台管理員處理後會更新狀態');});
+  $('cancelDeletionRequestBtn')?.addEventListener('click',e=>accountDeletionRequest_({action:'cancel',id:e.currentTarget.dataset.request},'已撤回刪除申請'));
+}
+function pendingDeletionRequestsCard(){
+  const rows=(store.state.deletionRequests||[]).filter(d=>d.status==='pending');
+  return `<section class="card" id="pendingDeletionRequests" style="margin-top:16px"><div class="card-head"><div><h3>刪除帳號申請</h3><p>核准後立即匿名化該使用者的預約與行程、清除服務對象、停用帳號並刪除登入帳號。還有未結束的預約或是機構負責人時無法核准。</p></div><span class="pill blue">${rows.length} 件待處理</span></div>
+  ${rows.map(d=>`<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(d.userName||d.userId)}</h4><p class="muted small">申請時間 ${escapeHTML(d.requestedAt?formatDateTime(d.requestedAt):'')}${d.reason?`・原因：${escapeHTML(d.reason)}`:''}</p></div></div><div class="item-actions"><button type="button" class="btn danger sm deletion-approve-btn" data-request="${escapeHTML(d.id)}">核准並執行</button><button type="button" class="btn outline sm deletion-reject-btn" data-request="${escapeHTML(d.id)}">駁回</button></div></div>`).join('')||'<div class="empty">目前沒有待處理的申請。</div>'}</section>`;
+}
 
 // ---------------------------------------------------------------- 機構申請與審核
 const ORG_REVIEW_LABELS=Object.freeze({pending:['審核中','yellow'],approved:['已核准','green'],rejected:['已駁回','red'],suspended:['已停權','gray']});
@@ -5923,7 +5942,7 @@ function platformHome(){
 }
 function platformOrganizations(){
   const rows=Organization.list();
-  return `<div class="page-head"><div><h2>組織管理</h2><p>平台超級管理者可修改公司名稱、聯絡電話、統一編號與唯一負責人；「需求者組織」維持系統固定管理。</p></div><div class="page-actions"><button type="button" class="btn primary" id="openAddOrganizationBtn">＋ 新增組織</button></div></div><div class="list">${rows.map(o=>{const isRequesterHub=o.id===APP_CONFIG.requesterOrganizationId||o.type==='requester_hub',memberCount=store.state.memberships.filter(m=>m.organizationId===o.id&&Identity.membershipStatus(m)==='active').length,ownerM=isRequesterHub?null:store.state.memberships.find(m=>m.organizationId===o.id&&m.role==='owner'&&Identity.membershipStatus(m)!=='revoked'),ownerU=ownerM?store.state.users.find(u=>u.id===ownerM.userId):null;return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(o.name)}</h4><p>${isRequesterHub?'系統需求者組織・不可手動新增公司角色':o.type==='transport_provider'?'交通／車隊公司':o.type==='care_facility'?'長照／日照機構':'其他合作組織'}${!isRequesterHub?(o.taxId?`・統編 ${escapeHTML(o.taxId)}`:'・統編未填'):''}<br>${isRequesterHub?`有效需求者：${memberCount} 人`:`聯絡電話：${escapeHTML(o.contactPhone||'未填')}<br>負責人：${escapeHTML(ownerU?.name||'尚未指定')}・有效成員：${memberCount} 人`}</p></div><span class="pill ${isRequesterHub?'purple':o.active!==false?'green':'gray'}">${isRequesterHub?'系統組織':o.active!==false?'有效':'已移除'}</span>${isRequesterHub?'':orgReviewPill(o)}</div>${!isRequesterHub&&(o.application?.contactName||o.application?.documentsNote||o.reviewNote)?`<p class="small muted">${o.application?.contactName?`聯絡人：${escapeHTML(o.application.contactName)}<br>`:''}${o.application?.documentsNote?`文件：${escapeHTML(o.application.documentsNote)}<br>`:''}${o.reviewNote?`審核備註：${escapeHTML(o.reviewNote)}`:''}</p>`:''}<div class="item-actions">${isRequesterHub?`<button type="button" class="btn outline sm platform-enter-org-btn" data-org="${o.id}">查看需求者</button>`:`${(()=>{const st=orgReviewStatus(o),btn=(d,label,cls)=>`<button type="button" class="btn ${cls} sm platform-org-review-btn" data-org="${o.id}" data-decision="${d}">${label}</button>`;return st==='pending'?btn('approve','核准申請','success')+btn('reject','駁回','warning'):st==='approved'?btn('suspend','停權','warning'):btn('approve',st==='suspended'?'恢復（重新核准）':'重新核准','success');})()}<button type="button" class="btn outline sm platform-edit-org-btn" data-org="${o.id}">編輯名稱／聯絡／負責人</button>${o.active!==false?`<button type="button" class="btn outline sm platform-enter-org-btn" data-org="${o.id}">管理成員</button><button type="button" class="btn warning sm platform-org-active-btn" data-org="${o.id}" data-active="false">停用組織</button>`:`<button type="button" class="btn success sm platform-org-active-btn" data-org="${o.id}" data-active="true">重新啟用</button>`}`}</div></div>`;}).join('')}</div>${platformPrivacySettingsCard()}`;
+  return `<div class="page-head"><div><h2>組織管理</h2><p>平台超級管理者可修改公司名稱、聯絡電話、統一編號與唯一負責人；「需求者組織」維持系統固定管理。</p></div><div class="page-actions"><button type="button" class="btn primary" id="openAddOrganizationBtn">＋ 新增組織</button></div></div><div class="list">${rows.map(o=>{const isRequesterHub=o.id===APP_CONFIG.requesterOrganizationId||o.type==='requester_hub',memberCount=store.state.memberships.filter(m=>m.organizationId===o.id&&Identity.membershipStatus(m)==='active').length,ownerM=isRequesterHub?null:store.state.memberships.find(m=>m.organizationId===o.id&&m.role==='owner'&&Identity.membershipStatus(m)!=='revoked'),ownerU=ownerM?store.state.users.find(u=>u.id===ownerM.userId):null;return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(o.name)}</h4><p>${isRequesterHub?'系統需求者組織・不可手動新增公司角色':o.type==='transport_provider'?'交通／車隊公司':o.type==='care_facility'?'長照／日照機構':'其他合作組織'}${!isRequesterHub?(o.taxId?`・統編 ${escapeHTML(o.taxId)}`:'・統編未填'):''}<br>${isRequesterHub?`有效需求者：${memberCount} 人`:`聯絡電話：${escapeHTML(o.contactPhone||'未填')}<br>負責人：${escapeHTML(ownerU?.name||'尚未指定')}・有效成員：${memberCount} 人`}</p></div><span class="pill ${isRequesterHub?'purple':o.active!==false?'green':'gray'}">${isRequesterHub?'系統組織':o.active!==false?'有效':'已移除'}</span>${isRequesterHub?'':orgReviewPill(o)}</div>${!isRequesterHub&&(o.application?.contactName||o.application?.documentsNote||o.reviewNote)?`<p class="small muted">${o.application?.contactName?`聯絡人：${escapeHTML(o.application.contactName)}<br>`:''}${o.application?.documentsNote?`文件：${escapeHTML(o.application.documentsNote)}<br>`:''}${o.reviewNote?`審核備註：${escapeHTML(o.reviewNote)}`:''}</p>`:''}<div class="item-actions">${isRequesterHub?`<button type="button" class="btn outline sm platform-enter-org-btn" data-org="${o.id}">查看需求者</button>`:`${(()=>{const st=orgReviewStatus(o),btn=(d,label,cls)=>`<button type="button" class="btn ${cls} sm platform-org-review-btn" data-org="${o.id}" data-decision="${d}">${label}</button>`;return st==='pending'?btn('approve','核准申請','success')+btn('reject','駁回','warning'):st==='approved'?btn('suspend','停權','warning'):btn('approve',st==='suspended'?'恢復（重新核准）':'重新核准','success');})()}<button type="button" class="btn outline sm platform-edit-org-btn" data-org="${o.id}">編輯名稱／聯絡／負責人</button>${o.active!==false?`<button type="button" class="btn outline sm platform-enter-org-btn" data-org="${o.id}">管理成員</button><button type="button" class="btn warning sm platform-org-active-btn" data-org="${o.id}" data-active="false">停用組織</button>`:`<button type="button" class="btn success sm platform-org-active-btn" data-org="${o.id}" data-active="true">重新啟用</button>`}`}</div></div>`;}).join('')}</div>${platformPrivacySettingsCard()}${pendingDeletionRequestsCard()}`;
 }
 // 已發布的個資告知、服務條款沒同意最新版本時，要求同意（#26）；平台管理者不需要
 function ensureConsent_(){
@@ -5955,6 +5974,8 @@ async function platformSettingsRequest_(payload,message){try{const r=await backe
 function bindPlatformPrivacySettings(){
   $('saveRetentionYearsBtn')?.addEventListener('click',()=>platformSettingsRequest_({action:'set_retention',years:Number($('retentionYearsInput').value)},'保存期限已更新'));
   $('runRetentionNowBtn')?.addEventListener('click',()=>{if(!confirm('立即把超過保存期限的預約與行程匿名化？匿名化後無法還原。'))return;platformSettingsRequest_({action:'run_retention'},d=>`已匿名化 ${d.anonymized?.bookings||0} 筆預約、${d.anonymized?.trips||0} 趟行程`);});
+  document.querySelectorAll('.deletion-approve-btn').forEach(btn=>btn.addEventListener('click',()=>{if(!confirm('核准後立即匿名化並停用帳號，無法復原。確定執行？'))return;accountDeletionRequest_({action:'approve',id:btn.dataset.request},'已完成刪除');}));
+  document.querySelectorAll('.deletion-reject-btn').forEach(btn=>btn.addEventListener('click',()=>{const note=prompt('請填寫駁回原因');if(note===null)return;if(!String(note).trim()){showToast('駁回必須填寫原因');return;}accountDeletionRequest_({action:'reject',id:btn.dataset.request,note},'已駁回申請');}));
   $('saveLegalDocumentsBtn')?.addEventListener('click',()=>{const doc=(k)=>({version:$(`legalDoc_${k}_version`).value,url:$(`legalDoc_${k}_url`).value});platformSettingsRequest_({action:'set_documents',documents:{privacy_notice:doc('privacy_notice'),terms:doc('terms')}},'條款版本已更新；使用者下次登入時會被要求同意');});
 }
 
@@ -6913,6 +6934,7 @@ function bindViewEvents(){
   document.querySelectorAll('.platform-enter-org-btn').forEach(btn=>btn.addEventListener('click',()=>{const result=Identity.switchOrganization(btn.dataset.org);if(!result.ok){showToast(result.error);return;}currentView='platform-members';applyIdentityContext();renderNav();render();showToast(`正在管理 ${result.organization?.name||'組織'} 成員`);}));
   document.querySelectorAll('.platform-org-review-btn').forEach(btn=>btn.addEventListener('click',()=>reviewOrganizationFromAdmin(btn.dataset.org,btn.dataset.decision)));
   $('orgApplySubmitBtn')?.addEventListener('click',submitOrganizationApplication);
+  bindDeletionRequestCard();
   document.querySelectorAll('.platform-org-active-btn').forEach(btn=>btn.addEventListener('click',()=>openOrganizationStatusConfirm(btn.dataset.org,btn.dataset.active==='true')));
   document.querySelectorAll('.resolve-system-report-btn').forEach(btn=>btn.addEventListener('click',()=>{const result=SystemReport.resolve(btn.dataset.id,Identity.currentUser()?.id);if(!result.ok){showToast(result.error);return;}render();showToast('問題已標記處理');}));
   document.querySelectorAll('.membership-role-select').forEach(select=>select.addEventListener('change',e=>{const result=Identity.setMembershipRole(e.currentTarget.dataset.membership,e.currentTarget.value);if(!result.ok){showToast(result.error);render();return;}render();showToast(`角色已調整為 ${ROLE_LABELS[e.currentTarget.value]||e.currentTarget.value}`);}));
