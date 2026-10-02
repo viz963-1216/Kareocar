@@ -132,8 +132,12 @@ async function newClaimed(id) {
   record('退回後 A 立即讀不到這筆預約的個資（只在遮蔽的需求池裡）',
     !sees(aAfter, 'bookings', 'BKG-ACC-1') && inPool(aAfter, 'BKG-ACC-1')
       && !JSON.stringify(aAfter.data.collections).includes('188號'));
+  // A 已經看不到這筆，伺服器把它當成新增：帶著需求者欄位會先被 400 擋下，不帶則撞上 RLS（403）
   const aWriteBack = await opsUpdate(U.dspA, 'BKG-ACC-1', { state: 'claimed', organizationId: ORG_A });
-  record('退回後 A 不能再寫這筆預約', aWriteBack.status === 403, outcome(aWriteBack));
+  const aWriteBack2 = await opsUpdate(U.dspA, 'BKG-ACC-1', { state: 'claimed', organizationId: ORG_A, requestedByUserId: null });
+  const stillOpen = await row('bookings', 'BKG-ACC-1');
+  record('退回後 A 不能再寫這筆預約', [400, 403].includes(aWriteBack.status) && aWriteBack2.status === 403
+    && stillOpen.organization_id === null && stillOpen.data.state === 'open', `${outcome(aWriteBack)} / ${outcome(aWriteBack2)}`);
   const bClaim = await claim(U.dspB, 'BKG-ACC-1', ORG_B);
   record('B 可以重新接案並看到完整預約', bClaim.status === 200 && sees(await load(U.dspB), 'bookings', 'BKG-ACC-1'), outcome(bClaim));
 
