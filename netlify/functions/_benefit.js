@@ -13,8 +13,11 @@
  *   bookingBenefit(client, booking)   建立預約時的補助估算
  */
 
+const transport = require('./_benefit-transport');
+
 const DEFAULT_PROGRAM_CODE = 'transportation_primary';
-const CALCULATION_MODES = ['fixed_amount', 'percentage', 'none'];
+// transport_zone：長照交通接送的分區月額度＋自付比例（#24，見 _benefit-transport.js）
+const CALCULATION_MODES = ['fixed_amount', 'percentage', 'transport_zone', 'none'];
 
 const text = (v) => String(v === undefined || v === null ? '' : v).trim();
 const dateOnly = (v) => {
@@ -59,7 +62,12 @@ function normalizeRulesetInput(input = {}) {
       currency: text(calc.currency).toUpperCase() || 'TWD',
       amount: numberOrNull(calc.amount),
       percentage: numberOrNull(calc.percentage),
-      maxAmount: numberOrNull(calc.maxAmount)
+      maxAmount: numberOrNull(calc.maxAmount),
+      ...(calc.mode === 'transport_zone' ? {
+        cmsMin: numberOrNull(calc.cmsMin),
+        monthlyAmountByZone: calc.monthlyAmountByZone || {},
+        copayByZone: calc.copayByZone || {}
+      } : {})
     },
     source: {
       agency: text(src.agency), title: text(src.title), url: text(src.url),
@@ -77,6 +85,7 @@ function rulesetFromRow(row) {
     effectiveFrom: dateOnly(row.effective_from), effectiveTo: dateOnly(row.effective_to),
     status: row.status, conditions: row.conditions || {}, calculation: row.calculation || {}, source: row.source || {},
     reviewNote: row.review_note || '', createdByUserId: row.created_by_user_id || null,
+    origin: row.origin || 'manual', sourceHash: row.source_hash || null, diff: row.diff || null, fetchRunId: row.fetch_run_id || null,
     approvedByUserId: row.approved_by_user_id || null, approvedAt: row.approved_at || null,
     supersededAt: row.superseded_at || null, rejectedByUserId: row.rejected_by_user_id || null,
     rejectedAt: row.rejected_at || null, createdAt: row.created_at, updatedAt: row.updated_at
@@ -97,6 +106,7 @@ function validateRuleset(r, { forApproval = false } = {}) {
     if (calc.percentage === null || calc.percentage < 0 || calc.percentage > 100) errors.push('補助比例必須介於 0–100');
     if (calc.maxAmount !== null && calc.maxAmount !== undefined && calc.maxAmount < 0) errors.push('補助上限不可為負數');
   }
+  if (calc.mode === 'transport_zone') errors.push(...transport.validTransportCalculation(calc));
   if (forApproval) {
     const src = r.source || {};
     if (!src.agency) errors.push('核准前必須填寫規則來源機關');
@@ -111,6 +121,7 @@ function normalizeFacts(facts = {}) {
   return {
     cmsLevel: numberOrNull(facts.cmsLevel),
     residenceCity: text(facts.residenceCity) || null,
+    residenceDistrict: text(facts.residenceDistrict) || null,
     approvedCarePlan: boolOrNull(facts.approvedCarePlan),
     transportationApproved: boolOrNull(facts.transportationApproved),
     identityCategory: text(facts.identityCategory) || null,
@@ -195,6 +206,16 @@ function evaluate(ruleset, { requestedService = 'transportation', serviceDate = 
     subsidy = Math.max(0, round2(capped));
     copay = Math.max(0, round2(f.eligibleCost - subsidy));
     reasons.push(`依可補助費用 × ${calc.percentage}% 計算${calc.maxAmount !== null && calc.maxAmount !== undefined ? `，上限 ${calc.maxAmount}` : ''}`);
+  } else if (calc.mode === 'transport_zone') {
+    const t = transport.computeTransport(calc, f);
+    if (t.missing) {
+      return { status: 'insufficient_data', eligibility: { eligible: null, confidence: 'estimated' }, estimatedSubsidy: null,
+        estimatedCopay: null, currency, reasons, warnings: [`缺少必要資料：${t.missing.join('、')}（交通分區需要居住縣市，自付比例需要福利身分）`, NOT_OFFICIAL],
+        missingFields: t.missing };
+    }
+    subsidy = t.subsidy;
+    copay = t.copay;
+    reasons.push(`交通接送第 ${t.zone} 區月額度 ${t.monthly} 元，自付 ${t.rate}%`);
   } else {
     warnings.push('此規則只判斷資格，未設定金額公式。');
   }

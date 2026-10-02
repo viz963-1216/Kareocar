@@ -55,7 +55,7 @@ ok('縣市規則：居住地不符不給', () => {
 });
 ok('事實欄位正規化（字串轉數字、布林）', () => {
   assert.deepEqual(b.normalizeFacts({ cmsLevel: '4', approvedCarePlan: 'true', eligibleCost: '' }),
-    { cmsLevel: 4, residenceCity: null, approvedCarePlan: true, transportationApproved: null, identityCategory: null, eligibleCost: null });
+    { cmsLevel: 4, residenceCity: null, residenceDistrict: null, approvedCarePlan: true, transportationApproved: null, identityCategory: null, eligibleCost: null });
 });
 ok('草稿檢查：缺版本、名稱、生效日', () => {
   const r = b.normalizeRulesetInput({ code: 'x' });
@@ -72,5 +72,60 @@ ok('輸入正規化：等級清單、計算方式不合法改成 none', () => {
   const r = b.normalizeRulesetInput({ conditions: { cmsLevels: '4,2,9,x,2' }, calculation: { mode: 'magic' } });
   assert.deepEqual(r.conditions.cmsLevels, [2, 4]);
   assert.equal(r.calculation.mode, 'none');
+});
+
+// ---- #24：交通分區規則、公告解析
+const t = require(path.join(__dirname, '..', 'netlify', 'functions', '_benefit-transport.js'));
+const f = require(path.join(__dirname, '..', 'netlify', 'functions', '_benefit-fetch.js'));
+const zoneRule = rule({ calculation: { mode: 'transport_zone', currency: 'TWD', cmsMin: 2,
+  monthlyAmountByZone: { 1: 1680, 2: 1840, 3: 2000, 4: 2400 }, copayByZone: f.BUNDLED_COPAY } });
+ok('交通分區：縣市判斷分區，偏遠行政區算第 4 區', () => {
+  assert.equal(t.transportZone('臺北市'), 1);
+  assert.equal(t.transportZone('台中市西屯區'), 2);
+  assert.equal(t.transportZone('新北市烏來區'), 4);
+  assert.equal(t.transportZone('火星'), null);
+});
+ok('交通分區規則：月額度 ×（100 − 自付%），依福利身分', () => {
+  const general = b.evaluate(zoneRule, { serviceDate: '2099-01-01', facts: { cmsLevel: 4, residenceCity: '新北市', identityCategory: 'general' } });
+  assert.equal(general.estimatedSubsidy, 1343);
+  assert.equal(general.estimatedCopay, 496);
+  const low = b.evaluate(zoneRule, { serviceDate: '2099-01-01', facts: { cmsLevel: 4, residenceCity: '臺北市', identityCategory: 'low_income' } });
+  assert.equal(low.estimatedSubsidy, 1680);
+});
+ok('交通分區規則：缺居住縣市或福利身分就是資料不足', () => {
+  const r = b.evaluate(zoneRule, { serviceDate: '2099-01-01', facts: { cmsLevel: 4 } });
+  assert.equal(r.status, 'insufficient_data');
+  assert.deepEqual(r.missingFields, ['residenceCity', 'identityCategory']);
+});
+ok('交通分區規則：月額度或自付比例不合理時不能存', () => {
+  const bad = b.normalizeRulesetInput({ code: 'x', version: '1', name: 'n', effectiveFrom: '2026-01-01',
+    calculation: { mode: 'transport_zone', monthlyAmountByZone: { 1: 0 }, copayByZone: {} } });
+  assert.ok(b.validateRuleset(bad).some((e) => /月額度/.test(e)));
+});
+const sample = (amounts, cms = 2) => `<html><body><h2>長照服務給付額度表</h2><table><tr><th>交通接送（月）</th></tr>
+<tr><td>第一區：${amounts[0]}元 第二區：${amounts[1]}元 第三區：${amounts[2]}元 第四區：${amounts[3]}元</td></tr></table>
+<p>符合長照需要等級${cms}級以上者</p><script>var x='第一區：9元';</script></body></html>`;
+ok('公告解析：取出四區月額度（含千分位）與等級門檻，忽略 script', () => {
+  const p = f.parse1966(sample(['1,680', '1,840', '2,000', '2,400']));
+  assert.deepEqual(p, { cmsMin: 2, monthlyAmountByZone: { 1: 1680, 2: 1840, 3: 2000, 4: 2400 } });
+  assert.equal(f.parse1966(sample(['1,700', '1,900', '2,100', '2,500'], 3)).monthlyAmountByZone[4], 2500);
+});
+ok('公告解析：格式改變時回報問題，不猜數字', () => {
+  const p = f.parse1966('<p>交通接送 請洽各縣市</p>');
+  assert.ok(Array.isArray(p.problems) && p.problems.length === 2);
+});
+ok('差異：只列出有變的欄位', () => {
+  const before = { cmsMin: 2, monthlyAmountByZone: { 1: 1680, 2: 1840, 3: 2000, 4: 2400 }, copayByZone: f.BUNDLED_COPAY };
+  const after = { ...before, monthlyAmountByZone: { ...before.monthlyAmountByZone, 4: 2500 } };
+  assert.deepEqual(f.diffPolicies(before, after), [{ field: '第 4 區月額度', from: 2400, to: 2500 }]);
+  assert.ok(f.diffPolicies(null, after).length > 4);
+});
+const fs = require('node:fs');
+ok('瀏覽器不再連政府網站或 r.jina.ai（CSP 與前端程式）', () => {
+  const headers = fs.readFileSync(path.join(__dirname, '..', '_headers'), 'utf8');
+  const csp = headers.match(/connect-src([^;]*)/)[1];
+  assert.equal(csp.trim(), "'self'");
+  const app = fs.readFileSync(path.join(__dirname, '..', 'js', 'app.js'), 'utf8');
+  assert.ok(!/fetch\([^)]*(jina|gov\.tw)/.test(app) && !app.includes("'https://r.jina.ai/'"));
 });
 console.log(`benefit: ${pass} passed`);

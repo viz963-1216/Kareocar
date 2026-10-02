@@ -1008,7 +1008,7 @@ const AppStateDatabase={
         // 通知是伺服器唯讀的集合（#25）：不在寫入佇列裡，但要從伺服器載入
         db.notifications=Array.isArray(collections.notifications)?collections.notifications:[];
         // 補助規則版本與試算也是伺服器唯讀（#23）：由 benefit-ruleset／benefit-assess 端點寫入
-        ['benefitRulesets','benefitRulesetEvents','benefitAssessments','benefitAuthorizations','benefitAuthorizationEvents','benefitLedger','deletionRequests'].forEach(name=>{db[name]=Array.isArray(collections[name])?collections[name]:[];});
+        ['benefitRulesets','benefitRulesetEvents','benefitAssessments','benefitAuthorizations','benefitAuthorizationEvents','benefitLedger','deletionRequests','benefitSourceFetches'].forEach(name=>{db[name]=Array.isArray(collections[name])?collections[name]:[];});
         db.demandPool=Array.isArray(result.data?.pool)?result.data.pool:[];
         db.integration={...(db.integration||{}),lastSyncStatus:result.data?.truncated?'部分資料已載入':'同步完成',
                         lastSyncDetails:result.data?.truncated?['資料量達到上限，目前僅載入部分資料。']:[],
@@ -6124,10 +6124,10 @@ function benefitMoney(value,currency='TWD'){return value===null||value===undefin
 function benefitAdvancedDashboard(){
   const actorUserId=Identity.currentUser()?.id,canManage=Benefit.canManageRulesets(actorUserId),validation=Benefit.validate(),rules=Benefit.rulesets({includeDraft:canManage,includeRetired:canManage,actorUserId}),assessments=Benefit.list(null,{actorUserId}),recipients=benefitAccessibleRecipients();
   const published=(store.state.benefitRulesets||[]).filter(r=>r.status==='approved').length,drafts=canManage?(store.state.benefitRulesets||[]).filter(r=>r.status==='draft').length:0;
-  return `<div class="page-head"><div><h2>補助規則與資格</h2><p>第一階段規則／資格＋第二階段正式核定與帳本＋第三階段資料匯入、版本差異、到期提醒與回歸測試。</p></div><div class="page-actions">${canManage?'<button type="button" class="btn primary" id="openBenefitRulesetBtn">＋ 規則集</button><button type="button" class="btn outline" id="openBenefitImportBtn">匯入</button><button type="button" class="btn outline" id="openBenefitDiffBtn">版本差異</button><button type="button" class="btn warning" id="runBenefitRegressionBtn">回歸測試</button>':''}${recipients.length?'<button type="button" class="btn outline" id="openBenefitAssessmentBtn">新增資格試算</button>':''}${recipients.some(r=>Benefit.canManageAuthorization(actorUserId,r.id,Identity.isSuperAdmin()?orgId():orgId()))?'<button type="button" class="btn success" id="openBenefitAuthorizationBtn">＋ 正式核定</button>':''}</div></div>
+  return `<div class="page-head"><div><h2>補助規則與資格</h2><p>第一階段規則／資格＋第二階段正式核定與帳本＋第三階段資料匯入、版本差異、到期提醒與回歸測試。</p></div><div class="page-actions">${canManage?'<button type="button" class="btn primary" id="openBenefitRulesetBtn">＋ 規則集</button><button type="button" class="btn outline" id="openBenefitImportBtn">匯入</button><button type="button" class="btn outline" id="openBenefitDiffBtn">版本差異</button><button type="button" class="btn warning" id="runBenefitRegressionBtn">回歸測試</button><button type="button" class="btn outline" id="fetchBenefitRulesNowBtn">立即抓取公告</button>':''}${recipients.length?'<button type="button" class="btn outline" id="openBenefitAssessmentBtn">新增資格試算</button>':''}${recipients.some(r=>Benefit.canManageAuthorization(actorUserId,r.id,Identity.isSuperAdmin()?orgId():orgId()))?'<button type="button" class="btn success" id="openBenefitAuthorizationBtn">＋ 正式核定</button>':''}</div></div>
   <div class="metric-grid"><div class="metric"><span>已發布規則集</span><strong>${published}</strong></div><div class="metric"><span>草稿規則集</span><strong>${drafts}</strong></div><div class="metric"><span>可查看資格試算</span><strong>${assessments.length}</strong></div><div class="metric"><span>第三階段驗證</span><strong style="font-size:18px">${validation.ok?'PASS':'CHECK'}</strong><small>${validation.errors.length} errors・${validation.warnings.length} warnings</small></div></div>
   ${validation.errors.length?`<section class="card issue-card"><div class="card-head"><div><h3>補助資料驗證失敗</h3><p>先修正以下 補助資料一致性規則，再視為可營運。</p></div><span class="pill red">${validation.errors.length}</span></div><div class="meta">${validation.errors.slice(0,20).map(escapeHTML).join('<br>')}</div></section>`:''}
-  <section class="card"><div class="card-head"><div><h3>補助規則集</h3><p>已發布規則不可直接改內容；變更必須新增版本。</p></div><span class="pill blue">${rules.length} 筆</span></div><div class="list">${rules.map(rule=>{const rv=Benefit.validateRuleset(rule,{forPublish:rule.status==='approved'}),src=rule.source||{},calc=rule.calculation||{};return `<div class="list-item benefit-rule-card ${rule.status}"><div class="list-item-head"><div><h4>${escapeHTML(rule.name||rule.code)}｜${escapeHTML(rule.version||'未填版本')}</h4><p>${escapeHTML(rule.serviceType==='transportation'?'交通接送':'其他服務')}・${escapeHTML(rule.jurisdiction?.city||'不限縣市')}<br>${escapeHTML(rule.effectiveFrom||'未設定')} → ${escapeHTML(rule.effectiveTo||'持續有效')}<br>計算：${escapeHTML(({none:'只判斷資格',fixed_amount:'固定金額',percentage:'比例'})[calc.mode]||'只判斷資格')}${calc.mode==='fixed_amount'?`・${benefitMoney(calc.amount,calc.currency)}`:calc.mode==='percentage'?`・${calc.percentage??'—'}%${calc.maxAmount!==null&&calc.maxAmount!==undefined?`・上限 ${benefitMoney(calc.maxAmount,calc.currency)}`:''}`:'・只判斷資格'}<br><span class="benefit-source">來源：${escapeHTML(src.agency||'未填')}・${escapeHTML(src.title||'未填')}${src.url?`・<a href="${escapeHTML(src.url)}" target="_blank" rel="noopener">官方來源</a>`:''}</span></p></div><span class="pill ${benefitRulesetStatusClass(rule.status)}">${escapeHTML(({draft:'草稿',approved:'已核准',superseded:'已被取代',rejected:'已駁回'})[rule.status]||'未知')}</span></div>${rv.errors.length?`<div class="benefit-result bad">${rv.errors.map(escapeHTML).join('；')}</div>`:rv.warnings.length?`<div class="benefit-result warn">${rv.warnings.map(escapeHTML).join('；')}</div>`:''}<div class="item-actions">${canManage&&rule.status==='draft'?`<button type="button" class="btn outline sm benefit-edit-ruleset-btn" data-rule="${rule.id}">編輯草稿</button><button type="button" class="btn success sm benefit-publish-ruleset-btn" data-rule="${rule.id}>驗證並核准</button><button type="button" class="btn danger sm benefit-retire-ruleset-btn" data-rule="${rule.id}">駁回</button>`:''}</div></div>`;}).join('')||'<div class="empty">目前沒有 補助規則集。系統不會自行假造政府補助規則。</div>'}</div></section>
+  <section class="card"><div class="card-head"><div><h3>補助規則集</h3><p>已核准的規則不可直接改內容；公告每天自動抓取，內容有變會產生草稿等待審核。</p>${canManage?benefitLastFetchHtml():''}</div><span class="pill blue">${rules.length} 筆</span></div><div class="list">${rules.map(rule=>{const rv=Benefit.validateRuleset(rule,{forPublish:rule.status==='approved'}),src=rule.source||{},calc=rule.calculation||{};return `<div class="list-item benefit-rule-card ${rule.status}"><div class="list-item-head"><div><h4>${escapeHTML(rule.name||rule.code)}｜${escapeHTML(rule.version||'未填版本')}</h4><p>${escapeHTML(rule.serviceType==='transportation'?'交通接送':'其他服務')}・${escapeHTML(rule.jurisdiction?.city||'不限縣市')}<br>${escapeHTML(rule.effectiveFrom||'未設定')} → ${escapeHTML(rule.effectiveTo||'持續有效')}<br>計算：${escapeHTML(({none:'只判斷資格',fixed_amount:'固定金額',percentage:'比例'})[calc.mode]||'只判斷資格')}${calc.mode==='fixed_amount'?`・${benefitMoney(calc.amount,calc.currency)}`:calc.mode==='percentage'?`・${calc.percentage??'—'}%${calc.maxAmount!==null&&calc.maxAmount!==undefined?`・上限 ${benefitMoney(calc.maxAmount,calc.currency)}`:''}`:'・只判斷資格'}<br><span class="benefit-source">來源：${escapeHTML(src.agency||'未填')}・${escapeHTML(src.title||'未填')}${src.url?`・<a href="${escapeHTML(src.url)}" target="_blank" rel="noopener">官方來源</a>`:''}</span></p></div><span class="pill ${benefitRulesetStatusClass(rule.status)}">${escapeHTML(({draft:'草稿',approved:'已核准',superseded:'已被取代',rejected:'已駁回'})[rule.status]||'未知')}</span></div>${rv.errors.length?`<div class="benefit-result bad">${rv.errors.map(escapeHTML).join('；')}</div>`:rv.warnings.length?`<div class="benefit-result warn">${rv.warnings.map(escapeHTML).join('；')}</div>`:''}${benefitRuleOriginHtml(rule)}<div class="item-actions">${canManage&&rule.status==='draft'?`${rule.origin==='auto_fetch'?'':`<button type="button" class="btn outline sm benefit-edit-ruleset-btn" data-rule="${rule.id}">編輯草稿</button>`}<button type="button" class="btn success sm benefit-publish-ruleset-btn" data-rule="${rule.id}>驗證並核准</button><button type="button" class="btn danger sm benefit-retire-ruleset-btn" data-rule="${rule.id}">駁回</button>`:''}</div></div>`;}).join('')||'<div class="empty">目前沒有 補助規則集。系統不會自行假造政府補助規則。</div>'}</div></section>
   <section class="card"><div class="card-head"><div><h3>正式核定與額度餘額</h3><p>正式核定與 資格預估 分離。可用額度＝核定＋調整－已預留－已結算。</p></div><span class="pill green">${Benefit.authorizations({actorUserId,organizationId:orgId(),includeRevoked:true}).length} 筆</span></div><div class="list">${Benefit.authorizations({actorUserId,organizationId:orgId(),includeRevoked:true}).map(a=>{const r=CareRecipient.get(a.recipientId),bal=Benefit.getBalance(a.id);return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(CareRecipient.displayName(r)||a.recipientId)}｜${escapeHTML(a.programCode==='transportation_primary'||a.programCode==='transportation'?'交通接送':'其他補助方案')}</h4><p>${escapeHTML(a.validFrom||'—')} → ${escapeHTML(a.validTo||'持續有效')}・${escapeHTML(a.referenceNo||'無核定文號')}<br>核定 ${benefitMoney(bal.approved,a.currency)}${bal.adjustment?`・調整 ${benefitMoney(bal.adjustment,a.currency)}`:''}・已預留 ${benefitMoney(bal.reserved,a.currency)}・已結算 ${benefitMoney(bal.settled,a.currency)}<br><strong>可用額度 ${benefitMoney(bal.available,a.currency)}</strong></p></div><span class="pill ${a.status==='active'?'green':'gray'}">${escapeHTML(({active:'有效',revoked:'已撤銷',expired:'已到期'})[a.status]||'未知')}</span></div><div class="item-actions">${Benefit.canManageAuthorization(actorUserId,a.recipientId,a.organizationId)?`<button type="button" class="btn warning sm benefit-adjust-btn" data-auth="${a.id}">額度調整</button>${a.status==='active'?`<button type="button" class="btn danger sm benefit-revoke-auth-btn" data-auth="${a.id}">撤銷核定</button>`:''}`:''}</div></div>`;}).join('')||'<div class="empty">目前沒有正式核定資料；系統不會把試算結果自動視為政府核定。</div>'}</div></section>
   <section class="card"><div class="card-head"><div><h3>補助帳本／對帳</h3><p>預留、釋放、結算、修正回轉與額度調整全部採僅追加紀錄。</p></div><span class="pill blue">${Benefit.getLedger({actorUserId,organizationId:orgId()}).length} 筆</span></div>${(()=>{const x=Benefit.reconciliation({actorUserId,organizationId:orgId()});return `<div class="daily-summary"><div class="mini-stat"><strong>${benefitMoney(x.totalApproved)}</strong><span>核定＋調整</span></div><div class="mini-stat"><strong>${benefitMoney(x.totalReserved)}</strong><span>已預留</span></div><div class="mini-stat"><strong>${benefitMoney(x.totalSettled)}</strong><span>已結算</span></div><div class="mini-stat"><strong>${benefitMoney(x.totalAvailable)}</strong><span>可用額度</span></div></div>`;})()}<div class="table-wrap"><table class="data-table"><thead><tr><th>時間</th><th>類型</th><th>服務對象</th><th>Booking / Trip</th><th>金額</th><th>變動</th><th>原因</th></tr></thead><tbody>${Benefit.getLedger({actorUserId,organizationId:orgId()}).slice(0,120).map(e=>`<tr><td>${formatDateTime(e.createdAt)}</td><td><strong>${escapeHTML(e.entryType)}</strong></td><td>${escapeHTML(CareRecipient.displayName(CareRecipient.get(e.recipientId))||e.recipientId||'—')}</td><td>${escapeHTML(e.bookingId||'—')}<br>${escapeHTML(e.tripId||'')}</td><td>${benefitMoney(e.amount,e.currency)}</td><td><span class="small">R ${Number(e.reservedDelta||0)>=0?'+':''}${e.reservedDelta||0}<br>S ${Number(e.settledDelta||0)>=0?'+':''}${e.settledDelta||0}<br>A ${Number(e.authorizationDelta||0)>=0?'+':''}${e.authorizationDelta||0}</span></td><td>${escapeHTML(e.reason||'—')}</td></tr>`).join('')||'<tr><td colspan="7"><div class="empty">尚無帳本紀錄</div></td></tr>'}</tbody></table></div></section>
   <section class="card"><div class="card-head"><div><h3>第三階段提醒／到期監看</h3><p>規則、正式核定到期與 長照需要等級資料待確認。提醒窗口依 自動化設定（目前 ${Benefit.getAutomationSettings().alertDays} 天），僅提示、不會自動變更資格或額度。</p></div><span class="pill yellow">${Benefit.alerts({actorUserId,organizationId:orgId()}).length} 項</span></div><div class="list">${Benefit.alerts({actorUserId,organizationId:orgId()}).slice(0,40).map(x=>`<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(x.title)}</h4><p>${escapeHTML(x.detail)}${x.date?`・日期 ${escapeHTML(x.date)}`:''}</p></div><span class="pill ${x.severity==='danger'?'red':'yellow'}">${x.days<0?'已逾期':x.days===0?'今日':`${x.days} 天`}</span></div></div>`).join('')||'<div class="empty">未發現目前提醒窗口內到期或待補長照需要等級項目。</div>'}</div></section>
@@ -6139,7 +6139,6 @@ const BENEFIT_LATEST_OFFICIAL_SOURCES=Object.freeze([
   {id:'1966',title:'衛福部 1966 長照專區｜申請長照服務',url:'https://1966.gov.tw/LTC/cp-6533-70777-207.html'},
   {id:'mohw_rules',title:'衛福部｜長期照顧服務申請及給付辦法附表',url:'https://www.mohw.gov.tw/dl-97629-9ca5aed2-743b-46ed-8659-4e45d9996257.html'}
 ]);
-const BENEFIT_TRANSPORT_REMOTE_READER='https://r.jina.ai/';
 const BENEFIT_CURRENT_TRANSPORT_POLICY=Object.freeze({
   policyDate:'2026-08-27',
   cmsMin:2,
@@ -6197,55 +6196,18 @@ function benefitLatestDefaultInfo(){
   };
 }
 function benefitLatestInfo(){
-  return store.state.benefitLatestInfo||benefitLatestDefaultInfo();
+  return benefitApprovedTransportInfo()||benefitLatestDefaultInfo();
 }
-async function benefitFetchOfficialText(url){
-  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),7000);
-  try{
-    const direct=await fetch(url,{cache:'no-store',signal:controller.signal,credentials:'omit'});
-    if(direct.ok)return {ok:true,text:await direct.text(),mode:'官方網站直接連線'};
-  }catch(e){}
-  finally{clearTimeout(timer);}
-  try{
-    const relayUrl=`${BENEFIT_TRANSPORT_REMOTE_READER}${url}`;
-    const relay=await fetch(relayUrl,{cache:'no-store',credentials:'omit'});
-    if(relay.ok)return {ok:true,text:await relay.text(),mode:'官方頁面文字轉接'};
-  }catch(e){}
-  return {ok:false,text:'',mode:'最近成功快取'};
-}
-function benefitExtractTransportPolicy(textValue,base){
-  let raw=String(textValue||'');
-  try{
-    if(/<html|<table|<body/i.test(raw)) raw=new DOMParser().parseFromString(raw,'text/html').body?.innerText||raw;
-  }catch(e){}
-  const source=raw.replace(/,/g,'').replace(/\u00a0/g,' ').replace(/[ \t]+/g,' ');
-  const amount=(fallback)=>{
-    const m=source.match(new RegExp(`${fallback}\\s*元`));
-    return m?Number(fallback):fallback;
-  };
-  const info=deepClone(base);
-  info.monthlyAmountByZone={1:amount(1680),2:amount(1840),3:amount(2000),4:amount(2400)};
-  const cmsMatch=source.match(/長照需要等級\s*([2-8])\s*級以上/);
-  if(cmsMatch)info.cmsMin=Number(cmsMatch[1]);
-
-  // 附表五排列：B/C 三類後，依序是交通第1~4區各三類（第一類/第二類/第三類）。
-  // 官方分類對應本 UI：第一類=低收入戶、第二類=中低收入戶、第三類=一般戶。
-  const compact=source.replace(/\s+/g,' ');
-  const rateMatch=compact.match(/第二級[\s\S]{0,1200}?0\s+5\s+16\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})/);
-  if(rateMatch){
-    const v=rateMatch.slice(1).map(Number);
-    const valid=v.length===12&&v.every(n=>Number.isFinite(n)&&n>=0&&n<=100);
-    if(valid){
-      info.copayByZone={
-        1:{low_income:v[0],middle_low_income:v[1],general:v[2]},
-        2:{low_income:v[3],middle_low_income:v[4],general:v[5]},
-        3:{low_income:v[6],middle_low_income:v[7],general:v[8]},
-        4:{low_income:v[9],middle_low_income:v[10],general:v[11]}
-      };
-      info.copayParsedFromOfficial=true;
-    }
-  }
-  return info;
+// 公告由後端每日排程抓取、產生草稿、平台管理員核准（#24）。瀏覽器不再連政府網站或 r.jina.ai；
+// 快速試算用目前已核准的交通分區規則，沒有才用內建快照。
+function benefitApprovedTransportInfo(){
+  const r=(store.state.benefitRulesets||[]).find(x=>x.status==='approved'&&x.calculation?.mode==='transport_zone');
+  if(!r)return null;
+  const c=r.calculation;
+  return {schemaVersion:1,status:'approved_ruleset',fetchedAt:r.approvedAt||null,checkedAt:r.source?.checkedAt||r.effectiveFrom,
+    sourceMode:`已核准規則 ${r.version}`,rulesetId:r.id,rulesetVersion:r.version,cmsMin:Number(c.cmsMin||2),
+    monthlyAmountByZone:deepClone(c.monthlyAmountByZone||{}),copayByZone:deepClone(c.copayByZone||{}),
+    sources:deepClone(BENEFIT_LATEST_OFFICIAL_SOURCES),note:'規則由平台管理員核准；政府正式核定仍以照管中心／主管機關資料為準。'};
 }
 const BenefitLatestInfo={
   initialize(){
@@ -6261,30 +6223,12 @@ const BenefitLatestInfo={
     const ms=at?Date.now()-new Date(at).getTime():Infinity;
     return !Number.isFinite(ms)||ms>maxHours*3600000;
   },
-  async refresh({manual=false}={}){
+  // 重新載入伺服器資料（已核准的規則）；不再連外部網站
+  async refresh(){
     if(benefitQuickUiState.refreshing)return {ok:false,error:'正在更新'};
     benefitQuickUiState.refreshing=true;
-    try{
-      const results=await Promise.all(BENEFIT_LATEST_OFFICIAL_SOURCES.map(async s=>({...s,...await benefitFetchOfficialText(s.url)})));
-      const successful=results.filter(x=>x.ok);
-      if(!successful.length){
-        const cached=benefitLatestInfo();
-        return {ok:false,error:'目前無法連線官方來源，已保留最近成功資料。',info:cached};
-      }
-      let merged=benefitLatestDefaultInfo();
-      successful.forEach(x=>{merged=benefitExtractTransportPolicy(x.text,merged);});
-      merged.status='fresh_official';
-      merged.fetchedAt=nowISO();
-      merged.checkedAt=dateKey();
-      merged.sourceMode=successful.some(x=>x.mode==='官方網站直接連線')?'官方網站即時更新':'官方頁面文字轉接';
-      merged.sources=results.map(x=>({id:x.id,title:x.title,url:x.url,ok:x.ok,mode:x.mode}));
-      merged.note='自動更新只用於預估；政府正式核定仍以照管中心／主管機關資料為準。';
-      store.mutate(db=>{db.benefitLatestInfo=merged;});
-      Audit.log('benefit.latest_info.refreshed',`更新長照交通補助公開資訊：${merged.sourceMode}`,{actorUserId:Identity.currentUser()?.id||null});
-      return {ok:true,info:merged};
-    }finally{
-      benefitQuickUiState.refreshing=false;
-    }
+    try{const r=await AppStateDatabase.loadAll({silent:true});return {ok:!!r?.ok,info:benefitLatestInfo(),error:r?.ok?null:(r?.error||'載入失敗')};}
+    finally{benefitQuickUiState.refreshing=false;}
   },
   estimate({recipientId,cmsLevel,identityCategory='general'}={}){
     const recipient=CareRecipient.get(recipientId);
@@ -6313,13 +6257,7 @@ const BenefitLatestInfo={
     await this.refresh({manual:true});
     return this.estimate(input);
   },
-  async ensureFresh(){
-    const now=Date.now();
-    if(!this.isStale(24)||benefitQuickUiState.refreshing||now-benefitQuickUiState.lastAutoAttemptAt<60000)return;
-    benefitQuickUiState.lastAutoAttemptAt=now;
-    const result=await this.refresh();
-    if(result?.ok&&currentView==='benefits')render();
-  }
+  async ensureFresh(){ return {ok:true}; }
 };
 
 function benefitSimpleResultHtml(result){
@@ -6382,6 +6320,18 @@ function benefitDashboard(){
   ${canManage?`<details class="benefit-advanced"><summary>進階管理（規則、核定、帳本、匯入、測試）</summary><div class="benefit-advanced-body">${benefitAdvancedDashboard()}</div></details>`:''}`;
 }
 
+// 自動抓取的草稿：顯示來源與和目前核准版本的差異（#24）
+function benefitRuleOriginHtml(rule){
+  if(rule.origin!=='auto_fetch')return '';
+  const d=rule.diff||{},changes=d.changes||[],notes=d.reviewNotes||[];
+  return `<div class="benefit-result ${changes.length||notes.length?'warn':''}"><strong>自動抓取</strong>・比較對象：${escapeHTML(d.comparedWith||'（目前沒有已核准版本）')}<br>${changes.length?changes.map(c=>`${escapeHTML(c.field)}：${escapeHTML(String(c.from??'—'))} → ${escapeHTML(String(c.to??'—'))}`).join('<br>'):'與目前核准版本內容相同'}${notes.length?`<br>${notes.map(n=>`⚠ ${escapeHTML(n)}`).join('<br>')}`:''}</div>`;
+}
+function benefitLastFetchHtml(){
+  const rows=store.state.benefitSourceFetches||[];if(!rows.length)return '';
+  const runId=rows[0].runId,run=rows.filter(r=>r.runId===runId);
+  return `<p class="muted small">最近一次公告抓取：${escapeHTML(formatDateTime(rows[0].fetchedAt))}・${run.map(r=>`${escapeHTML(r.sourceId)} ${r.status==='ok'?'成功':`失敗（${escapeHTML(r.error)}）`}`).join('・')}</p>`;
+}
+async function fetchBenefitRulesNow(){try{const r=await backendJsonPost(APP_CONFIG.benefitRulesetUrl,{action:'fetch_now'});await AppStateDatabase.loadAll({silent:true});render();const d=r.data||{};showToast(({draft_created:'公告內容有變，已產生自動草稿，請審核',unchanged:'公告內容沒有變化，不產生新草稿',fetch_failed:'抓取失敗，已送出告警，現行版本不變',parse_failed:'公告格式改變無法解析，已送出告警，現行版本不變'})[d.status]||'抓取完成');}catch(error){showToast(error.message||'抓取失敗');}}
 function benefitRulesetFormValue(selectId,value){const el=$(selectId);if(el)el.value=value===true?'true':value===false?'false':'';}
 function openBenefitRulesetEditor(ruleId=''){
   if(!Benefit.canManageRulesets(Identity.currentUser()?.id)){showToast('只有 平台超級管理者可以管理 補助規則集');return;}const r=ruleId?Benefit.ruleset(ruleId):null;if(r&&r.status!=='draft'){showToast('只有草稿可以編輯');return;}$('benefitRulesetId').value=r?.id||'';$('benefitRulesetModalTitle').textContent=r?'編輯補助草稿':'新增 補助規則集';$('benefitRuleCode').value=r?.code||Benefit.constants.defaultProgramCode;$('benefitRuleVersion').value=r?.version||'';$('benefitRuleName').value=r?.name||'';$('benefitRuleCity').value=r?.jurisdiction?.city||'';$('benefitRuleEffectiveFrom').value=r?.effectiveFrom||dateKey();$('benefitRuleEffectiveTo').value=r?.effectiveTo||'';$('benefitRuleCmsLevels').value=(r?.conditions?.cmsLevels||[]).join(',');$('benefitRuleIdentityCategories').value=(r?.conditions?.identityCategories||[]).join(',');benefitRulesetFormValue('benefitRuleRequireCarePlan',r?.conditions?.requireApprovedCarePlan);benefitRulesetFormValue('benefitRuleRequireTransport',r?.conditions?.requireTransportationApproved);$('benefitRuleCalculationMode').value=r?.calculation?.mode||'none';$('benefitRuleAmount').value=r?.calculation?.amount??'';$('benefitRulePercentage').value=r?.calculation?.percentage??'';$('benefitRuleMaxAmount').value=r?.calculation?.maxAmount??'';$('benefitRuleSourceAgency').value=r?.source?.agency||'';$('benefitRuleSourceTitle').value=r?.source?.title||'';$('benefitRuleSourceUrl').value=r?.source?.url||'';$('benefitRuleSourcePublishedAt').value=r?.source?.publishedAt||'';$('benefitRuleSourceCheckedAt').value=r?.source?.checkedAt||dateKey();openModal('benefitRulesetModal');
@@ -6800,6 +6750,7 @@ function bindViewEvents(){
   $('openBenefitImportBtn')?.addEventListener('click',openBenefitImport);
   $('openBenefitDiffBtn')?.addEventListener('click',openBenefitDiff);
   $('runBenefitRegressionBtn')?.addEventListener('click',runBenefitRegression);
+  $('fetchBenefitRulesNowBtn')?.addEventListener('click',fetchBenefitRulesNow);
   document.querySelectorAll('.benefit-adjust-btn').forEach(btn=>btn.addEventListener('click',()=>openBenefitAdjustment(btn.dataset.auth)));
   document.querySelectorAll('.benefit-revoke-auth-btn').forEach(btn=>btn.addEventListener('click',()=>revokeBenefitAuthorization(btn.dataset.auth)));
   document.querySelectorAll('.benefit-edit-ruleset-btn').forEach(btn=>btn.addEventListener('click',()=>openBenefitRulesetEditor(btn.dataset.rule)));

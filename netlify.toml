@@ -133,6 +133,10 @@
 [functions."retention-anonymize"]
   schedule = "@daily"
 
+# 每日抓長照交通補助公告，內容有變就產生自動草稿（#24）
+[functions."benefit-rules-fetch"]
+  schedule = "@daily"
+
 [[redirects]]
   from = "/api/v2/claim-booking"
   to = "/.netlify/functions/v2-claim-booking"

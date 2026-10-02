@@ -11,6 +11,7 @@
 | `migrations/0001_baseline.sql` | 完整 schema：資料表、RLS 政策、`care_ride_app` 角色、身分與登入函式、`app_state`、接案／司機執行／需求者取消、通知來源證明。由原本的 0001–0008 壓縮而成 |
 | `migrations/0002_supabase_auth.sql` | 身分改由 Supabase Auth：移除自製密碼、`sessions_valid_after` 撤銷 session |
 | `migrations/0003_org_review.sql` | 機構申請與審核：`review_status`（pending／approved／rejected／suspended）、`app.apply_organization`、`app.review_organization`；需求池與接案只開放給已核准機構 |
+| `migrations/0012_benefit_fetch.sql` | 福利公告抓取紀錄 `benefit_source_fetches`、自動抓取草稿（origin、內容雜湊、差異）；自動草稿不能手動修改 |
 | `migrations/0011_account_deletion.sql` | 刪除帳號與個資申請 `deletion_requests`（pending／cancelled／rejected／completed）；平台管理者核准時在同一交易內匿名化與停用帳號 |
 | `migrations/0010_consent_retention.sql` | 平台設定 `app_settings`（保存期限、條款版本）、同意紀錄 `consent_records`、到期資料匿名化 `app.anonymize_expired_records` |
 | `migrations/0009_benefit_ledger.sql` | 正式核定額度 `benefit_authorizations` 與僅追加帳本 `benefit_ledger`：建立預約保留、取消／不受理／過期釋放、完成結算、修正回轉；只能經受控函式寫入 |
@@ -204,6 +205,19 @@ PGHOST=/tmp/pgrun PGPORT=5433 bash supabase/tests/rls.test.sh
   repo 變數 `STAGING_URL`（沒設定就略過）。判斷邏輯在 `tools/zap-check-report.js`；確定不是實際風險的
   高風險規則寫進 `.zap/accepted-high.txt` 並註明原因。
 - **RLS**：資料庫權限的整合測試在 `isolated-sql-review.yml`，每個 PR 與 main 都常態執行。
+
+### 福利規則排程抓取（#24）
+
+- 每日排程 `benefit-rules-fetch`（netlify.toml）經 `_benefit-fetch.js` 的窄介面抓：
+  1966 長照專區「長照服務給付額度表」（解析等級門檻與交通接送四區月額度），以及給付辦法附表 PDF
+  （只用內容雜湊偵測改版，自付比例沿用已核准版本，改版時草稿提醒人工核對）。
+- 每次抓取都記在 `benefit_source_fetches`（網址、時間、HTTP 狀態、內容雜湊）。
+- 解析出的內容與既有版本（含被駁回的）相同時不產生草稿；不同就建立「自動抓取」草稿，附與目前
+  核准版本的差異，平台管理員在「補助規則與資格」審核。核准後舊版本 superseded，新估算用新版本。
+- 抓取或解析失敗時經 `_alerts.js` 送出告警（目前寫稽核紀錄與 Function 記錄；#17 接 Email 與
+  Discord），現行版本不變。平台管理員也可以按「立即抓取公告」。
+- 計算方式 `transport_zone`（`_benefit-transport.js`）：月額度依居住地分區，自付比例依福利身分。
+- 瀏覽器不再連政府網站或 r.jina.ai，CSP 的 `connect-src` 只剩 `'self'`。
 
 ### 通知
 
