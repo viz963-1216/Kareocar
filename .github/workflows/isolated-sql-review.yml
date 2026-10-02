@@ -114,7 +114,7 @@ jobs:
       - name: 預約伺服器計算欄位整合測試（定位、模糊地址、報價待定價、地址找不到、需求池不露個資）
         run: bash supabase/tests/run-booking-geo.sh
 
-      - name: 預約寫入與存取撤銷整合測試（狀態規則、退回／不受理／取消後原機構讀不到、需求者只看到承接單位名稱）
+      - name: 預約與行程寫入、存取撤銷整合測試（狀態規則、退回／不受理／取消後原機構讀不到、跨機構司機／車輛／預約、需求者只看到承接單位名稱）
         run: bash supabase/tests/run-booking-access.sh
 
       - name: 身分、session、帳號與 RLS 測試（run-all：session／identity／orgs／identity-write／state／load／wiring／rls）

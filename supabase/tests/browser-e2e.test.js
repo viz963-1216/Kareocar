@@ -38,6 +38,7 @@ const admin = new Pool({ host, port: Number(process.env.PGPORT), database: 'care
 const db = require('../../netlify/functions/_db');
 const mutate = require('../../netlify/functions/v2-state-mutate');
 const bookingWrite = require('../../netlify/functions/v2-booking-write');
+const tripWrite = require('../../netlify/functions/v2-trip-write');
 const { createServer } = require('../../tools/local-dev-server');
 const F = require('../../tests/_trip-fixtures');
 
@@ -283,8 +284,9 @@ async function row(collection, id) {
   return rows[0] || null;
 }
 async function apiMutate(token, changes) {
-  // 預約走 booking-write（與前端的分流相同）
-  const handler = changes.every((c) => c.collection === 'bookings') ? bookingWrite.handler : mutate.handler;
+  // 預約走 booking-write、行程走 trip-write（與前端的分流相同）
+  const handler = changes.every((c) => c.collection === 'bookings') ? bookingWrite.handler
+    : changes.every((c) => c.collection === 'trips') ? tripWrite.handler : mutate.handler;
   const res = await handler({ httpMethod: 'POST', headers: { host: '127.0.0.1', cookie: `cr_at=${token}` }, body: JSON.stringify({ changes }) });
   return res.statusCode;
 }
@@ -532,7 +534,12 @@ async function flowCancel(cdp, baseUrl, tokens) {
     await fixtureScheduled(b.id, b.trip);
     const trip = F.makeTrip({ id: b.trip, organizationId: ORG, driverId: DRIVER_ID, vehicleId: 'VEH-E2E-1', bookingId: b.id,
       startAt: `${dayOffset(1)}T10:00:00.000Z`, extra: { bookingId: b.id, status } });
-    record(S, `（資料準備）${status} 行程與已排車預約`, (await apiMutate(tokens.dsp, [{ collection: 'trips', id: b.trip, record: trip }])) === 200);
+    // 新行程一律從 scheduled 開始，需要時再由調度改狀態
+    let ok = (await apiMutate(tokens.dsp, [{ collection: 'trips', id: b.trip, record: { ...trip, status: 'scheduled' } }])) === 200;
+    if (ok && status !== 'scheduled') {
+      ok = (await apiMutate(tokens.dsp, [{ collection: 'trips', id: b.trip, expectedRevision: 1, record: { ...trip, status } }])) === 200;
+    }
+    record(S, `（資料準備）${status} 行程與已排車預約`, ok);
   }
   const notifications = async (bookingId) => (await admin.query(
     `select data from app_state where collection = 'notifications' and booking_id = $1`, [bookingId])).rows;

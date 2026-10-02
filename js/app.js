@@ -20,6 +20,7 @@ const APP_CONFIG = Object.freeze({
   logoutUrl: '/api/v2/logout',
   stateMutateUrl: '/api/v2/state-mutate',
   bookingWriteUrl: '/api/v2/booking-write',
+  tripWriteUrl: '/api/v2/trip-write',
   identityWriteUrl: '/api/v2/identity-write',
   claimBookingUrl: '/api/v2/claim-booking',
   cancelBookingUrl: '/api/v2/cancel-booking',
@@ -455,7 +456,7 @@ const AUTHORITATIVE_STATE_COLLECTIONS=Object.freeze([
   'organizations','users','memberships','membershipEvents','drivers','vehicles','careRecipients','careRecipientRelations','careRecipientEvents','careRecipientMergeEvents',
   'bookings','bookingEvents','bookingRevisions','dispatchPlans','trips','tripEvents','issues','systemReports','notifications',
   'benefitRulesets','benefitRulesetEvents','benefitAssessments','benefitAssessmentEvents','benefitLatestEstimateRuns',
-  'serviceProofs','cancellations','telemetryEvents'
+  'serviceProofs','telemetryEvents'
 ]);
 // 這三個集合有自己的 typed 資料表，寫入走 identity-write 而不是 state-mutate。
 // users 不在裡面：建立帳號只能透過註冊或建立員工的端點。
@@ -518,10 +519,12 @@ async function authoritativeFlush_(){
     // 視為失敗、留在佇列裡重試。
     const payload=rows.map(({collection,id,record,deleted,expectedRevision})=>({collection,id,record,deleted,expectedRevision}));
     // 預約走預約端點：伺服器檢查狀態轉換、計算地址欄位、轉手時撤銷原機構存取。
-    // 先送預約再送其他資料，排車時行程才會在預約更新之後寫入。
+    // 行程走行程端點：檢查機構歸屬、司機、車輛與狀態轉換。
+    // 依序送出：預約 → 行程 → 其他資料，排車時行程才會在預約更新之後寫入。
     const identityRows=payload.filter(x=>IDENTITY_WRITE_COLLECTIONS.has(x.collection));
     const bookingRows=payload.filter(x=>x.collection==='bookings');
-    const stateRows=payload.filter(x=>!IDENTITY_WRITE_COLLECTIONS.has(x.collection)&&x.collection!=='bookings');
+    const tripRows=payload.filter(x=>x.collection==='trips');
+    const stateRows=payload.filter(x=>!IDENTITY_WRITE_COLLECTIONS.has(x.collection)&&!['bookings','trips'].includes(x.collection));
     const post=async(url,changes)=>{
       if(!changes.length)return;
       const response=await apiFetch(url,{method:'POST',headers:{'content-type':'application/json'},credentials:'same-origin',cache:'no-store',body:JSON.stringify({changes})});
@@ -530,6 +533,7 @@ async function authoritativeFlush_(){
     };
     await post(APP_CONFIG.identityWriteUrl,identityRows);
     await post(APP_CONFIG.bookingWriteUrl,bookingRows);
+    await post(APP_CONFIG.tripWriteUrl,tripRows);
     await post(APP_CONFIG.stateMutateUrl,stateRows);
     rows.forEach(x=>authoritativeQueue.delete(`${x.actorUserId}|${x.collection}|${x.id}`));authoritativeLastError='';authoritativeLastAckAt=nowISO();authoritativePersistQueue_();
     if(authoritativeQueue.size)setTimeout(()=>authoritativeFlush_(),20);return {ok:true,count:rows.length};
