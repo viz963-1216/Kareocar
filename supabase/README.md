@@ -196,6 +196,15 @@ PGHOST=/tmp/pgrun PGPORT=5433 bash supabase/tests/rls.test.sh
   試算的事實資料、刪除寄給他的通知、撤銷成員資格、停用帳號並清除姓名電話，最後刪除 Supabase Auth
   帳號（失敗就整筆回滾）。同意紀錄與稽核紀錄保留。有未結束的預約或是機構負責人時不能核准。
 
+### 資安掃描（#27，`.github/workflows/security.yml`）
+
+- **依賴套件**：`npm audit --omit=dev --audit-level=high`，有 high 以上弱點就失敗。依 `package-lock.json` 安裝。
+- **ZAP baseline**：被動掃描，有高風險（riskcode 3）就失敗，完整報告（HTML／JSON／Markdown）保存為
+  artifact 30 天。PR 掃該 PR 的 Deploy Preview（指向 Staging 資料庫）；每週排程與手動執行掃
+  repo 變數 `STAGING_URL`（沒設定就略過）。判斷邏輯在 `tools/zap-check-report.js`；確定不是實際風險的
+  高風險規則寫進 `.zap/accepted-high.txt` 並註明原因。
+- **RLS**：資料庫權限的整合測試在 `isolated-sql-review.yml`，每個 PR 與 main 都常態執行。
+
 ### 通知
 
 通知只由後端流程建立，存在 `notifications` 資料表（`care_ride_app` 只有 SELECT），收件人只讀得到自己的：
