@@ -22,6 +22,12 @@ function quoteLiteral(v) {
   if (v === null || v === undefined) return 'NULL';
   if (typeof v === 'number') return Number.isFinite(v) ? String(v) : 'NULL';
   if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
+  // 與 node-pg 相同：JS 陣列轉成 Postgres 陣列字面值 {"a","b"}
+  if (Array.isArray(v)) {
+    const items = v.map((x) => (x === null || x === undefined ? 'NULL'
+      : `"${String(x).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`));
+    return quoteLiteral(`{${items.join(',')}}`);
+  }
   return `'${String(v).replace(/'/g, "''")}'`;
 }
 
