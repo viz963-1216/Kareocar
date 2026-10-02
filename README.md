@@ -1,88 +1,86 @@
 # 安心接送
 
-長照接送媒合平台。Netlify 提供前端與 API（Netlify Functions），資料、身分與授權都在 Postgres（Supabase），由 RLS 把關。
+多機構的長照接送媒合平台：需求者建立預約，經平台審核的接送機構從共享需求池承接、排車、
+由司機執行。Netlify 提供前端與 API（Netlify Functions）；資料、授權都在 Postgres（Supabase），
+由 Row Level Security 把關；登入由 Supabase Auth 負責。
 
-- 目前版本：`12.26.1`
-- 展示網站：https://care-ride-commercial-readiness.netlify.app
-- 私有原始碼：https://github.com/viz963-1216/care-ride-commercial-readiness
+- 原始碼：https://github.com/viz963-1216/Kareocar
+- 部署與上線檢查清單：[DEPLOYMENT.md](DEPLOYMENT.md)
+- 資料庫、API 與業務規則：[supabase/README.md](supabase/README.md)
+- 資安模型：[SECURITY_HARDENING.md](SECURITY_HARDENING.md)
 
 ## 架構
 
 ```
-瀏覽器 (index.html)
-   │  只走 /api/*，帶 Bearer session token
+瀏覽器（index.html、js/*.js、css/app.css）
+   │  只呼叫同網域的 /api/*；登入憑證只在 HttpOnly cookie（cr_at、cr_rt）
+   │  CSP：script-src 'self'、connect-src 'self'，不連任何外部網站
    ▼
-Netlify Functions
-   │  驗證 session，以 care_ride_app 角色連線
+Netlify Functions（netlify/functions/）
+   │  驗證 Supabase Auth 的 JWT，以 care_ride_app 角色連線，
+   │  每筆交易設定 app.user_id，金額、狀態轉換、通知都由伺服器決定
+   ├──► Supabase Auth（手機＋密碼、建立／停用帳號）
+   ├──► Google Maps（建立預約時定位與算距離，結果存進預約）
+   ├──► 政府長照公告（每日排程抓取，產生規則草稿）
    ▼
-Postgres（Supabase）           ← RLS 政策做 row-level 授權
+Postgres（Supabase）            ← 唯一的真實資料來源；RLS 做列層級授權
 ```
 
-瀏覽器不直接連資料庫，也沒有內建資料快照；未登入時讀不到任何資料。
+- **唯一真實來源是 Postgres**。瀏覽器的本機資料只是暫存；未登入讀不到任何資料。
+- **寫入分流**：預約、行程、接案、取消、司機執行、補助、同意、刪除申請都有專用端點，
+  由伺服器檢查狀態轉換與機構歸屬；其他一般資料經 `state-mutate`，由 RLS 與觸發器把關。
+- **伺服器計算**：模糊地址與距離、補助估算（依已核准的規則版本）、補助額度帳本、通知，
+  前端送來的同名欄位一律不採用。
+- **排程**（netlify.toml）：每日把超過保存期限的資料匿名化（`retention-anonymize`）、
+  每日抓長照交通補助公告（`benefit-rules-fetch`）。
 
-## 開發
+## 環境
+
+| 環境 | 前端與 API | 資料庫 | migration |
+|---|---|---|---|
+| Production | Netlify 正式站 | 正式 Supabase 專案 | 人工觸發（見 DEPLOYMENT.md） |
+| Staging | Netlify Deploy Previews 與 Branch deploys | Staging Supabase 專案 | 合併到 main 後自動套用 |
+| 本機與 CI | `tools/local-dev-server.js` | 拋棄式 Postgres | 每次從頭套用全部 migration |
+
+建置檢查（`tools/check-db-config.js`）會擋下「非 production 的建置連到正式資料庫」。
+
+## 開發與測試
 
 ```bash
-# 需要本機 Postgres 16
-PGHOST=/tmp/pgrun PGPORT=5433 supabase/tests/run-all.sh   # 全套接線與 RLS 測試
-npm test                                                  # 離線回歸測試（不需要資料庫）
-node tools/check-inline-js.js    # js/*.js 語法檢查；index.html 不得有內嵌 script 或 inline 事件處理器
-node tools/check-dom-refs.js     # DOM id 交叉檢查
-node tools/check-id-mapping.js   # 後端／前端識別碼對應（權限會壞在這裡）
+npm test                          # 離線回歸測試（不需要資料庫）
+node tools/check-inline-js.js     # js/*.js 語法；index.html 不得有內嵌 script 或 inline 事件處理器
+node tools/check-dom-refs.js      # DOM id 交叉檢查
+node tools/check-id-mapping.js    # 後端／前端識別碼對應
+
+# 需要本機 Postgres 16（啟動方式見 supabase/README.md 的「本機測試」）
+PGHOST=/tmp/pgrun PGPORT=5433 bash supabase/tests/run-all.sh
 ```
 
-`supabase/tests/run-all.sh` 會從乾淨的資料庫依序跑完所有測試套件。它跑的是
-`netlify/functions/` 底下的實際程式碼，接在真實 Postgres 上、以真實的
-`care_ride_app` 角色連線，所以 RLS 是真的在把關，不是模擬的。
+CI（`.github/workflows/`）：
 
-`tests/` 是不需要資料庫的離線測試：建置檢查、行程執行規則、前端接線等。
+| Workflow | 內容 |
+|---|---|
+| `isolated-sql-review.yml` | 離線測試、在拋棄式 Postgres 上跑全部整合測試（RLS、業務流程、預約、行程、通知、補助、隱私）、migration 往返、瀏覽器端對端測試（在實際的 CSP 下） |
+| `security.yml` | `npm audit`（high 以上失敗）、ZAP baseline 掃描 Staging（高風險失敗，報告存 artifact） |
+| `deploy-migrations.yml` | migration 驗證後自動套用到 Staging；Production 人工觸發 |
 
-## 資料庫
+整合測試跑的是 `netlify/functions/` 的實際程式碼，接在真實 Postgres 上、以 `care_ride_app`
+角色連線，所以 RLS 是真的在把關。外部服務（Supabase Auth、Google Maps、政府網站、告警）
+在測試中以假實作替換（`supabase/tests/_auth-fixture.js`）。
 
-執行中的系統跑在 **Postgres（Supabase）** 上：身分、預約、行程、稽核全部在
-`supabase/migrations/` 定義的 schema 與 RLS 政策之下。
+## 目錄
 
-套用步驟與注意事項見 [supabase/README.md](supabase/README.md)。最重要的一點：
-Netlify Function 必須用 `care_ride_app` 角色連線，用 `postgres` 會繞過全部 RLS 政策。
+| 路徑 | 內容 |
+|---|---|
+| `index.html`、`js/`、`css/` | 前端 |
+| `_headers` | 安全標頭與 CSP |
+| `netlify.toml` | API 路由、排程、建置檢查 |
+| `netlify/functions/` | API 與排程；`_` 開頭是共用模組 |
+| `supabase/migrations/`、`supabase/rollback/` | schema 與每支 migration 的回復檔 |
+| `supabase/tests/` | 資料庫整合測試與瀏覽器端對端測試 |
+| `tests/` | 離線測試 |
+| `tools/` | 建置檢查、migration 執行器、本機開發伺服器、ZAP 報告判斷 |
 
-## 部署
+## 上線前
 
-見 [DEPLOYMENT.md](DEPLOYMENT.md)。`index.html`、`netlify/functions/` 與
-`supabase/migrations/` 必須一起更新——只換其中一個會造成前後端契約不一致。
-
-## 版本紀錄
-
-### 12.26.0 — 商用化強化
-
-移除全部 demo 程式碼，並修正 7 項安全問題。詳見 [SECURITY_HARDENING.md](SECURITY_HARDENING.md)。
-
-- AppState 的寫入授權改為以伺服器端既有狀態判斷，不再採信請求內容宣稱的擁有者
-- 密碼改用迭代雜湊（可調整成本），舊憑證於下次登入自動升級
-- 忘記密碼的驗證碼改用密碼學安全亂數，並加上索取節流
-- 變更密碼或登入手機需通過目前密碼驗證
-- 登入鎖定改為會自動解除的軟鎖，並加入來源 IP 維度
-- 移除內建 demo 帳密、90KB 假資料快照、瀏覽器直讀公開試算表的備援路徑
-
-### 12.26.1 — 容量與併發
-
-- 密碼憑證改存專用工作表（原本在 Script Properties，約 885 人就會撞到 500KB 上限）
-- 速率限制等暫時狀態改用 CacheService，不再永久累積
-- AppState 批次寫入改為單次讀入／單次寫回：50 筆變更的全表讀取從 132 次降到 4 次
-- 批次寫入具備原子性，中途失敗不會留下寫到一半的資料
-- 登入與簡訊發送不再抓全域鎖
-- 稽核寫入失敗不再靜默，`/api/health` 會回報 `auditWriteFailures`
-
-### 12.25.x
-
-早期版本開發紀錄，歷史細節請參閱 git commit log。
-
-## 正式對外前仍待處理
-
-以下項目不在 12.26.0 的範圍內，上線前應逐項確認，詳細說明見 SECURITY_HARDENING.md 的「尚未處理」章節。
-
-1. ~~Apps Script 專案中有 6 支函式尚未納入版本控制~~：Apps Script 已整個移除，不再適用。
-2. ~~`index.html` 仍是單一檔案且 CSP 帶 `'unsafe-inline'`；session token 存在 `sessionStorage`~~：JS 已拆到 `js/`，`script-src` 不再允許 `'unsafe-inline'`（#14）；登入改由 Supabase Auth，token 只在 HttpOnly cookie（#18）。
-3. 一次資料同步仍是 23 個獨立請求，各自重算一次權限範圍（批次寫入已優化，讀取路徑尚未）。
-4. 「從已發布試算表匯入預約」功能仍由瀏覽器直接讀取公開試算表。
-5. 沒有監控與告警：後端開始出錯時不會有人知道。
-6. 個資告知、服務條款、資料保存與刪除流程、備份與資安測試。
+尚未完成的項目與需要人工確認的事項，見 [DEPLOYMENT.md 的上線檢查清單](DEPLOYMENT.md#上線檢查清單)。
