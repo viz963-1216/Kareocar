@@ -29,21 +29,21 @@ const IDENTITY_COLLECTIONS = new Set(['users', 'memberships', 'organizations', '
 const DEDICATED_ENDPOINTS = {
   bookings: '/api/v2/booking-write',
   trips: '/api/v2/trip-write（司機執行用 /api/v2/trip-execute）',
-  cancellations: '/api/v2/cancel-booking'
+  cancellations: '/api/v2/cancel-booking',
+  notifications: '後端流程（前端不能建立或修改通知）'
 };
 
 const ALLOWED_COLLECTIONS = new Set([
   'membershipEvents', 'vehicles', 'careRecipients', 'careRecipientRelations',
   'careRecipientEvents', 'careRecipientMergeEvents',
   'bookingEvents', 'bookingRevisions', 'dispatchPlans',
-  'tripEvents', 'issues', 'systemReports', 'notifications',
+  'tripEvents', 'issues', 'systemReports',
   'benefitRulesets', 'benefitRulesetEvents', 'benefitAssessments',
   'benefitAssessmentEvents', 'benefitLatestEstimateRuns',
   'serviceProofs', 'telemetryEvents'
 ]);
 
-// notifications 仍接受前端寫入（派車、中斷等流程的通知）。這些通知沒有後端來源證明，
-// 收件人讀取政策不會放行；竄改系統通知由通知觸發器擋下（見 baseline 第 8 部分的第 6 節）。
+// 通知只由後端流程寫入 notifications 資料表（0007），這裡一律拒絕。
 
 // 這些欄位絕對不進資料庫，即使前端不小心送上來
 const NEVER_STORE = ['password', 'passwordHash', 'passwordUpdatedAt', 'credential',

@@ -111,11 +111,14 @@ async function countWhere(collection, column, value) {
     `select count(*)::int as n from app_state where collection = $1 and ${column} = $2`, [collection, value]);
   return rows[0].n;
 }
+/** 取消端點產生的通知（notifications 資料表，0007）。形狀沿用舊測試的 { id, organization_id, data }。 */
 async function notificationsFor(bookingId) {
   const { rows } = await admin.query(
-    `select id, organization_id, owner_user_id, data from app_state
-      where collection = 'notifications' and booking_id = $1 order by id`, [bookingId]);
-  return rows;
+    `select id, organization_id, recipient_user_id, channel, status, template, payload, sent_at
+       from notifications where booking_id = $1 and source = 'cancel_booking_endpoint' order by id`, [bookingId]);
+  return rows.map((r) => ({ id: r.id, organization_id: r.organization_id,
+    data: { template: r.template, recipientId: r.recipient_user_id, payload: r.payload, status: r.status,
+            sentAt: r.sent_at, channel: r.channel } }));
 }
 
 /** 被拒絕的呼叫：狀態碼、錯誤碼都要對，而且指定資料列完全沒變。 */
@@ -595,15 +598,17 @@ async function scenario3(t) {
       && toRequester.data.payload.reason === '合成取消原因'
       && JSON.stringify(toRequester.data.payload.cancelledTripIds) === JSON.stringify([tripId]));
   record(S, '通知只是排入佇列（status = queued、未送出）',
-    ntfs.every((n) => n.data.status === 'queued' && n.data.sentAt === null && n.data.channel === 'line'));
+    ntfs.every((n) => n.data.status === 'queued' && n.data.sentAt === null && n.data.channel === 'in_app'));
   record(S, '回應帶出通知 ID', cancel.status === 200 && JSON.stringify([...cancel.data.notificationIds].sort()) === JSON.stringify(ntfs.map((n) => n.id).sort()));
   const reqLoad2 = await loadAs(t.req);
   const dspLoad = await loadAs(t.dspA);
   const dspBLoad = await loadAs(t.dspB);
-  record(S, '需求者讀得到自己的取消通知、調度員 A 讀得到司機通知、組織 B 都讀不到',
+  // #25：收件人只讀得到自己的通知；調度員也讀不到寫給司機的通知
+  record(S, '需求者讀得到自己的取消通知；調度員 A、組織 B 都讀不到別人的通知',
     Boolean(toRequester) && Boolean(toDriver)
       && idsIn(reqLoad2, 'notifications').includes(toRequester.id)
-      && idsIn(dspLoad, 'notifications').includes(toDriver.id)
+      && !idsIn(reqLoad2, 'notifications').includes(toDriver.id)
+      && !idsIn(dspLoad, 'notifications').some((x) => x === toDriver.id || x === toRequester.id)
       && !idsIn(dspBLoad, 'notifications').some((x) => x === toDriver.id || x === toRequester.id));
   const drvA1Load = await loadAs(t.drvA1);
   const drvA2Load = await loadAs(t.drvA2);
@@ -679,117 +684,57 @@ async function scenario3(t) {
 
 // ================================================================ 情境 4
 async function scenario4(t) {
-  const S = '情境4 通知權限';
-  const all = async () => (await admin.query(`select id, collection, organization_id, owner_user_id, deleted, data from app_state where collection = 'notifications' order by id`)).rows;
-  const provenance = async (id) => (await admin.query(`select recipient_user_id from app.notification_provenance where notification_id = $1`, [id])).rows[0] || null;
+  const S = '情境4 通知只能由後端建立';
   const legit = await notificationsFor('BKG-FLOW-S3');
   const toDriver = legit.find((n) => n.data.template === 'trip_cancelled');
-  const legitProof = await Promise.all(legit.map((n) => provenance(n.id)));
-  record(S, '（前提）兩則合法取消通知都有後端來源證明，證明上的收件人與通知一致',
-    legit.length === 2 && legit.every((n, i) => legitProof[i] && legitProof[i].recipient_user_id === n.data.recipientId));
-  const forged = (id, recipientId) => ({ id, organizationId: ORG_A, recipientId, channel: 'line', template: 'trip_cancelled',
-    eventType: 'trip_cancelled', payload: { tripId: 'TRP-FLOW-S3', reason: '偽造內容' }, status: 'queued',
+  const snapshot = async () => JSON.stringify((await admin.query(
+    'select id, recipient_user_id, template, payload, status from notifications order by id')).rows);
+  record(S, '（前提）取消產生的兩則通知存在 notifications 資料表', legit.length === 2 && Boolean(toDriver));
+  const forged = (id, recipientId) => ({ id, organizationId: ORG_A, recipientId, recipientUserId: recipientId, channel: 'in_app',
+    template: 'trip_cancelled', eventType: 'trip_cancelled', payload: { tripId: 'TRP-FLOW-S3', reason: '偽造內容' }, status: 'queued',
     source: 'cancel_booking_endpoint', serverCreated: true });
 
-  // ---- 前端流程的通知照舊回存；沒有來源證明，收件人讀不到
+  // ---- API：任何身分都不能經一般寫入端點建立或修改通知
   let n = 0;
-  for (const [label, tok, owner, recipient] of [
-    ['需求者寫給司機', t.req, U.req, U.drvA1], ['調度員 A 寫給組織內司機', t.dspA, U.dspA, U.drvA1],
-    ['調度員 B 跨組織寫給組織 A 司機', t.dspB, U.dspB, U.drvA1], ['司機 A2 寫給司機 A1', t.drvA2, U.drvA2, U.drvA1]
+  for (const [label, tok, recipient] of [
+    ['需求者寫給司機', t.req, U.drvA1], ['調度員 A 寫給組織內司機', t.dspA, U.drvA1],
+    ['調度員 B 跨組織寫給組織 A 司機', t.dspB, U.drvA1], ['司機 A2 寫給司機 A1', t.drvA2, U.drvA1]
   ]) {
     const id = `NTF-CLIENT-${++n}`;
+    const before = await snapshot();
     const r = await mutateAs(tok, [{ collection: 'notifications', id, record: forged(id, recipient) }]);
-    const saved = await row('notifications', id);
-    record(S, `${label}（自帶 serverCreated 與後端 source）：照舊回存`, r.status === 200 && Boolean(saved) && saved.owner_user_id === owner, outcome(r));
-    record(S, `${label}：沒有來源證明、收件司機 A1 讀不到`,
-      !(await provenance(id)) && !idsIn(await loadAs(t.drvA1), 'notifications').includes(id));
+    record(S, `經 state-mutate ${label}：被拒絕（COLLECTION_FORBIDDEN）`, r.status === 403 && r.error.code === 'COLLECTION_FORBIDDEN', outcome(r));
+    record(S, `經 state-mutate ${label}：什麼都沒寫入`, (await snapshot()) === before && !(await row('notifications', id)));
   }
-  record(S, '寫入者本人仍讀得到自己寫的通知（與舊版相同）', idsIn(await loadAs(t.req), 'notifications').includes('NTF-CLIENT-1'));
+  const tamper = await mutateAs(t.req, [{ collection: 'notifications', id: toDriver.id, record: { ...forged(toDriver.id, U.drvA2) } }]);
+  record(S, '經 state-mutate 竄改系統通知被拒', tamper.status === 403, outcome(tamper));
 
-  // ---- API：不能竄改系統通知
-  for (const [label, tok, change] of [
-    ['需求者（資料列擁有者）把系統通知收件人改成其他司機', t.req, { recipientId: U.drvA2 }],
-    ['調度員 A（行程組織）把系統通知收件人改成其他司機', t.dspA, { recipientId: U.drvA2 }],
-    ['需求者竄改系統通知內容', t.req, { payload: { reason: '竄改' } }]
-  ]) {
-    await expectRejected(S, `經 state-mutate ${label}`, mutateAs(tok, [{ collection: 'notifications', id: toDriver.id,
-      record: { ...toDriver.data, ...change } }]), { status: 403, code: 'FORBIDDEN' }, [['notifications', toDriver.id]]);
-  }
-  await expectRejected(S, '經 state-mutate 需求者軟刪除系統通知', mutateAs(t.req, [{ collection: 'notifications', id: toDriver.id,
-    deleted: true, record: toDriver.data }]), { status: 403, code: 'FORBIDDEN' }, [['notifications', toDriver.id]]);
-
-  // ---- 資料庫層：以 care_ride_app 直接執行（模擬舊版或其他 handler 的寫入路徑）
+  // ---- 資料庫層：以 care_ride_app 直接執行（模擬有漏洞的 handler）
   const asUser = (uid, sqls) => db.withUser(uid, async (c) => { let last; for (const [sql, params] of sqls) last = await c.query(sql, params); return last; })
-    .then((res) => ({ ok: true, rowCount: res.rowCount }), (e) => ({ ok: false, code: e.code, message: e.message }));
-  const state = async () => JSON.stringify([await all(), await row('bookings', 'BKG-FLOW-S3O'),
-    (await admin.query('select * from app.notification_provenance order by notification_id')).rows]);
-
-  const guc = await asUser(U.req, [
-    [`select set_config('app.notification_writer', '1', true), set_config('app.state_scope_override', '1', true)`, []],
-    [`insert into app_state (collection, id, data) values ('notifications', 'NTF-DB-GUC', $1::jsonb)`, [JSON.stringify(forged('NTF-DB-GUC', U.drvA1))]]]);
-  record(S, '[資料庫層] care_ride_app 自設工作階段變數後寫入：沒有來源證明、收件司機讀不到',
-    guc.ok && !(await provenance('NTF-DB-GUC')) && !idsIn(await loadAs(t.drvA1), 'notifications').includes('NTF-DB-GUC'), JSON.stringify(guc));
-
-  for (const [label, sql, params] of [
-    ['直接寫入來源證明表', `insert into app.notification_provenance (notification_id, source, booking_id, template, recipient_user_id) values ('NTF-CLIENT-1', 'cancel_booking_endpoint', 'BKG-FLOW-S3', 'trip_cancelled', $1)`, [U.drvA1]],
-    ['直接讀取來源證明表', 'select * from app.notification_provenance', []],
-    ['SET ROLE postgres', 'set role postgres', []],
-    ['SET SESSION AUTHORIZATION postgres', 'set session authorization postgres', []]
-  ]) {
-    const before = await state();
-    const r = await asUser(U.req, [[sql, params]]);
-    record(S, `[資料庫層] care_ride_app ${label}：被拒絕`, !r.ok, JSON.stringify(r));
-    record(S, `[資料庫層] care_ride_app ${label}：資料完全不變`, (await state()) === before);
-  }
-
+    .then((res) => ({ ok: true, rowCount: res.rowCount, rows: res.rows }), (e) => ({ ok: false, code: e.code, message: e.message }));
   for (const [label, uid, sql, params] of [
-    ['需求者 UPDATE 系統通知收件人', U.req, `update app_state set data = jsonb_set(data, '{recipientId}', to_jsonb($1::text)) where collection = 'notifications' and id = $2`, [U.drvA2, toDriver.id]],
-    ['調度員 A UPDATE 系統通知收件人', U.dspA, `update app_state set data = jsonb_set(data, '{recipientId}', to_jsonb($1::text)) where collection = 'notifications' and id = $2`, [U.drvA2, toDriver.id]],
-    ['需求者把系統通知的 collection 改成 tripEvents', U.req, `update app_state set collection = 'tripEvents' where collection = 'notifications' and id = $1`, [toDriver.id]],
-    ['需求者改系統通知的 id', U.req, `update app_state set id = 'NTF-RENAMED' where collection = 'notifications' and id = $1`, [toDriver.id]],
-    ['需求者把自己的預約改成通知', U.req, `update app_state set collection = 'notifications' where collection = 'bookings' and id = $1`, ['BKG-FLOW-S3O']],
-    ['需求者把自己寫的通知改成其他 id', U.req, `update app_state set id = 'NTF-CLIENT-1-RENAMED' where collection = 'notifications' and id = $1`, ['NTF-CLIENT-1']],
-    ['需求者軟刪除系統通知', U.req, `update app_state set deleted = true where collection = 'notifications' and id = $1`, [toDriver.id]]
+    ['需求者 INSERT 通知', U.req, `insert into notifications (id, recipient_user_id, template) values ('NTF-DB-1', $1, 'trip_cancelled')`, [U.drvA1]],
+    ['調度員 A INSERT 通知', U.dspA, `insert into notifications (id, recipient_user_id, template) values ('NTF-DB-2', $1, 'trip_cancelled')`, [U.drvA1]],
+    ['司機 A1 UPDATE 自己的通知內容', U.drvA1, `update notifications set payload = '{"reason":"竄改"}'::jsonb where id = $1`, [toDriver.id]],
+    ['需求者 UPDATE 通知收件人', U.req, `update notifications set recipient_user_id = $1 where id = $2`, [U.drvA2, toDriver.id]],
+    ['司機 A1 DELETE 自己的通知', U.drvA1, `delete from notifications where id = $1`, [toDriver.id]]
   ]) {
-    const before = await state();
+    const before = await snapshot();
     const r = await asUser(uid, [[sql, params]]);
-    record(S, `[資料庫層] ${label}：被拒絕`, !r.ok && r.code === '42501', JSON.stringify(r));
-    record(S, `[資料庫層] ${label}：資料完全不變`, (await state()) === before);
+    record(S, `[資料庫層] ${label}：被拒絕（沒有寫入權限）`, !r.ok && r.code === '42501', JSON.stringify(r));
+    record(S, `[資料庫層] ${label}：資料完全不變`, (await snapshot()) === before);
   }
-  // 實體 DELETE：沒有 DELETE 政策，RLS 下影響 0 列；以「0 列且資料不變」作為被擋的證據
-  // （觸發器本身的 DELETE 分支在 migrations.test.sh 第 4 段以隔離情境另外驗證）
-  for (const [label, uid] of [['需求者', U.req], ['調度員 A', U.dspA]]) {
-    const before = await state();
-    const r = await asUser(uid, [[`delete from app_state where collection = 'notifications' and id = $1`, [toDriver.id]]]);
-    record(S, `[資料庫層] ${label}實體 DELETE 系統通知：影響 0 列且資料完全不變`,
-      r.ok && r.rowCount === 0 && (await state()) === before, JSON.stringify(r));
-  }
+  const peek = await asUser(U.req, [[`select id from notifications where id = $1`, [toDriver.id]]]);
+  record(S, '[資料庫層] 需求者直接查詢寫給司機的通知：0 列', peek.ok && peek.rowCount === 0, JSON.stringify(peek));
 
-  const relabel = await asUser(U.req, [[`update app_state set data = data || '{"serverCreated": true, "source": "cancel_booking_endpoint"}'::jsonb where collection = 'notifications' and id = 'NTF-CLIENT-1'`, []]]);
-  record(S, '[資料庫層] 需求者替自己寫的通知補上系統欄位：沒有來源證明、收件人讀不到',
-    relabel.ok && !(await provenance('NTF-CLIENT-1')) && !idsIn(await loadAs(t.drvA1), 'notifications').includes('NTF-CLIENT-1'), JSON.stringify(relabel));
-
-  // ---- 不以日期判斷：自帶系統欄位、created_at 在未來、以擁有者身分寫入但沒有來源證明
-  const c = await admin.connect();
-  try {
-    await c.query('begin');
-    await c.query(`select set_config('app.state_scope_override','1',true)`);
-    await c.query(`insert into app_state (collection, id, data, created_at) values ('notifications', 'NTF-LEGACY-1', $1::jsonb, '2099-01-01')`,
-      [JSON.stringify(forged('NTF-LEGACY-1', U.drvA2))]);
-    await c.query(`update app_state set organization_id = $1 where collection = 'notifications' and id = 'NTF-LEGACY-1'`, [ORG_A]);
-    await c.query('commit');
-  } finally { c.release(); }
-  record(S, '自帶 serverCreated、created_at 在未來、沒有來源證明的通知：收件司機 A2 讀不到',
-    !idsIn(await loadAs(t.drvA2), 'notifications').includes('NTF-LEGACY-1'));
-
-  const sees = async () => idsIn(await loadAs(t.drvA1), 'notifications').includes(toDriver.id);
-  record(S, '合法取消通知：收件司機 A1 讀得到、其他司機 A2 讀不到',
-    (await sees()) && !idsIn(await loadAs(t.drvA2), 'notifications').includes(toDriver.id));
-  record(S, '所有嘗試後，合法取消通知仍兩則，收件人、刪除狀態、來源證明未變',
-    JSON.stringify((await notificationsFor('BKG-FLOW-S3')).map((x) => [x.id, x.data.recipientId, x.deleted]))
-      === JSON.stringify(legit.map((x) => [x.id, x.data.recipientId, x.deleted]))
-      && JSON.stringify(await Promise.all(legit.map((x) => provenance(x.id)))) === JSON.stringify(legitProof));
-
+  // ---- 收件人只讀得到自己的通知
+  record(S, '收件司機 A1 讀得到；同組織司機 A2、調度員 A、組織 B 都讀不到',
+    idsIn(await loadAs(t.drvA1), 'notifications').includes(toDriver.id)
+      && !idsIn(await loadAs(t.drvA2), 'notifications').includes(toDriver.id)
+      && !idsIn(await loadAs(t.dspA), 'notifications').includes(toDriver.id)
+      && !idsIn(await loadAs(t.dspB), 'notifications').includes(toDriver.id));
+  record(S, '所有嘗試後，合法取消通知仍兩則，收件人與內容未變',
+    JSON.stringify(await notificationsFor('BKG-FLOW-S3')) === JSON.stringify(legit));
 }
 
 // ================================================================ 執行
@@ -806,7 +751,7 @@ async function scenario4(t) {
   await scenario2b(t);
   console.log('--- 情境 3：需求者取消自己的已排車預約（含通知與共乘） ---');
   await scenario3(t);
-  console.log('--- 情境 4：通知來源證明；前端通知照舊回存；系統通知不能偽造、竄改、刪除 ---');
+  console.log('--- 情境 4：通知只能由後端建立；前端與資料庫直接寫入都被拒；收件人只讀得到自己的 ---');
   await scenario4(t);
 
   const failed = results.filter((r) => !r.ok);

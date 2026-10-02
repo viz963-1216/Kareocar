@@ -454,7 +454,7 @@ function repairCareRecipientReferencesInDb(db,{source='load'}={}){
 
 const AUTHORITATIVE_STATE_COLLECTIONS=Object.freeze([
   'organizations','users','memberships','membershipEvents','drivers','vehicles','careRecipients','careRecipientRelations','careRecipientEvents','careRecipientMergeEvents',
-  'bookings','bookingEvents','bookingRevisions','dispatchPlans','trips','tripEvents','issues','systemReports','notifications',
+  'bookings','bookingEvents','bookingRevisions','dispatchPlans','trips','tripEvents','issues','systemReports',
   'benefitRulesets','benefitRulesetEvents','benefitAssessments','benefitAssessmentEvents','benefitLatestEstimateRuns',
   'serviceProofs','telemetryEvents'
 ]);
@@ -2770,11 +2770,10 @@ Dispatch = {
 
 {
 Notification = {
-  queue({organizationId,recipientId,channel='line',template,eventType,payload={}}){
-    const item={id:uid('ntf'),organizationId,recipientId,channel,template,eventType,payload,status:'queued',createdAt:nowISO(),sentAt:null,error:null};
-    store.mutate(db=>db.notifications.unshift(item));
-    return item;
-  },
+  // 通知只由後端流程建立（承接、排車、指派、取消、完成；見 migration 0007），前端不寫入。
+  // 保留這個介面讓既有呼叫端不用改，重新載入後就會看到伺服器產生的通知。
+  queue(){ return null; },
+  forUser(userId){ return (store.state.notifications||[]).filter(n=>n.recipientUserId===userId).sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))); },
   list(organizationId){ return store.state.notifications.filter(n=>n.organizationId===organizationId); },
   markSent(id){ store.mutate(db=>{ const n=db.notifications.find(x=>x.id===id); if(n){ n.status='sent'; n.sentAt=nowISO(); } }); },
   simulateDelivery(id){ this.markSent(id); return store.state.notifications.find(n=>n.id===id); }
@@ -5448,6 +5447,21 @@ function requesterDraftSummary(d){
   const route=[d.pickupAddress||'尚未填上車地址',d.destination||'尚未填目的地'].join(' → '),time=[d.pickupDate||'日期未填',d.pickupTime||'時間未填'].join(' ');
   return `${route}・${time}`;
 }
+const NOTIFICATION_LABELS=Object.freeze({
+  booking_claimed:'已有服務單位承接你的預約',booking_scheduled:'你的預約已排車',booking_cancelled:'預約已取消',
+  trip_completed:'接送已完成',trip_assigned:'你有新的指派行程',trip_unassigned:'行程已改派給其他司機',trip_cancelled:'行程已取消'
+});
+function notificationText(n){
+  const p=n?.payload||{},label=NOTIFICATION_LABELS[n?.template]||'通知';
+  const when=p.pickupDate?`（${p.pickupDate}${p.pickupTime?` ${p.pickupTime}`:''}）`:'';
+  const extra=n?.template==='booking_claimed'&&p.organizationName?`：${p.organizationName}`:n?.template==='booking_cancelled'&&p.reason?`：${p.reason}`:'';
+  return `${label}${extra}${when}`;
+}
+function requesterNotificationsCard(){
+  const rows=Notification.forUser(Identity.currentUser()?.id).slice(0,5);
+  if(!rows.length)return '';
+  return `<section class="card" id="requesterNotificationsCard"><div class="card-head"><div><h3>最新通知</h3><p>預約被承接、排車、取消或完成時會通知你</p></div></div>${rows.map(n=>`<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(notificationText(n))}</h4><p class="muted small">${escapeHTML(n.createdAt?formatDateTime(n.createdAt):'')}</p></div></div></div>`).join('')}</section>`;
+}
 function requesterDraftHomeCard(){
   const d=loadRequesterDraft();if(!requesterDraftMeaningful(d))return '';
   const updated=d.updatedAt?formatDateTime(d.updatedAt):'最近';
@@ -5468,6 +5482,7 @@ function requesterHome(){
   const recent=rows.slice(0,3);
   return `<section class="card requester-welcome"><div><h2>${escapeHTML(u?.name||'您好')}，今天需要接送嗎？</h2><p>預約長照接送、查看下一趟安排，或先試算可能適用的補助。</p></div><button class="btn" id="requesterQuickBookBtn" type="button">＋ 我要預約接送</button></section>
   ${requesterDraftHomeCard()}
+  ${requesterNotificationsCard()}
   <div class="requester-quick-grid">
     <button class="requester-quick" id="requesterQuickBookCard" type="button"><span class="quick-icon">＋</span><strong>預約接送</strong><span>建立單程或來回需求</span></button>
     <button class="requester-quick" data-ui-view="requester-bookings" type="button"><span class="quick-icon">≡</span><strong>我的預約</strong><span>查看進度與歷史紀錄</span></button>

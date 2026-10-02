@@ -42,7 +42,7 @@ exports.handler = async (event) => {
       const rows = (await client.query(
         `select collection, id, data, organization_id, owner_user_id, version, revision, updated_at
            from app_state
-          where not deleted
+          where not deleted and collection <> 'notifications'
           order by updated_at
           limit $1`, [MAX_ROWS])).rows;
 
@@ -56,6 +56,22 @@ exports.handler = async (event) => {
           version: row.version,
           ...(row.collection === 'trips' ? { revision: row.revision } : {}),
           updatedAt: row.updated_at
+        });
+      }
+
+      // ---- 通知：notifications 資料表，RLS 只放行收件人本人 ----
+      const notifications = (await client.query(
+        `select id, booking_id, trip_id, recipient_user_id, channel, status, organization_id,
+                template, event_type, payload, created_at, sent_at
+           from notifications
+          order by created_at desc
+          limit 200`)).rows;
+      for (const n of notifications) {
+        push('notifications', {
+          id: n.id, organizationId: n.organization_id, recipientUserId: n.recipient_user_id,
+          bookingId: n.booking_id, tripId: n.trip_id, channel: n.channel, template: n.template,
+          eventType: n.event_type, payload: n.payload || {}, status: n.status,
+          createdAt: n.created_at, sentAt: n.sent_at, error: null
         });
       }
 
