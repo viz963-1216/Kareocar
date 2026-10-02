@@ -28,7 +28,7 @@ const db = require('../../netlify/functions/_db');
 const applyFn = require('../../netlify/functions/v2-organization-apply');
 const reviewFn = require('../../netlify/functions/v2-organization-review');
 const loadFn = require('../../netlify/functions/v2-state-load');
-const mutateFn = require('../../netlify/functions/v2-state-mutate');
+const bookingWriteFn = require('../../netlify/functions/v2-booking-write');
 const claimFn = require('../../netlify/functions/v2-claim-booking');
 
 const U = { root: 'USR-ORG-ROOT', req: 'USR-ORG-REQ', app1: 'USR-ORG-APP1', app2: 'USR-ORG-APP2' };
@@ -81,7 +81,7 @@ function openBooking(id) {
       ('M-ORG-APP1','${U.app1}','ORG-REQ-001','requester','active'),
       ('M-ORG-APP2','${U.app2}','ORG-REQ-001','requester','active');
   `);
-  const created = await call(mutateFn.handler, 'POST', U.req, { changes: [
+  const created = await call(bookingWriteFn.handler, 'POST', U.req, { changes: [
     { collection: 'bookings', id: 'BKG-ORG-1', record: openBooking('BKG-ORG-1') },
     { collection: 'bookings', id: 'BKG-ORG-2', record: openBooking('BKG-ORG-2') }] });
   record('（前提）需求者建立兩筆公開預約', created.status === 200, outcome(created));

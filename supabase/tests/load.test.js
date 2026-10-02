@@ -25,6 +25,7 @@ const auth = require(path.join(FN, '_auth-pg.js'));
 const { withoutUser, getPool } = require(path.join(FN, '_db.js'));
 const login = fx.adapt(require(path.join(FN, 'v2-password-login.js')));
 const mutate = fx.adapt(require(path.join(FN, 'v2-state-mutate.js')));
+const bookingWrite = fx.adapt(require(path.join(FN, 'v2-booking-write.js')));
 const load = fx.adapt(require(path.join(FN, 'v2-state-load.js')));
 
 let pass = 0, fail = 0;
@@ -36,6 +37,8 @@ const parse = (r) => ({ status: r.statusCode, ...JSON.parse(r.body) });
 const doLogin = async (p, pw, ip) => parse(await login.handler({ httpMethod: 'POST',
   body: JSON.stringify({ phone: p, password: pw }), headers: { 'x-nf-client-connection-ip': ip } }));
 const send = (tok, changes) => mutate.handler({ httpMethod: 'POST',
+  headers: { authorization: `Bearer ${tok}` }, body: JSON.stringify({ changes }) });
+const sendBooking = (tok, changes) => bookingWrite.handler({ httpMethod: 'POST',
   headers: { authorization: `Bearer ${tok}` }, body: JSON.stringify({ changes }) });
 const get = (tok) => load.handler({ httpMethod: 'GET', headers: tok ? { authorization: `Bearer ${tok}` } : {} });
 
@@ -53,8 +56,9 @@ const get = (tok) => load.handler({ httpMethod: 'GET', headers: tok ? { authoriz
   const bk = (id, extra={}) => ({ collection:'bookings', id, record:{ id, state:'open',
     pickupDate:'2026-10-01', pickupAddress:'新北市板橋區文化路一段100號',
     destination:'台北市中正區公園路20號', passengerCount:1, ...extra } });
-  await send(victim, [bk('LD-VICTIM')]);
-  await send(attacker, [bk('LD-ATTACK')]);
+  await sendBooking(victim, [bk('LD-VICTIM')]);
+  await sendBooking(attacker, [bk('LD-ATTACK')]);
+  await send(victim, [{ collection:'careRecipients', id:'LD-VIC-CR', record:{ id:'LD-VIC-CR', displayName:'合成' } }]);
   await send(dispatcher, [{ collection:'issues', id:'LD-ISS',
     record:{ id:'LD-ISS', organizationId:'ORG-TP-001', description:'自家異常' } }]);
 
@@ -100,11 +104,10 @@ const get = (tok) => load.handler({ httpMethod: 'GET', headers: tok ? { authoriz
   });
 
   console.log('--- 伺服器欄位是權威 ---');
-  await t('organizationId 以資料庫為準，不是前端送的那個', async () => {
-    await send(victim, [bk('LD-LIE', { organizationId: 'ORG-TP-001' })]);
+  await t('organizationId 以資料庫為準：需求者謊報承接機構被拒，也沒有寫入', async () => {
+    const w = parse(await sendBooking(victim, [bk('LD-LIE', { organizationId: 'ORG-TP-001' })]));
     const r = parse(await get(victim));
-    const row = (r.data.collections.bookings || []).find(b => b.id === 'LD-LIE');
-    return row && row.organizationId === null;
+    return w.ok !== true && !(r.data.collections.bookings || []).some(b => b.id === 'LD-LIE');
   });
   await t('version 由伺服器帶回', async () => {
     const r = parse(await get(victim));
@@ -114,9 +117,9 @@ const get = (tok) => load.handler({ httpMethod: 'GET', headers: tok ? { authoriz
 
   console.log('--- 軟刪除的資料不會回來 ---');
   await t('刪除後就不在載入結果裡', async () => {
-    await send(victim, [{ collection:'bookings', id:'LD-VICTIM', record:{ id:'LD-VICTIM' }, deleted:true }]);
+    await send(victim, [{ collection:'careRecipients', id:'LD-VIC-CR', record:{ id:'LD-VIC-CR' }, deleted:true }]);
     const r = parse(await get(victim));
-    return !(r.data.collections.bookings || []).some(b => b.id === 'LD-VICTIM');
+    return !(r.data.collections.careRecipients || []).some(b => b.id === 'LD-VIC-CR');
   });
 
   console.log(`\n結果：${pass} 通過 / ${fail} 失敗`);

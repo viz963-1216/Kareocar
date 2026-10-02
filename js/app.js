@@ -19,6 +19,7 @@ const APP_CONFIG = Object.freeze({
   legacyAuthSessionTokenKey: 'careRideV122579ReportDemoAuthSessionToken',
   logoutUrl: '/api/v2/logout',
   stateMutateUrl: '/api/v2/state-mutate',
+  bookingWriteUrl: '/api/v2/booking-write',
   identityWriteUrl: '/api/v2/identity-write',
   claimBookingUrl: '/api/v2/claim-booking',
   cancelBookingUrl: '/api/v2/cancel-booking',
@@ -516,8 +517,11 @@ async function authoritativeFlush_(){
     // RLS 都依賴，不能從通用的 app_state 管道寫入。兩邊分開送，任一邊失敗就整批
     // 視為失敗、留在佇列裡重試。
     const payload=rows.map(({collection,id,record,deleted,expectedRevision})=>({collection,id,record,deleted,expectedRevision}));
+    // 預約走預約端點：伺服器檢查狀態轉換、計算地址欄位、轉手時撤銷原機構存取。
+    // 先送預約再送其他資料，排車時行程才會在預約更新之後寫入。
     const identityRows=payload.filter(x=>IDENTITY_WRITE_COLLECTIONS.has(x.collection));
-    const stateRows=payload.filter(x=>!IDENTITY_WRITE_COLLECTIONS.has(x.collection));
+    const bookingRows=payload.filter(x=>x.collection==='bookings');
+    const stateRows=payload.filter(x=>!IDENTITY_WRITE_COLLECTIONS.has(x.collection)&&x.collection!=='bookings');
     const post=async(url,changes)=>{
       if(!changes.length)return;
       const response=await apiFetch(url,{method:'POST',headers:{'content-type':'application/json'},credentials:'same-origin',cache:'no-store',body:JSON.stringify({changes})});
@@ -525,6 +529,7 @@ async function authoritativeFlush_(){
       if(!response.ok||!result?.ok)throw new Error(result?.error?.message||`正式資料寫入失敗（HTTP ${response.status}）`);
     };
     await post(APP_CONFIG.identityWriteUrl,identityRows);
+    await post(APP_CONFIG.bookingWriteUrl,bookingRows);
     await post(APP_CONFIG.stateMutateUrl,stateRows);
     rows.forEach(x=>authoritativeQueue.delete(`${x.actorUserId}|${x.collection}|${x.id}`));authoritativeLastError='';authoritativeLastAckAt=nowISO();authoritativePersistQueue_();
     if(authoritativeQueue.size)setTimeout(()=>authoritativeFlush_(),20);return {ok:true,count:rows.length};

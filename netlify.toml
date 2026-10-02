@@ -90,6 +90,11 @@
   status = 200
 
 [[redirects]]
+  from = "/api/v2/booking-write"
+  to = "/.netlify/functions/v2-booking-write"
+  status = 200
+
+[[redirects]]
   from = "/api/v2/claim-booking"
   to = "/.netlify/functions/v2-claim-booking"
   status = 200
