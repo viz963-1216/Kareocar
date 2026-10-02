@@ -11,6 +11,7 @@
 | `migrations/0001_baseline.sql` | 完整 schema：資料表、RLS 政策、`care_ride_app` 角色、身分與登入函式、`app_state`、接案／司機執行／需求者取消、通知來源證明。由原本的 0001–0008 壓縮而成 |
 | `migrations/0002_supabase_auth.sql` | 身分改由 Supabase Auth：移除自製密碼、`sessions_valid_after` 撤銷 session |
 | `migrations/0003_org_review.sql` | 機構申請與審核：`review_status`（pending／approved／rejected／suspended）、`app.apply_organization`、`app.review_organization`；需求池與接案只開放給已核准機構 |
+| `migrations/0007_server_notifications.sql` | 通知改存 `notifications` 資料表，只有後端函式（`app.enqueue_notification`、`app.notify_booking_requester`）寫得進去；收件人只讀得到自己的通知 |
 | `migrations/0006_trip_resource_scope.sql` | `app.trip_resource_scope`：行程寫入時查司機、車輛、預約歸屬哪個機構（只回傳歸屬與狀態） |
 | `migrations/0005_booking_access_revoke.sql` | 退回公開池、不受理、重大修改需重新承接、需求者取消後，原承接機構立即失去預約存取（`app.revoke_booking_organization`）；取消的行程移除乘客個資；需求者只看得到承接單位名稱（`app.my_booking_service_organizations`） |
 | `migrations/0004_pool_fuzzy_address.sql` | 需求池多露出伺服器計算的模糊地址、行政區、距離、車程與報價狀態（來自預約的 `serverComputed`）；完整地址、姓名、電話、經緯度仍不露出 |
@@ -154,6 +155,22 @@ PGHOST=/tmp/pgrun PGPORT=5433 bash supabase/tests/rls.test.sh
 - 需求者、承接人、取消紀錄等欄位一律沿用資料庫的值
 
 退回公開池、不受理、重大修改時，同一交易內撤銷原承接機構，原機構立即讀不到。
+
+### 通知
+
+通知只由後端流程建立，存在 `notifications` 資料表（`care_ride_app` 只有 SELECT），收件人只讀得到自己的：
+
+| 事件 | 產生的地方 | 收件人 |
+|---|---|---|
+| 承接 `booking_claimed` | `claim-booking` | 需求者（帶承接單位名稱） |
+| 排車 `booking_scheduled` | `booking-write` | 需求者 |
+| 指派、改派 `trip_assigned`／`trip_unassigned` | `trip-write` | 新、舊司機 |
+| 調度取消行程 `trip_cancelled` | `trip-write` | 司機 |
+| 需求者取消 `booking_cancelled`、`trip_cancelled` | `cancel-booking` | 需求者、司機 |
+| 完成 `trip_completed` | `trip-execute` | 需求者 |
+
+每則通知有 `dedupe_key`，同一事件重試不會重複。目前只寫入站內（`channel = in_app`、`status = queued`），
+簡訊或 LINE 推送在 #19 接上。
 
 ### 行程寫入（/api/v2/trip-write）
 

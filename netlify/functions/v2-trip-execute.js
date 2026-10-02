@@ -67,5 +67,15 @@ exports.handler = (event) => runAuthenticated(event, async (client, body, claims
     });
   }
 
+  // 行程完成：通知每一筆預約的需求者（司機讀不到預約，由 definer 函式查收件人）
+  if (!result.out_duplicate && result.out_status === 'completed' && (locked.trip_data.status || '') !== 'completed') {
+    const data = locked.trip_data || {};
+    const bookingIds = new Set([...(Array.isArray(data.bookingIds) ? data.bookingIds : []), data.bookingId].filter(Boolean));
+    for (const bookingId of bookingIds) {
+      await client.query('select app.notify_booking_requester($1, $2, $3::jsonb, $4, $5)', [
+        bookingId, 'trip_completed', JSON.stringify({ tripId }), 'trip_execute_endpoint', `completed:${tripId}:${bookingId}`]);
+    }
+  }
+
   return { tripId: result.out_trip_id, revision: result.out_revision, status: result.out_status, duplicate: result.out_duplicate };
 });

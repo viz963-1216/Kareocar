@@ -10,6 +10,8 @@
  * （已開始的行程不能取消）；司機、車輛、新關聯的預約都必須屬於行程的機構。
  * 司機執行自己的行程走 v2-trip-execute；需求者取消走 v2-cancel-booking。
  *
+ * 指派、改派、取消時通知相關司機（notifications 資料表，見 0007）。
+ *
  * 行程用 revision 做樂觀鎖。整批在同一筆交易裡，任何一筆不合規則就整批不寫入。
  */
 
@@ -31,6 +33,33 @@ async function resourceScope(client, record) {
     vehicle: rows.find((r) => r.kind === 'vehicle') || null,
     bookings: new Map(rows.filter((r) => r.kind === 'booking' && r.active).map((r) => [r.id, r]))
   };
+}
+
+async function driverUserId(client, driverId) {
+  if (!driverId) return null;
+  const { rows } = await client.query('select user_id from drivers where id = $1', [driverId]);
+  return rows[0] ? rows[0].user_id : null;
+}
+
+/** 司機的通知：指派、改派（原司機與新司機）、行程取消。 */
+async function notifyDrivers(client, { id, record, before, organizationId, revision }) {
+  const enqueue = (userId, template, payload, key) => client.query(
+    'select app.enqueue_notification($1, $2, $3, $4, $5, $5, $6::jsonb, $7, $8)',
+    [userId, organizationId, text(record.bookingId) || null, id, template,
+     JSON.stringify({ tripId: id, tripCode: record.code || '', ...payload }), 'trip_write_endpoint', key]);
+  const newDriver = text(record.driverId);
+  const oldDriver = before ? text(before.driverId) : '';
+  const status = text(record.status) || 'scheduled';
+  if (status === 'cancelled' && (!before || text(before.status) !== 'cancelled')) {
+    const userId = await driverUserId(client, newDriver || oldDriver);
+    if (userId) await enqueue(userId, 'trip_cancelled', {}, `trip_cancelled:${id}`);
+    return;
+  }
+  if (newDriver === oldDriver) return;
+  const newUser = await driverUserId(client, newDriver);
+  if (newUser) await enqueue(newUser, 'trip_assigned', {}, `trip_assigned:${id}:${newDriver}:${revision}`);
+  const oldUser = await driverUserId(client, oldDriver);
+  if (oldUser && oldUser !== newUser) await enqueue(oldUser, 'trip_unassigned', {}, `trip_unassigned:${id}:${oldDriver}:${revision}`);
 }
 
 exports.handler = async (event) => {
@@ -95,6 +124,8 @@ exports.handler = async (event) => {
           // 觸發器把組織清掉代表呼叫者不是該組織的營運方；上面已檢查過，這裡是保險
           throw auth.authError('FORBIDDEN', `沒有權限替這個機構建立行程`);
         }
+        await notifyDrivers(client, { id, record, before: existing ? existing.data || {} : null,
+          organizationId, revision: saved.revision });
         results.push({ collection: 'trips', id, status: record.status || 'scheduled',
           version: saved.version, revision: saved.revision, updatedAt: saved.updated_at });
       }

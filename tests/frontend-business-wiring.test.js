@@ -70,9 +70,14 @@ t('福利額度釋放的取消包裝等待非同步取消結果（否則 r.ok �
 
 console.log('--- 通知 ---');
 const stateMutateSrc = fs.readFileSync(path.join(ROOT, 'netlify', 'functions', 'v2-state-mutate.js'), 'utf8');
-t('前端流程的通知仍經 state-mutate 回存（不退化成只留在本機）',
-  /ALLOWED_COLLECTIONS = new Set\(\[[^\]]*'notifications'/.test(stateMutateSrc)
-    && !functionBody('function authoritativeQueueChanges_(changes){').includes("'notifications'"));
+// #25：通知只由後端流程建立，前端不寫、state-mutate 也不收
+t('state-mutate 不接受通知',
+  !/ALLOWED_COLLECTIONS = new Set\(\[[^\]]*'notifications'/.test(stateMutateSrc)
+    && /notifications:\s*'/.test(stateMutateSrc));
+t('前端不把通知排入寫入佇列',
+  !/const AUTHORITATIVE_STATE_COLLECTIONS=Object\.freeze\(\[[^\]]*'notifications'/.test(html));
+t('Notification.queue 不再寫入本機資料', /queue\(\)\{ return null; \}/.test(html));
+t('state-load 回傳的通知以唯讀方式載入本機', html.includes('db.notifications=Array.isArray(collections.notifications)?collections.notifications:[];'));
 
 console.log('--- 司機執行 ---');
 const queueChanges = functionBody('function authoritativeQueueChanges_(changes){');
