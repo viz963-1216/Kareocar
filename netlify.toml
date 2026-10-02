@@ -124,6 +124,11 @@
   to = "/.netlify/functions/v2-platform-settings"
   status = 200
 
+[[redirects]]
+  from = "/api/v2/account-deletion"
+  to = "/.netlify/functions/v2-account-deletion"
+  status = 200
+
 # 每日把超過保存期限的預約與行程匿名化（#26）
 [functions."retention-anonymize"]
   schedule = "@daily"

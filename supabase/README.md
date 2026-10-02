@@ -11,6 +11,7 @@
 | `migrations/0001_baseline.sql` | 完整 schema：資料表、RLS 政策、`care_ride_app` 角色、身分與登入函式、`app_state`、接案／司機執行／需求者取消、通知來源證明。由原本的 0001–0008 壓縮而成 |
 | `migrations/0002_supabase_auth.sql` | 身分改由 Supabase Auth：移除自製密碼、`sessions_valid_after` 撤銷 session |
 | `migrations/0003_org_review.sql` | 機構申請與審核：`review_status`（pending／approved／rejected／suspended）、`app.apply_organization`、`app.review_organization`；需求池與接案只開放給已核准機構 |
+| `migrations/0011_account_deletion.sql` | 刪除帳號與個資申請 `deletion_requests`（pending／cancelled／rejected／completed）；平台管理者核准時在同一交易內匿名化與停用帳號 |
 | `migrations/0010_consent_retention.sql` | 平台設定 `app_settings`（保存期限、條款版本）、同意紀錄 `consent_records`、到期資料匿名化 `app.anonymize_expired_records` |
 | `migrations/0009_benefit_ledger.sql` | 正式核定額度 `benefit_authorizations` 與僅追加帳本 `benefit_ledger`：建立預約保留、取消／不受理／過期釋放、完成結算、修正回轉；只能經受控函式寫入 |
 | `migrations/0008_benefit_rulesets.sql` | 補助規則版本 `benefit_rulesets`（draft／approved／superseded／rejected，同一 program code 只有一個 approved）與伺服器試算；只能經受控函式寫入 |
@@ -190,6 +191,10 @@ PGHOST=/tmp/pgrun PGPORT=5433 bash supabase/tests/rls.test.sh
 - 每日排程 `retention-anonymize`（netlify.toml）把行程日期超過保存期限的預約與行程匿名化：
   清除姓名、電話、完整地址、座標、自由文字、定位軌跡、服務證明的收受人與照片；保留行政區、
   日期、距離、車程、金額。每筆都寫稽核紀錄 `retention.anonymized`。平台管理者也能手動執行。
+- 刪除帳號與個資：使用者在「我的帳戶」經 `/api/v2/account-deletion` 申請或撤回；平台超級管理者在
+  「組織管理」核准或駁回（駁回要填原因）。核准時同一交易內匿名化他的預約與行程、清除服務對象與補助
+  試算的事實資料、刪除寄給他的通知、撤銷成員資格、停用帳號並清除姓名電話，最後刪除 Supabase Auth
+  帳號（失敗就整筆回滾）。同意紀錄與稽核紀錄保留。有未結束的預約或是機構負責人時不能核准。
 
 ### 通知
 

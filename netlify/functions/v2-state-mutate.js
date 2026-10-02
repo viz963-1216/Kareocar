@@ -38,7 +38,8 @@ const DEDICATED_ENDPOINTS = {
   benefitLatestEstimateRuns: '瀏覽器本機（試算預覽不存檔）',
   benefitAuthorizations: '/api/v2/benefit-authorization',
   benefitAuthorizationEvents: '/api/v2/benefit-authorization',
-  benefitLedger: '後端流程（預約保留、取消釋放、完成結算）'
+  benefitLedger: '後端流程（預約保留、取消釋放、完成結算）',
+  deletionRequests: '/api/v2/account-deletion'
 };
 
 const ALLOWED_COLLECTIONS = new Set([

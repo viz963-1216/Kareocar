@@ -194,6 +194,16 @@ exports.handler = async (event) => {
           order by pickup_at nulls last
           limit 500`)).rows;
 
+      // 刪除帳號申請（#26）：本人看自己的，平台管理者看全部（RLS）
+      const deletionRequests = (await client.query(
+        `select d.*, u.display_name from deletion_requests d left join users u on u.id = d.user_id
+          order by d.requested_at desc limit 200`)).rows;
+      for (const d of deletionRequests) {
+        push('deletionRequests', { id: d.id, userId: d.user_id, userName: d.display_name || '', status: d.status,
+          reason: d.reason || '', requestedAt: d.requested_at, reviewedAt: d.reviewed_at, reviewNote: d.review_note || '',
+          completedAt: d.completed_at, summary: d.summary || {} });
+      }
+
       // 條款同意狀態與保存期限（#26）：前端據此要求同意、顯示設定
       const consent = await consentStatus(client);
       const retention = await retentionYears(client);

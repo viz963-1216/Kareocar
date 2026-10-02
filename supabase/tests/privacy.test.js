@@ -30,8 +30,12 @@ const settingsFn = require('../../netlify/functions/v2-platform-settings');
 const bookingWriteFn = require('../../netlify/functions/v2-booking-write');
 const loadFn = require('../../netlify/functions/v2-state-load');
 const scheduled = require('../../netlify/functions/retention-anonymize');
+const deletionFn = require('../../netlify/functions/v2-account-deletion');
+const mutateFn = require('../../netlify/functions/v2-state-mutate');
+const cancelFn = require('../../netlify/functions/v2-cancel-booking');
+const supabaseAuth = require('../../netlify/functions/_supabase-auth');
 
-const U = { root: 'USR-PRV-ROOT', req: 'USR-PRV-REQ', req2: 'USR-PRV-REQ2' };
+const U = { root: 'USR-PRV-ROOT', req: 'USR-PRV-REQ', req2: 'USR-PRV-REQ2', req3: 'USR-PRV-REQ3' };
 
 const results = [];
 function record(name, ok, detail = '') {
@@ -65,10 +69,12 @@ function booking(id, extra = {}) {
     insert into users (id, display_name, phone_e164, platform_role, active) values
       ('${U.root}','合成平台管理者','+886977000009','super_admin',true),
       ('${U.req}','合成需求者','+886977000001','none',true),
-      ('${U.req2}','合成需求者二','+886977000002','none',true);
+      ('${U.req2}','合成需求者二','+886977000002','none',true),
+      ('${U.req3}','合成需求者三','+886977000003','none',true);
     insert into memberships (id, user_id, organization_id, role, status) values
       ('M-PRV-REQ','${U.req}','ORG-REQ-001','requester','active'),
-      ('M-PRV-REQ2','${U.req2}','ORG-REQ-001','requester','active');
+      ('M-PRV-REQ2','${U.req2}','ORG-REQ-001','requester','active'),
+      ('M-PRV-REQ3','${U.req3}','ORG-REQ-001','requester','active');
   `);
 
   console.log('--- 同意紀錄 ---');
@@ -155,8 +161,78 @@ function booking(id, extra = {}) {
   const again = await settings(U.root, { action: 'run_retention' });
   record('平台管理者手動執行：已匿名化的不會重複處理', again.status === 200 && again.data.anonymized.bookings === 0 && again.data.anonymized.trips === 0, outcome(again));
 
-  const failed = results.filter((r) => !r.ok);
-  console.log(`\n結果：${results.length - failed.length} 通過 / ${failed.length} 失敗`);
-  process.exitCode = failed.length ? 1 : 0;
+  console.log('--- 刪除帳號與個資申請 ---');
+  const del = (userId, body) => call(deletionFn.handler, 'POST', userId, body);
+  for (const [doc, ver] of [['privacy_notice', '2026-10'], ['terms', '2027-01']]) await consent(U.req2, { action: 'accept', document: doc, version: ver });
+  await call(mutateFn.handler, 'POST', U.req2, { changes: [{ collection: 'careRecipients', id: 'CR-DEL-1',
+    record: { id: 'CR-DEL-1', identity: { displayName: '合成被刪除長輩' }, contacts: { primaryPhone: '0933000111' } } }] });
+  await writeBooking(U.req2, booking('BKG-DEL-F', { requestedByUserId: U.req2, recipientId: 'CR-DEL-1', name: '合成刪除者', phone: '0933000111' }));
+  await writeBooking(U.req2, booking('BKG-DEL-P', { requestedByUserId: U.req2, recipientId: 'CR-DEL-1', name: '合成刪除者', phone: '0933000111', pickupDate: '2025-05-01' }));
+  const rootReq = await del(U.root, { action: 'request' });
+  record('平台管理者不能經申請刪除自己', rootReq.status === 400, outcome(rootReq));
+  const r1 = await del(U.req2, { action: 'request', reason: '不再使用' });
+  const REQ = r1.data && r1.data.id;
+  record('使用者提出刪除申請（pending）', r1.status === 200 && r1.data.status === 'pending', outcome(r1));
+  const dupReq = await del(U.req2, { action: 'request' });
+  record('同時只能有一件處理中的申請', dupReq.status === 400, outcome(dupReq));
+  const otherView = (await call(loadFn.handler, 'GET', U.req)).data.collections.deletionRequests || [];
+  const ownView = (await call(loadFn.handler, 'GET', U.req2)).data.collections.deletionRequests || [];
+  record('本人看得到自己的申請，其他使用者看不到', ownView.some((d) => d.id === REQ) && !otherView.some((d) => d.id === REQ));
+  const reqApprove = await del(U.req, { action: 'approve', id: REQ });
+  record('非平台管理者不能核准', reqApprove.status === 403, outcome(reqApprove));
+  const blockedApprove = await del(U.root, { action: 'approve', id: REQ });
+  record('還有未結束的預約時不能核准', blockedApprove.status === 400 && /未結束的預約/.test(blockedApprove.error.message), outcome(blockedApprove));
+  await call(cancelFn.handler, 'POST', U.req2, { bookingId: 'BKG-DEL-F', reasonCode: 'requester_no_longer_needed' });
+  const rejectNoNote = await del(U.root, { action: 'reject', id: REQ, note: '' });
+  record('駁回必須填寫原因', rejectNoNote.status === 400, outcome(rejectNoNote));
+
+  // Auth 刪除失敗：整筆回滾，申請維持 pending
+  const provider = supabaseAuth.getProvider();
+  const realDelete = provider.deleteUser;
+  provider.deleteUser = async () => { throw Object.assign(new Error('合成：Auth 服務暫停'), { code: 'AUTH_PROVIDER_UNAVAILABLE' }); };
+  const failed = await del(U.root, { action: 'approve', id: REQ });
+  provider.deleteUser = realDelete;
+  const stillPending = (await admin.query('select status from deletion_requests where id = $1', [REQ])).rows[0].status;
+  const stillActive = (await admin.query('select active, phone_e164 from users where id = $1', [U.req2])).rows[0];
+  record('登入帳號刪除失敗時整筆回滾：申請仍處理中、帳號與資料未變', failed.status >= 500 && stillPending === 'pending'
+    && stillActive.active === true && stillActive.phone_e164 === '+886977000002'
+    && (await row('bookings', 'BKG-DEL-P')).data.name === '合成刪除者', outcome(failed));
+
+  const approved = await del(U.root, { action: 'approve', id: REQ, note: '合成核准' });
+  record('平台管理者核准並執行（completed）', approved.status === 200 && approved.data.status === 'completed'
+    && approved.data.summary.bookings === 2 && approved.data.summary.careRecipients === 1, outcome(approved));
+  record('Supabase Auth 帳號被刪除', fx.calls.some((c) => c[0] === 'deleteUser' && c[1] === U.req2));
+  const delBooking = (await row('bookings', 'BKG-DEL-P')).data;
+  record('該使用者的預約匿名化', delBooking.name === null && delBooking.phone === null && delBooking.pickupAddress === '新北市板橋區'
+    && delBooking.pickupDate === '2025-05-01' && Boolean(delBooking.anonymizedAt));
+  const cr = (await admin.query(`select deleted, data from app_state where collection = 'careRecipients' and id = 'CR-DEL-1'`)).rows[0];
+  record('服務對象清除內容並標記刪除', cr.deleted === true && !JSON.stringify(cr.data).includes('0933000111'));
+  const u = (await admin.query('select active, display_name, phone_e164, email from users where id = $1', [U.req2])).rows[0];
+  record('帳號停用並清除姓名、電話、Email', u.active === false && u.display_name === '（已刪除帳號）' && u.phone_e164 === null && u.email === null);
+  const mem = (await admin.query('select status from memberships where user_id = $1', [U.req2])).rows;
+  record('成員資格撤銷', mem.length > 0 && mem.every((m) => m.status === 'revoked'));
+  const ntf = (await admin.query('select count(*)::int n from notifications where recipient_user_id = $1', [U.req2])).rows[0].n;
+  record('寄給他的通知刪除', ntf === 0, `n=${ntf}`);
+  const keptConsent = (await admin.query('select count(*)::int n from consent_records where user_id = $1', [U.req2])).rows[0].n;
+  record('同意紀錄保留（法遵證明）', keptConsent === 2, `n=${keptConsent}`);
+  const delAudit = (await admin.query(`select details from audit_events where event_type = 'account.deletion_completed' and entity_id = $1`, [REQ])).rows;
+  record('刪除寫入稽核紀錄（含筆數）', delAudit.length === 1 && delAudit[0].details.bookings === 2 && delAudit[0].details.userId === U.req2);
+  const afterLoad = await call(loadFn.handler, 'GET', U.req2);
+  record('刪除後原本的登入立即失效', afterLoad.status === 401, outcome(afterLoad));
+  const reapprove = await del(U.root, { action: 'approve', id: REQ });
+  record('已完成的申請不能再處理', reapprove.status === 400, outcome(reapprove));
+  const r3 = await del(U.req3, { action: 'request' });
+  const rej = await del(U.root, { action: 'reject', id: r3.data.id, note: '合成：需先結清' });
+  const rejRow = (await admin.query('select status, review_note from deletion_requests where id = $1', [r3.data.id])).rows[0];
+  record('駁回並記錄原因', rej.status === 200 && rejRow.status === 'rejected' && rejRow.review_note === '合成：需先結清', outcome(rej));
+  const r3b = await del(U.req3, { action: 'request' });
+  const cancelled = await del(U.req3, { action: 'cancel', id: r3b.data.id });
+  record('使用者可以撤回處理中的申請', cancelled.status === 200 && (await admin.query('select status from deletion_requests where id = $1', [r3b.data.id])).rows[0].status === 'cancelled', outcome(cancelled));
+  const forgeDel = await call(mutateFn.handler, 'POST', U.req3, { changes: [{ collection: 'deletionRequests', id: 'X', record: { id: 'X', status: 'completed' } }] });
+  record('刪除申請不能經一般寫入端點寫', forgeDel.status === 403, outcome(forgeDel));
+
+  const failedResults = results.filter((r) => !r.ok);
+  console.log(`\n結果：${results.length - failedResults.length} 通過 / ${failedResults.length} 失敗`);
+  process.exitCode = failedResults.length ? 1 : 0;
 })().catch((e) => { console.error(e); process.exitCode = 1; })
   .finally(async () => { await db.getPool().end(); await admin.end(); });
