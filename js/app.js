@@ -5968,10 +5968,14 @@ function platformPrivacySettingsCard(){
   <div class="form-grid"><label>保存期限（年）<input id="retentionYearsInput" type="number" min="1" max="30" value="${escapeHTML(String(years))}"/></label></div>
   <div class="item-actions"><button type="button" class="btn outline sm" id="saveRetentionYearsBtn">儲存保存期限</button><button type="button" class="btn warning sm" id="runRetentionNowBtn">立即執行匿名化</button></div>
   ${docRow('privacy_notice')}${docRow('terms')}
-  <div class="item-actions"><button type="button" class="btn primary sm" id="saveLegalDocumentsBtn">儲存條款版本</button></div></section>`;
+  <div class="item-actions"><button type="button" class="btn primary sm" id="saveLegalDocumentsBtn">儲存條款版本</button></div>
+  <div class="card-head" style="margin-top:12px"><div><h3>監控與告警</h3><p>確認 Sentry 收得到錯誤、Email 與 Discord 收得到告警（設定見 DEPLOYMENT.md）。</p></div></div>
+  <div class="item-actions"><button type="button" class="btn outline sm" id="sendTestAlertBtn">送出測試告警</button><button type="button" class="btn outline sm" id="triggerTestErrorBtn">觸發測試錯誤</button></div></section>`;
 }
 async function platformSettingsRequest_(payload,message){try{const r=await backendJsonPost(APP_CONFIG.platformSettingsUrl,payload);await AppStateDatabase.loadAll({silent:true});render();showToast(typeof message==='function'?message(r.data||{}):message);}catch(error){showToast(error.message||'平台設定儲存失敗');}}
 function bindPlatformPrivacySettings(){
+  $('sendTestAlertBtn')?.addEventListener('click',async()=>{try{const r=await backendJsonPost(APP_CONFIG.platformSettingsUrl,{action:'test_alert'});const d=r.data?.delivered||[];showToast(d.length?`測試告警已送出：${d.join('、')}`:'已寫入稽核紀錄，但沒有設定 Email 或 Discord');}catch(error){showToast(error.message||'測試告警失敗');}});
+  $('triggerTestErrorBtn')?.addEventListener('click',async()=>{try{await backendJsonPost(APP_CONFIG.platformSettingsUrl,{action:'test_error'});}catch(error){showToast(error.errorId||error.code?`已觸發測試錯誤${error.code?`（${error.code}）`:''}，請到 Sentry 確認`:'已觸發測試錯誤');}});
   $('saveRetentionYearsBtn')?.addEventListener('click',()=>platformSettingsRequest_({action:'set_retention',years:Number($('retentionYearsInput').value)},'保存期限已更新'));
   $('runRetentionNowBtn')?.addEventListener('click',()=>{if(!confirm('立即把超過保存期限的預約與行程匿名化？匿名化後無法還原。'))return;platformSettingsRequest_({action:'run_retention'},d=>`已匿名化 ${d.anonymized?.bookings||0} 筆預約、${d.anonymized?.trips||0} 趟行程`);});
   document.querySelectorAll('.deletion-approve-btn').forEach(btn=>btn.addEventListener('click',()=>{if(!confirm('核准後立即匿名化並停用帳號，無法復原。確定執行？'))return;accountDeletionRequest_({action:'approve',id:btn.dataset.request},'已完成刪除');}));

@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * GET /api/health  —— 這個後端還活著嗎
+ * GET／HEAD /api/health  —— 這個後端還活著嗎（外部存活檢查每隔幾分鐘呼叫，見 DEPLOYMENT.md）
  *
  * 舊版是把請求轉給 Apps Script，回報的是「那一端」的健康狀態。身分與資料都搬到
  * Postgres 之後，那個數字只會讓人以為系統還跑在舊版上（它一直回報
@@ -20,7 +20,8 @@ const REQUIRED_ENV = ['DATABASE_URL', 'AUTH_SESSION_SECRET', 'AUTH_PASSWORD_PEPP
   'SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY'];
 
 exports.handler = async (event) => {
-  if (event.httpMethod !== 'GET') {
+  // HEAD：外部存活檢查服務（例如 UptimeRobot）常用，只看狀態碼（#17）
+  if (event.httpMethod !== 'GET' && event.httpMethod !== 'HEAD') {
     return json(405, { ok: false, error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed' } });
   }
 
@@ -41,8 +42,9 @@ exports.handler = async (event) => {
   }
 
   const healthy = configured && database;
-  return json(healthy ? 200 : 503, {
+  const response = json(healthy ? 200 : 503, {
     ok: healthy,
     data: { backend: 'postgres', configured, database, latencyMs }
   });
+  return event.httpMethod === 'HEAD' ? { ...response, body: '' } : response;
 };

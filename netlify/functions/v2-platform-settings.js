@@ -8,6 +8,8 @@
  *   { action: 'set_retention', years }                 保存期限（1–30 年，預設 5）
  *   { action: 'set_documents', documents }             條款版本：{ privacy_notice: { title, version, url }, terms: {...} }
  *   { action: 'run_retention' }                         立即執行一次到期資料匿名化（平常由每日排程執行）
+ *   { action: 'test_alert' }                            送出測試告警（Email、Discord）
+ *   { action: 'test_error' }                            刻意產生一次伺服器錯誤（Sentry）
  *
  * 條款改版（version 變了）後，使用者要重新同意才能建立預約。
  */
@@ -15,6 +17,7 @@
 const auth = require('./_auth-pg');
 const { runAuthenticated, writeAudit } = require('./_business-rpc');
 const { legalDocuments, retentionYears } = require('./_consent');
+const { sendAlert } = require('./_alerts');
 
 const text = (v, max = 300) => String(v === undefined || v === null ? '' : v).trim().slice(0, max);
 
@@ -51,5 +54,15 @@ exports.handler = (event) => runAuthenticated(event, async (client, body, claims
     const rows = (await client.query('select * from app.anonymize_expired_records()')).rows;
     return { anonymized: { bookings: rows.filter((r) => r.kind === 'booking').length, trips: rows.filter((r) => r.kind === 'trip').length } };
   }
+  // 驗收監控用（#17）：送出一則測試告警到 Email 與 Discord；或刻意產生一次伺服器錯誤送到 Sentry
+  if (action === 'test_alert') {
+    const result = await sendAlert(client, { kind: 'test', title: '測試告警（平台管理者手動觸發）',
+      details: { triggeredBy: claims.userId } });
+    return { delivered: result.delivered };
+  }
+  if (action === 'test_error') {
+    throw new Error('測試錯誤（平台管理者手動觸發，用來確認 Sentry 收得到）');
+  }
+
   throw auth.authError('VALIDATION_ERROR', '不支援的動作');
 });

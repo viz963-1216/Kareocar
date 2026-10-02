@@ -157,6 +157,7 @@ SELECT；寫入只經檢查身分與狀態的函式，連有漏洞的 handler �
 | `POST /api/v2/consent` | 同意個資告知與服務條款 |
 | `POST /api/v2/platform-settings` | 保存期限、條款版本、立即匿名化（平台管理者） |
 | `POST /api/v2/account-deletion` | 刪除帳號申請與審核 |
+| `POST /api/v2/client-error` | 前端未處理錯誤轉送 Sentry（不需登入，有大小與頻率限制） |
 
 排程 `retention-anonymize`、`benefit-rules-fetch` 沒有對外路由，由 Netlify 依 `netlify.toml` 執行。
 
