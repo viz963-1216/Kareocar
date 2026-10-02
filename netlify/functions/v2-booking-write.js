@@ -71,6 +71,8 @@ exports.handler = async (event) => {
     const data = await withUser(claims.userId, async (client) => {
       await session.assertSessionActive(client, claims);
       const admin = (await client.query('select app.is_super_admin() as ok')).rows[0].ok === true;
+      // 已發布的個資告知與服務條款，沒同意最新版本就不能建立預約（#26）
+      const consentMissing = admin ? [] : ((await client.query('select app.consent_missing() as m')).rows[0].m || []);
 
       const results = [];
       for (const change of changes) {
@@ -95,6 +97,10 @@ exports.handler = async (event) => {
         };
         if (existing && !roles.admin && !roles.ownsExisting && !roles.opsOfExisting) {
           throw auth.authError('FORBIDDEN', `沒有權限修改預約 ${id}`);
+        }
+
+        if (!existing && consentMissing.length) {
+          throw auth.authError('CONSENT_REQUIRED', '請先閱讀並同意最新的個資告知與服務條款');
         }
 
         let checked;

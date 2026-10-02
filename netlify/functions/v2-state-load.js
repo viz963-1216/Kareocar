@@ -20,6 +20,7 @@ const { withUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
 const session = require('./_session');
 const benefit = require('./_benefit');
+const { consentStatus, retentionYears } = require('./_consent');
 
 const MAX_ROWS = 5000;
 
@@ -193,9 +194,15 @@ exports.handler = async (event) => {
           order by pickup_at nulls last
           limit 500`)).rows;
 
+      // 條款同意狀態與保存期限（#26）：前端據此要求同意、顯示設定
+      const consent = await consentStatus(client);
+      const retention = await retentionYears(client);
+
       return {
         collections,
         pool,
+        consent,
+        platformSettings: { retentionYears: retention },
         counts: Object.fromEntries(Object.entries(collections).map(([k, v]) => [k, v.length])),
         truncated: rows.length >= MAX_ROWS,
         loadedAt: new Date().toISOString()

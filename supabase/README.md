@@ -11,6 +11,7 @@
 | `migrations/0001_baseline.sql` | 完整 schema：資料表、RLS 政策、`care_ride_app` 角色、身分與登入函式、`app_state`、接案／司機執行／需求者取消、通知來源證明。由原本的 0001–0008 壓縮而成 |
 | `migrations/0002_supabase_auth.sql` | 身分改由 Supabase Auth：移除自製密碼、`sessions_valid_after` 撤銷 session |
 | `migrations/0003_org_review.sql` | 機構申請與審核：`review_status`（pending／approved／rejected／suspended）、`app.apply_organization`、`app.review_organization`；需求池與接案只開放給已核准機構 |
+| `migrations/0010_consent_retention.sql` | 平台設定 `app_settings`（保存期限、條款版本）、同意紀錄 `consent_records`、到期資料匿名化 `app.anonymize_expired_records` |
 | `migrations/0009_benefit_ledger.sql` | 正式核定額度 `benefit_authorizations` 與僅追加帳本 `benefit_ledger`：建立預約保留、取消／不受理／過期釋放、完成結算、修正回轉；只能經受控函式寫入 |
 | `migrations/0008_benefit_rulesets.sql` | 補助規則版本 `benefit_rulesets`（draft／approved／superseded／rejected，同一 program code 只有一個 approved）與伺服器試算；只能經受控函式寫入 |
 | `migrations/0007_server_notifications.sql` | 通知改存 `notifications` 資料表，只有後端函式（`app.enqueue_notification`、`app.notify_booking_requester`）寫得進去；收件人只讀得到自己的通知 |
@@ -179,6 +180,16 @@ PGHOST=/tmp/pgrun PGPORT=5433 bash supabase/tests/rls.test.sh
   | 完成後修正 | 結算回轉為保留 | trip-execute |
 
   同一個核定以 `FOR UPDATE` 鎖住，同時建立的預約不會超出可用額度。
+
+### 同意紀錄與保存期限（#26）
+
+- 條款版本在 `app_settings.legal_documents`，由平台超級管理者經 `/api/v2/platform-settings` 發布。
+  律師文件完成前版本是 null，不要求同意；發布或改版後，沒同意最新版本的使用者不能建立預約
+  （`CONSENT_REQUIRED`），前端會跳出同意視窗，經 `/api/v2/consent` 記錄版本與時間。
+- 保存期限 `app_settings.retention_years`，預設 5 年，可設定 1–30 年。
+- 每日排程 `retention-anonymize`（netlify.toml）把行程日期超過保存期限的預約與行程匿名化：
+  清除姓名、電話、完整地址、座標、自由文字、定位軌跡、服務證明的收受人與照片；保留行政區、
+  日期、距離、車程、金額。每筆都寫稽核紀錄 `retention.anonymized`。平台管理者也能手動執行。
 
 ### 通知
 

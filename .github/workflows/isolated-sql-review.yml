@@ -123,6 +123,9 @@ jobs:
       - name: 補助整合測試（規則版本、伺服器試算與預約估算、正式核定、保留／釋放／結算、併發不超額）
         run: bash supabase/tests/run-benefit.sh
 
+      - name: 同意紀錄與保存期限匿名化整合測試（條款改版要求重新同意、到期資料匿名化、未到期不受影響、稽核）
+        run: bash supabase/tests/run-privacy.sh
+
       - name: 身分、session、帳號與 RLS 測試（run-all：session／identity／orgs／identity-write／state／load／wiring／rls）
         run: bash supabase/tests/run-all.sh
 
