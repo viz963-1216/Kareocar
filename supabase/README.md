@@ -11,6 +11,7 @@
 | `migrations/0001_baseline.sql` | 完整 schema：資料表、RLS 政策、`care_ride_app` 角色、身分與登入函式、`app_state`、接案／司機執行／需求者取消、通知來源證明。由原本的 0001–0008 壓縮而成 |
 | `migrations/0002_supabase_auth.sql` | 身分改由 Supabase Auth：移除自製密碼、`sessions_valid_after` 撤銷 session |
 | `migrations/0003_org_review.sql` | 機構申請與審核：`review_status`（pending／approved／rejected／suspended）、`app.apply_organization`、`app.review_organization`；需求池與接案只開放給已核准機構 |
+| `migrations/0008_benefit_rulesets.sql` | 補助規則版本 `benefit_rulesets`（draft／approved／superseded／rejected，同一 program code 只有一個 approved）與伺服器試算；只能經受控函式寫入 |
 | `migrations/0007_server_notifications.sql` | 通知改存 `notifications` 資料表，只有後端函式（`app.enqueue_notification`、`app.notify_booking_requester`）寫得進去；收件人只讀得到自己的通知 |
 | `migrations/0006_trip_resource_scope.sql` | `app.trip_resource_scope`：行程寫入時查司機、車輛、預約歸屬哪個機構（只回傳歸屬與狀態） |
 | `migrations/0005_booking_access_revoke.sql` | 退回公開池、不受理、重大修改需重新承接、需求者取消後，原承接機構立即失去預約存取（`app.revoke_booking_organization`）；取消的行程移除乘客個資；需求者只看得到承接單位名稱（`app.my_booking_service_organizations`） |
@@ -155,6 +156,15 @@ PGHOST=/tmp/pgrun PGPORT=5433 bash supabase/tests/rls.test.sh
 - 需求者、承接人、取消紀錄等欄位一律沿用資料庫的值
 
 退回公開池、不受理、重大修改時，同一交易內撤銷原承接機構，原機構立即讀不到。
+
+### 長照交通補助（#23）
+
+- 規則版本由平台超級管理者經 `/api/v2/benefit-ruleset` 建立草稿、核准或駁回。核准新版本時，
+  同一 program code 原本的 approved 自動變成 superseded；資料庫的部分唯一索引保證只有一個 approved。
+- 補助試算經 `/api/v2/benefit-assess`，伺服器依目前 approved 版本計算並記錄版本 ID。
+- 建立預約、改日期或改服務對象時，`booking-write` 用服務對象最近一次試算的資料（不是金額）依預約
+  日期重新估算，存在 `serverComputed.benefit`。前端送來的補助金額一律換成伺服器的結果。
+- 規則與試算不再接受 `state-mutate` 寫入。正式核定額度與保留／釋放帳本在 #23 第二部分。
 
 ### 通知
 

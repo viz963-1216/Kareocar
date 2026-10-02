@@ -9,6 +9,7 @@
  * 規則在 _booking-rules.js：誰能把預約改到哪個狀態、哪些欄位只由伺服器決定。
  * 另外：
  *   - serverComputed（定位、模糊地址、距離、報價）由伺服器計算，見 _bookings.js
+ *   - 補助估算（serverComputed.benefit）由伺服器依 approved 規則版本計算，見 _benefit.js
  *   - 退回公開池、不受理、重大修改需重新承接時，同一交易內撤銷原承接機構
  *     （app.revoke_booking_organization），原機構立即讀不到
  *   - 不能刪除預約；接案與取消有各自的端點
@@ -23,10 +24,30 @@ const auth = require('./_auth-pg');
 const session = require('./_session');
 const { applyServerBookingFields, sanitize } = require('./_bookings');
 const { checkBookingWrite } = require('./_booking-rules');
+const benefit = require('./_benefit');
 
 const MAX_CHANGES = 50;
 const SCHEDULED_STATES = new Set(['partially_scheduled', 'scheduled']);
 const text = (v) => String(v === undefined || v === null ? '' : v).trim();
+
+/**
+ * 補助估算由伺服器計算（#23）：新預約、改了日期或服務對象時，依當下唯一 approved 的規則
+ * 版本重新估算；其他修改沿用原本的估算。前端送來的補助金額（serverComputed.benefit、
+ * commercialSnapshots[].benefit）一律換成伺服器的結果。
+ */
+async function applyServerBenefit(client, record, existing) {
+  const before = existing ? existing.data || {} : null;
+  const previous = before && before.serverComputed && before.serverComputed.benefit;
+  const stale = !previous || !before
+    || String(before.pickupDate || '') !== String(record.pickupDate || '')
+    || String(before.recipientId || '') !== String(record.recipientId || '');
+  const result = stale ? await benefit.bookingBenefit(client, record) : previous;
+  record.serverComputed = { ...(record.serverComputed || {}), benefit: result };
+  if (Array.isArray(record.commercialSnapshots)) {
+    record.commercialSnapshots = record.commercialSnapshots.map((snap) => (snap && typeof snap === 'object'
+      ? { ...snap, benefit: { ...result } } : snap));
+  }
+}
 
 async function isOps(client, organizationId) {
   if (!organizationId) return false;
@@ -82,6 +103,7 @@ exports.handler = async (event) => {
         }
         const record = checked.record;
         await applyServerBookingFields(client, id, record);
+        await applyServerBenefit(client, record, existing);
 
         const upsert = await client.query(
           `insert into app_state (collection, id, organization_id, booking_id, data)

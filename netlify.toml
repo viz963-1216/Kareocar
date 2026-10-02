@@ -100,6 +100,16 @@
   status = 200
 
 [[redirects]]
+  from = "/api/v2/benefit-ruleset"
+  to = "/.netlify/functions/v2-benefit-ruleset"
+  status = 200
+
+[[redirects]]
+  from = "/api/v2/benefit-assess"
+  to = "/.netlify/functions/v2-benefit-assess"
+  status = 200
+
+[[redirects]]
   from = "/api/v2/claim-booking"
   to = "/.netlify/functions/v2-claim-booking"
   status = 200
