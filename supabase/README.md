@@ -11,6 +11,7 @@
 | `migrations/0001_baseline.sql` | 完整 schema：資料表、RLS 政策、`care_ride_app` 角色、身分與登入函式、`app_state`、接案／司機執行／需求者取消、通知來源證明。由原本的 0001–0008 壓縮而成 |
 | `migrations/0002_supabase_auth.sql` | 身分改由 Supabase Auth：移除自製密碼、`sessions_valid_after` 撤銷 session |
 | `migrations/0003_org_review.sql` | 機構申請與審核：`review_status`（pending／approved／rejected／suspended）、`app.apply_organization`、`app.review_organization`；需求池與接案只開放給已核准機構 |
+| `migrations/0006_trip_resource_scope.sql` | `app.trip_resource_scope`：行程寫入時查司機、車輛、預約歸屬哪個機構（只回傳歸屬與狀態） |
 | `migrations/0005_booking_access_revoke.sql` | 退回公開池、不受理、重大修改需重新承接、需求者取消後，原承接機構立即失去預約存取（`app.revoke_booking_organization`）；取消的行程移除乘客個資；需求者只看得到承接單位名稱（`app.my_booking_service_organizations`） |
 | `migrations/0004_pool_fuzzy_address.sql` | 需求池多露出伺服器計算的模糊地址、行政區、距離、車程與報價狀態（來自預約的 `serverComputed`）；完整地址、姓名、電話、經緯度仍不露出 |
 | `rollback/0001_baseline.down.sql` | 回復 baseline（刪除所有資料表與資料；只用在空資料庫或 Staging 重建） |
@@ -153,6 +154,16 @@ PGHOST=/tmp/pgrun PGPORT=5433 bash supabase/tests/rls.test.sh
 - 需求者、承接人、取消紀錄等欄位一律沿用資料庫的值
 
 退回公開池、不受理、重大修改時，同一交易內撤銷原承接機構，原機構立即讀不到。
+
+### 行程寫入（/api/v2/trip-write）
+
+調度端建立、改派、中斷、取消行程走 `v2-trip-write`（規則在 `_trip-rules.js`）；司機執行自己的
+行程走 `v2-trip-execute`。行程與取消紀錄都不再接受從 `state-mutate` 寫入。
+
+- 只有行程機構的負責人、調度員可以寫；行程的機構建立後不能改
+- 新行程一律從 `scheduled` 開始；狀態照轉換表走，已開始的行程不能取消（請用中斷）
+- 指派的司機、車輛、新關聯的預約都必須屬於行程的機構
+- 行程不能刪除；用 revision 做樂觀鎖
 
 ### 預約的伺服器計算欄位（serverComputed）
 

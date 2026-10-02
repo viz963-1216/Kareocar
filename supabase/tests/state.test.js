@@ -42,6 +42,7 @@ const { withoutUser, getPool } = require(path.join(FN, '_db.js'));
 const login = fx.adapt(require(path.join(FN, 'v2-password-login.js')));
 const mutate = fx.adapt(require(path.join(FN, 'v2-state-mutate.js')));
 const bookingWrite = fx.adapt(require(path.join(FN, 'v2-booking-write.js')));
+const tripWrite = fx.adapt(require(path.join(FN, 'v2-trip-write.js')));
 
 let pass = 0, fail = 0;
 const t = async (name, fn) => {
@@ -56,6 +57,11 @@ const send = (token, changes) => mutate.handler({
 });
 // 預約不再走 state-mutate（#22），由 booking-write 寫入
 const sendBooking = (token, changes) => bookingWrite.handler({
+  httpMethod: 'POST',
+  headers: token ? { authorization: `Bearer ${token}` } : {},
+  body: JSON.stringify({ changes })
+});
+const sendTrip = (token, changes) => tripWrite.handler({
   httpMethod: 'POST',
   headers: token ? { authorization: `Bearer ${token}` } : {},
   body: JSON.stringify({ changes })
@@ -176,14 +182,19 @@ const booking = (id, extra = {}) => ({
 
   console.log('--- 行程樂觀鎖 ---');
   await t('建立行程', async () => {
-    const r = parse(await send(dispatcher, [{ collection: 'trips', id: 'TRP-1',
+    const r = parse(await sendTrip(dispatcher, [{ collection: 'trips', id: 'TRP-1',
       record: { id: 'TRP-1', organizationId: 'ORG-TP-001', state: 'scheduled' } }]));
     return r.ok === true;
   });
+  await t('行程不能從一般寫入端點寫（COLLECTION_FORBIDDEN）', async () => {
+    const r = parse(await send(dispatcher, [{ collection: 'trips', id: 'TRP-VIA-STATE',
+      record: { id: 'TRP-VIA-STATE', organizationId: 'ORG-TP-001' } }]));
+    return r.error.code === 'COLLECTION_FORBIDDEN';
+  });
   await t('用過期的 revision 更新會被擋（不是覆蓋掉別人的修改）', async () => {
-    await send(dispatcher, [{ collection: 'trips', id: 'TRP-1',
+    await sendTrip(dispatcher, [{ collection: 'trips', id: 'TRP-1',
       record: { id: 'TRP-1', organizationId: 'ORG-TP-001', state: 'in_progress' }, expectedRevision: 1 }]);
-    const r = parse(await send(dispatcher, [{ collection: 'trips', id: 'TRP-1',
+    const r = parse(await sendTrip(dispatcher, [{ collection: 'trips', id: 'TRP-1',
       record: { id: 'TRP-1', organizationId: 'ORG-TP-001', state: '被覆蓋' }, expectedRevision: 1 }]));
     return r.ok !== true && r.error.code === 'TRIP_CONFLICT'
       && sql("select data->>'state' from app_state where id='TRP-1'") !== '被覆蓋';

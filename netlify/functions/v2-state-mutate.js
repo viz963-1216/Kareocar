@@ -26,14 +26,20 @@ const MAX_CHANGES = 200;
 // 讓前端也能從這裡寫，等於同一件事有兩個真相。
 const IDENTITY_COLLECTIONS = new Set(['users', 'memberships', 'organizations', 'drivers']);
 
+const DEDICATED_ENDPOINTS = {
+  bookings: '/api/v2/booking-write',
+  trips: '/api/v2/trip-write（司機執行用 /api/v2/trip-execute）',
+  cancellations: '/api/v2/cancel-booking'
+};
+
 const ALLOWED_COLLECTIONS = new Set([
   'membershipEvents', 'vehicles', 'careRecipients', 'careRecipientRelations',
   'careRecipientEvents', 'careRecipientMergeEvents',
   'bookingEvents', 'bookingRevisions', 'dispatchPlans',
-  'trips', 'tripEvents', 'issues', 'systemReports', 'notifications',
+  'tripEvents', 'issues', 'systemReports', 'notifications',
   'benefitRulesets', 'benefitRulesetEvents', 'benefitAssessments',
   'benefitAssessmentEvents', 'benefitLatestEstimateRuns',
-  'serviceProofs', 'cancellations', 'telemetryEvents'
+  'serviceProofs', 'telemetryEvents'
 ]);
 
 // notifications 仍接受前端寫入（派車、中斷等流程的通知）。這些通知沒有後端來源證明，
@@ -87,8 +93,10 @@ exports.handler = async (event) => {
           throw auth.authError('COLLECTION_FORBIDDEN',
             `${collection} 由身分管理端點負責，不接受從這裡寫入`);
         }
-        if (collection === 'bookings') {
-          throw auth.authError('COLLECTION_FORBIDDEN', '預約請由預約端點（/api/v2/booking-write）寫入');
+        // 預約、行程有自己的端點，伺服器在那邊檢查狀態轉換與機構歸屬（#22）。
+        // 取消紀錄只由取消端點產生。
+        if (DEDICATED_ENDPOINTS[collection]) {
+          throw auth.authError('COLLECTION_FORBIDDEN', `${collection} 請由 ${DEDICATED_ENDPOINTS[collection]} 寫入`);
         }
         if (!ALLOWED_COLLECTIONS.has(collection)) {
           throw auth.authError('COLLECTION_FORBIDDEN', `不允許寫入此資料集合：${collection}`);
@@ -98,29 +106,15 @@ exports.handler = async (event) => {
         const { tripId, bookingId } = links(collection, record);
         const orgClaim = text(record.organizationId) || null;
 
-        // 行程用 revision 做樂觀鎖：呼叫端說「我看到的是第 N 版」，
-        // 對不上就代表有人已經改過，整批拒絕而不是覆蓋掉對方的修改。
-        if (collection === 'trips' && !deleted && change.expectedRevision !== undefined) {
-          const current = (await client.query(
-            `select revision from app_state where collection = 'trips' and id = $1`, [id])).rows[0];
-          const seen = Math.max(0, Number(change.expectedRevision) || 0);
-          const now = current ? Math.max(0, Number(current.revision) || 0) : 0;
-          if (current && now !== seen) {
-            throw Object.assign(auth.authError('TRIP_CONFLICT', '這筆行程已被其他人更新，請重新整理'),
-              { code: 'TRIP_CONFLICT' });
-          }
-        }
-
         const upsert = await client.query(
           `insert into app_state (collection, id, organization_id, trip_id, booking_id,
                                   data, deleted, revision)
-             values ($1,$2,$3,$4,$5,$6,$7, case when $1 = 'trips' then 1 else 0 end)
+             values ($1,$2,$3,$4,$5,$6,$7, 0)
            on conflict (collection, id) do update
              set data = case when $7 then app_state.data else excluded.data end,
                  deleted = $7,
                  trip_id = coalesce(excluded.trip_id, app_state.trip_id),
-                 booking_id = coalesce(excluded.booking_id, app_state.booking_id),
-                 revision = case when $1 = 'trips' then app_state.revision + 1 else app_state.revision end
+                 booking_id = coalesce(excluded.booking_id, app_state.booking_id)
            returning version, revision, updated_at`,
           [collection, id, orgClaim, tripId, bookingId, JSON.stringify(record), deleted]);
 

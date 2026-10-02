@@ -83,6 +83,8 @@ async function call(handler, method, token, body) {
 const loadAs = (token) => call(load.handler, 'GET', token);
 const mutateAs = (token, changes) => call(mutate.handler, 'POST', token, { changes });
 const bookingWriteAs = (token, changes) => call(bookingWrite.handler, 'POST', token, { changes });
+const tripWrite = require('../../netlify/functions/v2-trip-write');
+const tripWriteAs = (token, changes) => call(tripWrite.handler, 'POST', token, { changes });
 const claimAs = (token, bookingId, organizationId) =>
   call(claimFn.handler, 'POST', token, { bookingId, organizationId });
 const executeAs = (token, body) => call(executeFn.handler, 'POST', token, body);
@@ -291,7 +293,7 @@ async function scenario2(t) {
 
   // A2 自己那趟用不同的地址：A2 看得到自己的行程是正確的，若沿用 SECRET_ADDRESS，
   // 下面「A2 讀不到 A1 行程的門牌」的洩露檢查會被 A2 自己合法的資料誤判。
-  const created = await mutateAs(t.dspA, [
+  const created = await tripWriteAs(t.dspA, [
     { collection: 'trips', id, record: scheduledTrip(id, DRIVER.a1) },
     { collection: 'trips', id: other, record: scheduledTrip(other, DRIVER.a2, { pickupAddress: '台北市信義區松仁路1號' }) }
   ]);
@@ -314,6 +316,10 @@ async function scenario2(t) {
 
   // #6 原本的寫法：司機透過一般寫入管道改行程。修正後這條路仍必須被拒。
   await expectRejected(S, '[安全] 司機 A1 透過 state-mutate 直接改行程', mutateAs(t.drvA1, [{
+    collection: 'trips', id, expectedRevision: rev0,
+    record: { ...t0, status: 'in_progress' }
+  }]), { status: 403, code: 'COLLECTION_FORBIDDEN' }, watched);
+  await expectRejected(S, '[安全] 司機 A1 透過行程端點直接改行程', tripWriteAs(t.drvA1, [{
     collection: 'trips', id, expectedRevision: rev0,
     record: { ...t0, status: 'in_progress' }
   }]), { status: 403, code: 'FORBIDDEN' }, watched);
@@ -357,6 +363,9 @@ async function scenario2(t) {
     await expectRejected(S, `${label} 呼叫執行端點`, executeAs(tok, depart.request),
       { status: 403, code: 'FORBIDDEN' }, watched);
     await expectRejected(S, `${label} 透過 state-mutate 改行程`, mutateAs(tok, [{
+      collection: 'trips', id, expectedRevision: rev0, record: { ...t0, status: 'cancelled' }
+    }]), { status: 403, code: 'COLLECTION_FORBIDDEN' }, watched);
+    await expectRejected(S, `${label} 透過行程端點改行程`, tripWriteAs(tok, [{
       collection: 'trips', id, expectedRevision: rev0, record: { ...t0, status: 'cancelled' }
     }]), { status: 403, code: 'FORBIDDEN' }, watched);
   }
@@ -469,7 +478,7 @@ async function scenario2(t) {
 async function scenario2b(t) {
   const S = '情境2B 異常與中斷';
   const id = 'TRP-FLOW-S2B';
-  await mutateAs(t.dspA, [{ collection: 'trips', id, record: scheduledTrip(id, DRIVER.a1, { pickupAddress: '台北市信義區松仁路1號' }) }]);
+  await tripWriteAs(t.dspA, [{ collection: 'trips', id, record: scheduledTrip(id, DRIVER.a1, { pickupAddress: '台北市信義區松仁路1號' }) }]);
   const watched = [['trips', id]];
 
   for (let i = 0; i < 2; i++) {
@@ -492,9 +501,9 @@ async function scenario2b(t) {
   const rh = await executeAs(t.drvA1, held.request);
   record(S, '服務證明照常保存，行程等調度結案異常', rh.status === 200 && (await row('trips', id)).data.status === 'in_progress', outcome(rh));
 
-  // 中斷是調度的權限，走既有的 state-mutate（組織 A 調度可寫）
+  // 中斷是調度的權限，走行程端點（組織 A 調度可寫）
   const cur = await tripState(id);
-  const interrupt = await mutateAs(t.dspA, [{ collection: 'trips', id, expectedRevision: cur.revision,
+  const interrupt = await tripWriteAs(t.dspA, [{ collection: 'trips', id, expectedRevision: cur.revision,
     record: { ...cur, status: 'interrupted', interruptedAt: nowIso(), interruptReason: '合成中斷' } }]);
   record(S, '調度員 A 中斷行程（既有路徑）', interrupt.status === 200, outcome(interrupt));
   const undo = F.undoStep(await tripState(id), U.drvA1, nowIso());
@@ -514,7 +523,7 @@ async function scenario3(t) {
   // 狀態 fixture（非斷言）：刻意不走情境 1 的接案端點，讓本情境只驗取消。
   await fixtureScheduled(bookingId, tripId);
 
-  const tripCreated = await mutateAs(t.dspA, [{
+  const tripCreated = await tripWriteAs(t.dspA, [{
     collection: 'trips', id: tripId,
     record: scheduledTrip(tripId, DRIVER.a1, { bookingId, bookingIds: [bookingId] })
   }]);
@@ -637,11 +646,15 @@ async function scenario3(t) {
   const rt2 = 'TRP-FLOW-S3R-2';
   await bookingWriteAs(t.req, [{ collection: 'bookings', id: rb, record: openBooking(rb) }]);
   await fixtureScheduled(rb, rt1);
-  const two = await mutateAs(t.dspA, [
+  // 新行程一律從 scheduled 開始，第二趟再由調度改成 in_progress
+  const two = await tripWriteAs(t.dspA, [
     { collection: 'trips', id: rt1, record: scheduledTrip(rt1, DRIVER.a1, { bookingId: rb, bookingIds: [rb] }) },
-    { collection: 'trips', id: rt2, record: scheduledTrip(rt2, DRIVER.a1, { bookingId: rb, bookingIds: [rb], status: 'in_progress' }) }
+    { collection: 'trips', id: rt2, record: scheduledTrip(rt2, DRIVER.a1, { bookingId: rb, bookingIds: [rb] }) }
   ]);
-  record(S, '回滾情境 fixture：一趟 scheduled、一趟 in_progress', two.status === 200, outcome(two));
+  const started = await tripWriteAs(t.dspA, [{ collection: 'trips', id: rt2, expectedRevision: 1,
+    record: { ...(await row('trips', rt2)).data, status: 'in_progress' } }]);
+  record(S, '回滾情境 fixture：一趟 scheduled、一趟 in_progress', two.status === 200 && started.status === 200,
+    `${outcome(two)} / ${outcome(started)}`);
   await expectRejected(S, '含已開始行程時取消（中途失敗）',
     cancelAs(t.req, { bookingId: rb, reasonCode: 'requester_no_longer_needed' }),
     { status: 400, code: 'VALIDATION_ERROR' }, [['bookings', rb], ['trips', rt1], ['trips', rt2]]);
@@ -655,7 +668,7 @@ async function scenario3(t) {
   await bookingWriteAs(t.req2, [{ collection: 'bookings', id: p2, record: openBooking(p2, U.req2) }]);
   await fixtureScheduled(p1, pt);
   await fixtureScheduled(p2, pt);
-  const pooled = await mutateAs(t.dspA, [{ collection: 'trips', id: pt,
+  const pooled = await tripWriteAs(t.dspA, [{ collection: 'trips', id: pt,
     record: scheduledTrip(pt, DRIVER.a1, { bookingIds: [p1, p2], isPooled: true }) }]);
   record(S, '共乘 fixture：一趟行程載兩筆預約', pooled.status === 200, outcome(pooled));
   await expectRejected(S, '[待產品決策] 需求者取消共乘中的一筆預約',

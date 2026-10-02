@@ -34,8 +34,9 @@ const loadFn = require('../../netlify/functions/v2-state-load');
 
 const ORG_A = 'ORG-ACC-A';
 const ORG_B = 'ORG-ACC-B';
-const U = { req: 'USR-ACC-REQ', dspA: 'USR-ACC-DSPA', dspB: 'USR-ACC-DSPB', drvA: 'USR-ACC-DRVA' };
+const U = { req: 'USR-ACC-REQ', dspA: 'USR-ACC-DSPA', dspB: 'USR-ACC-DSPB', drvA: 'USR-ACC-DRVA', drvB: 'USR-ACC-DRVB' };
 const DRIVER_A = 'DRV-ACC-A';
+const DRIVER_B = 'DRV-ACC-B';
 const ADDRESS = '新北市板橋區文化路一段188號';
 
 const results = [];
@@ -56,6 +57,8 @@ async function call(handler, method, userId, body) {
 const outcome = (r) => `${r.status} ${r.error ? `${r.error.code} ${r.error.message}` : 'ok'}`;
 const writeBooking = (userId, record) => call(bookingWriteFn.handler, 'POST', userId, { changes: [{ collection: 'bookings', id: record.id, record }] });
 const mutate = (userId, changes) => call(mutateFn.handler, 'POST', userId, { changes });
+const tripWriteFn = require('../../netlify/functions/v2-trip-write');
+const writeTrips = (userId, changes) => call(tripWriteFn.handler, 'POST', userId, { changes });
 const claim = (userId, bookingId, organizationId) => call(claimFn.handler, 'POST', userId, { bookingId, organizationId });
 const cancel = (userId, bookingId) => call(cancelFn.handler, 'POST', userId, { bookingId, reasonCode: 'requester_no_longer_needed' });
 const load = (userId) => call(loadFn.handler, 'GET', userId);
@@ -92,14 +95,17 @@ async function newClaimed(id) {
       ('${U.req}','合成需求者','+886944000001','none',true),
       ('${U.dspA}','合成調度 A','+886944000002','none',true),
       ('${U.dspB}','合成調度 B','+886944000003','none',true),
-      ('${U.drvA}','合成司機 A','+886944000004','none',true);
+      ('${U.drvA}','合成司機 A','+886944000004','none',true),
+      ('${U.drvB}','合成司機 B','+886944000005','none',true);
     insert into memberships (id, user_id, organization_id, role, status) values
       ('M-ACC-REQ','${U.req}','ORG-REQ-001','requester','active'),
       ('M-ACC-DSPA','${U.dspA}','${ORG_A}','dispatcher','active'),
       ('M-ACC-DSPB','${U.dspB}','${ORG_B}','dispatcher','active'),
-      ('M-ACC-DRVA','${U.drvA}','${ORG_A}','driver','active');
+      ('M-ACC-DRVA','${U.drvA}','${ORG_A}','driver','active'),
+      ('M-ACC-DRVB','${U.drvB}','${ORG_B}','driver','active');
     insert into drivers (id, user_id, organization_id, duty_status, active) values
-      ('${DRIVER_A}','${U.drvA}','${ORG_A}','on_duty',true);
+      ('${DRIVER_A}','${U.drvA}','${ORG_A}','on_duty',true),
+      ('${DRIVER_B}','${U.drvB}','${ORG_B}','on_duty',true);
   `);
 
   console.log('--- 建立與狀態規則 ---');
@@ -164,7 +170,7 @@ async function newClaimed(id) {
     bookingId: 'BKG-ACC-5', startAt: F.addMinutes(new Date().toISOString(), 24 * 60),
     extra: { pickupAddress: ADDRESS, passengerSummary: '合成需求者' } });
   const schedule = await opsUpdate(U.dspA, 'BKG-ACC-5', { state: 'scheduled', status: 'scheduled', claimStatus: 'claimed', tripId });
-  const tripWrite = await mutate(U.dspA, [{ collection: 'trips', id: tripId, record: trip }]);
+  const tripWrite = await writeTrips(U.dspA, [{ collection: 'trips', id: tripId, record: trip }]);
   record('A 排車：預約 scheduled、行程寫入', schedule.status === 200 && tripWrite.status === 200, `${outcome(schedule)} / ${outcome(tripWrite)}`);
   const lockedEdit = await writeBooking(U.req, { ...(await row('bookings', 'BKG-ACC-5')).data, pickupTime: '11:00' });
   record('排車後需求者不能改時間', lockedEdit.status === 400, outcome(lockedEdit));
@@ -194,12 +200,51 @@ async function newClaimed(id) {
   const inProgress = 'BKG-ACC-6';
   record('（前提）A 接第五筆', await newClaimed(inProgress));
   const runTrip = F.makeTrip({ id: 'TRP-ACC-6', organizationId: ORG_A, driverId: DRIVER_A, vehicleId: 'VEH-ACC-A',
-    bookingId: inProgress, startAt: new Date().toISOString(), extra: { status: 'in_progress' } });
+    bookingId: inProgress, startAt: new Date().toISOString() });
   await opsUpdate(U.dspA, inProgress, { state: 'scheduled', status: 'scheduled', tripId: 'TRP-ACC-6' });
-  await mutate(U.dspA, [{ collection: 'trips', id: 'TRP-ACC-6', record: runTrip }]);
+  await writeTrips(U.dspA, [{ collection: 'trips', id: 'TRP-ACC-6', record: runTrip }]);
+  await writeTrips(U.dspA, [{ collection: 'trips', id: 'TRP-ACC-6', expectedRevision: 1, record: { ...runTrip, status: 'in_progress' } }]);
   const cancelRunning = await cancel(U.req, inProgress);
   record('已開始的行程取消被拒，並說明原因', cancelRunning.status === 400 && /已開始/.test(cancelRunning.error.message)
     && (await row('bookings', inProgress)).organization_id === ORG_A, outcome(cancelRunning));
+
+  console.log('--- 行程寫入規則（跨機構隔離）---');
+  const tripRow = async (id) => row('trips', id);
+  const baseTrip = (id, extra = {}) => F.makeTrip({ id, organizationId: ORG_A, driverId: DRIVER_A, vehicleId: 'VEH-ACC-A',
+    startAt: F.addMinutes(new Date().toISOString(), 48 * 60), extra });
+  const viaStateTrip = await mutate(U.dspA, [{ collection: 'trips', id: 'TRP-ACC-X', record: baseTrip('TRP-ACC-X') }]);
+  record('行程不能從一般寫入端點寫', viaStateTrip.status === 403 && viaStateTrip.error.code === 'COLLECTION_FORBIDDEN', outcome(viaStateTrip));
+  const viaStateCancel = await mutate(U.req, [{ collection: 'cancellations', id: 'CXL-1', record: { id: 'CXL-1', bookingId: 'BKG-ACC-1' } }]);
+  record('取消紀錄不能從一般寫入端點寫', viaStateCancel.status === 403 && viaStateCancel.error.code === 'COLLECTION_FORBIDDEN', outcome(viaStateCancel));
+  const bForA = await writeTrips(U.dspB, [{ collection: 'trips', id: 'TRP-ACC-B4A', record: baseTrip('TRP-ACC-B4A') }]);
+  record('B 的調度員不能替 A 建立行程', bForA.status === 403 && !(await tripRow('TRP-ACC-B4A')), outcome(bForA));
+  const reqTrip = await writeTrips(U.req, [{ collection: 'trips', id: 'TRP-ACC-REQ', record: baseTrip('TRP-ACC-REQ') }]);
+  record('需求者不能建立行程', reqTrip.status === 403, outcome(reqTrip));
+  const otherDriver = await writeTrips(U.dspA, [{ collection: 'trips', id: 'TRP-ACC-D', record: baseTrip('TRP-ACC-D', { driverId: DRIVER_B }) }]);
+  record('A 不能指派 B 的司機', otherDriver.status === 400 && /司機/.test(otherDriver.error.message) && !(await tripRow('TRP-ACC-D')), outcome(otherDriver));
+  await mutate(U.dspB, [{ collection: 'vehicles', id: 'VEH-ACC-B', record: { id: 'VEH-ACC-B', organizationId: ORG_B, plate: 'B-0001' } }]);
+  const otherVehicle = await writeTrips(U.dspA, [{ collection: 'trips', id: 'TRP-ACC-V', record: baseTrip('TRP-ACC-V', { vehicleId: 'VEH-ACC-B' }) }]);
+  record('A 不能指派 B 的車輛', otherVehicle.status === 400 && /車輛/.test(otherVehicle.error.message), outcome(otherVehicle));
+  const otherBooking = await writeTrips(U.dspA, [{ collection: 'trips', id: 'TRP-ACC-BK',
+    record: baseTrip('TRP-ACC-BK', { bookingId: 'BKG-ACC-1', bookingIds: ['BKG-ACC-1'] }) }]);
+  record('A 不能把 B 承接的預約排進自己的行程', otherBooking.status === 400 && /不屬於此機構/.test(otherBooking.error.message), outcome(otherBooking));
+  const startedNew = await writeTrips(U.dspA, [{ collection: 'trips', id: 'TRP-ACC-S', record: baseTrip('TRP-ACC-S', { status: 'in_progress' }) }]);
+  record('新行程不能直接是進行中', startedNew.status === 400, outcome(startedNew));
+  const running = await tripRow('TRP-ACC-6');
+  const cancelRunningTrip = await writeTrips(U.dspA, [{ collection: 'trips', id: 'TRP-ACC-6', expectedRevision: 2,
+    record: { ...running.data, status: 'cancelled' } }]);
+  record('已開始的行程不能由調度取消，回傳改用中斷的說明', cancelRunningTrip.status === 400 && /中斷/.test(cancelRunningTrip.error.message)
+    && (await tripRow('TRP-ACC-6')).data.status === 'in_progress', outcome(cancelRunningTrip));
+  const moveOrg = await writeTrips(U.dspA, [{ collection: 'trips', id: 'TRP-ACC-6', expectedRevision: 2,
+    record: { ...running.data, organizationId: ORG_B, note: '合成備註' } }]);
+  const moved = await tripRow('TRP-ACC-6');
+  record('行程的機構不能改', moveOrg.status === 200 && moved.organization_id === ORG_A && moved.data.organizationId === ORG_A, outcome(moveOrg));
+  const delTrip = await call(tripWriteFn.handler, 'POST', U.dspA, { changes: [{ collection: 'trips', id: 'TRP-ACC-6', deleted: true, record: { id: 'TRP-ACC-6' } }] });
+  record('行程不能刪除', delTrip.status === 400, outcome(delTrip));
+  const bTrips = await load(U.dspB);
+  record('B 讀不到 A 的行程與司機', !sees(bTrips, 'trips', 'TRP-ACC-6') && !(bTrips.data.collections.drivers || []).some((d) => d.id === DRIVER_A));
+  const drvBLoad = await load(U.drvB);
+  record('B 的司機讀不到 A 的行程', !sees(drvBLoad, 'trips', 'TRP-ACC-6') && !sees(drvBLoad, 'trips', tripId));
 
   console.log('--- 需求者只看得到承接單位名稱 ---');
   const reqLoad = await load(U.req);
