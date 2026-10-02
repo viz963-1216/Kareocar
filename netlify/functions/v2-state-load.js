@@ -96,6 +96,35 @@ exports.handler = async (event) => {
         `select data, created_at from benefit_assessments where source = 'server' order by created_at desc limit 500`)).rows;
       for (const a of assessments) push('benefitAssessments', { ...(a.data || {}), createdAt: a.created_at });
 
+      // ---- 正式核定與補助帳本（0009）：RLS 只放行管理者、服務對象擁有者、服務中的機構 ----
+      const num = (v) => (v === null || v === undefined ? null : Number(v));
+      const auths = (await client.query('select * from benefit_authorizations order by created_at')).rows;
+      for (const a of auths) {
+        push('benefitAuthorizations', {
+          id: a.id, schemaVersion: 1, recipientId: a.recipient_id, organizationId: a.organization_id,
+          programCode: a.program_code, validFrom: benefit.dateOnly(a.valid_from), validTo: benefit.dateOnly(a.valid_to),
+          approved: true, status: a.status, approvedAmount: num(a.approved_amount), approvedUnits: num(a.approved_units),
+          currency: a.currency, source: a.source, referenceNo: a.reference_no, createdByUserId: a.created_by_user_id,
+          createdAt: a.created_at, revokedAt: a.revoked_at, revokedByUserId: a.revoked_by_user_id
+        });
+        push('benefitAuthorizationEvents', { id: `${a.id}:created`, authorizationId: a.id, recipientId: a.recipient_id,
+          eventType: 'created', actorUserId: a.created_by_user_id, detail: `核定文號 ${a.reference_no}`, createdAt: a.created_at });
+        if (a.revoked_at) {
+          push('benefitAuthorizationEvents', { id: `${a.id}:revoked`, authorizationId: a.id, recipientId: a.recipient_id,
+            eventType: 'revoked', actorUserId: a.revoked_by_user_id, detail: a.revoke_reason || '撤銷正式核定', createdAt: a.revoked_at });
+        }
+      }
+      const ledger = (await client.query('select * from benefit_ledger order by created_at desc limit 2000')).rows;
+      for (const l of ledger) {
+        push('benefitLedger', {
+          id: l.id, schemaVersion: 1, authorizationId: l.authorization_id, recipientId: l.recipient_id,
+          bookingId: l.booking_id, tripId: l.trip_id, entryType: l.entry_type, amount: num(l.amount),
+          reservedDelta: num(l.reserved_delta), settledDelta: num(l.settled_delta), authorizationDelta: num(l.authorization_delta),
+          currency: l.currency, reason: l.reason, actorUserId: l.actor_user_id, rulesetId: l.ruleset_id,
+          rulesetVersion: l.ruleset_version, sourceAssessmentId: l.source_assessment_id, createdAt: l.created_at
+        });
+      }
+
       // ---- 身分：從 typed 資料表轉成前端形狀 ----
       const users = (await client.query(
         `select id, display_name, phone_e164, email, platform_role, active from users`)).rows;

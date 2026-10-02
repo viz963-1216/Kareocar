@@ -30,9 +30,16 @@ const bookingWriteFn = require('../../netlify/functions/v2-booking-write');
 const claimFn = require('../../netlify/functions/v2-claim-booking');
 const mutateFn = require('../../netlify/functions/v2-state-mutate');
 const loadFn = require('../../netlify/functions/v2-state-load');
+const authorizationFn = require('../../netlify/functions/v2-benefit-authorization');
+const cancelFn = require('../../netlify/functions/v2-cancel-booking');
+const tripWriteFn = require('../../netlify/functions/v2-trip-write');
+const executeFn = require('../../netlify/functions/v2-trip-execute');
+const F = require('../../tests/_trip-fixtures');
 
 const ORG = 'ORG-BEN-A';
-const U = { root: 'USR-BEN-ROOT', req: 'USR-BEN-REQ', req2: 'USR-BEN-REQ2', dsp: 'USR-BEN-DSP' };
+const ORG_B = 'ORG-BEN-B';
+const U = { root: 'USR-BEN-ROOT', req: 'USR-BEN-REQ', req2: 'USR-BEN-REQ2', dsp: 'USR-BEN-DSP', dspB: 'USR-BEN-DSPB', drv: 'USR-BEN-DRV' };
+const DRIVER = 'DRV-BEN-1';
 const RECIPIENT = 'CR-BEN-1';
 
 const results = [];
@@ -71,16 +78,22 @@ function booking(id, extra = {}) {
 
 (async () => {
   await admin.query(`
-    insert into organizations (id, org_type, name, active) values ('${ORG}','transport_provider','合成補助交通',true);
+    insert into organizations (id, org_type, name, active) values ('${ORG}','transport_provider','合成補助交通',true),
+      ('${ORG_B}','transport_provider','合成補助交通 B',true);
     insert into users (id, display_name, phone_e164, platform_role, active) values
       ('${U.root}','合成平台管理者','+886966000009','super_admin',true),
       ('${U.req}','合成需求者','+886966000001','none',true),
       ('${U.req2}','合成需求者二','+886966000002','none',true),
-      ('${U.dsp}','合成調度','+886966000003','none',true);
+      ('${U.dsp}','合成調度','+886966000003','none',true),
+      ('${U.dspB}','合成調度 B','+886966000004','none',true),
+      ('${U.drv}','合成司機','+886966000005','none',true);
     insert into memberships (id, user_id, organization_id, role, status) values
       ('M-BEN-REQ','${U.req}','ORG-REQ-001','requester','active'),
       ('M-BEN-REQ2','${U.req2}','ORG-REQ-001','requester','active'),
-      ('M-BEN-DSP','${U.dsp}','${ORG}','dispatcher','active');
+      ('M-BEN-DSP','${U.dsp}','${ORG}','dispatcher','active'),
+      ('M-BEN-DSPB','${U.dspB}','${ORG_B}','dispatcher','active'),
+      ('M-BEN-DRV','${U.drv}','${ORG}','driver','active');
+    insert into drivers (id, user_id, organization_id, duty_status, active) values ('${DRIVER}','${U.drv}','${ORG}','on_duty',true);
   `);
   const cr = await call(mutateFn.handler, 'POST', U.req, { changes: [{ collection: 'careRecipients', id: RECIPIENT,
     record: { id: RECIPIENT, identity: { displayName: '合成長輩' } } }] });
@@ -179,6 +192,101 @@ function booking(id, extra = {}) {
   const seen = (dspLoad.data.collections.bookings || []).find((x) => x.id === 'BKG-BEN-2');
   record('承接後調度員讀到伺服器算出的補助金額', claim.status === 200 && seen && seen.serverComputed.benefit.estimatedSubsidy === 450, outcome(claim));
   record('承接機構讀得到服務對象的試算（服務中）', (dspLoad.data.collections.benefitAssessments || []).some((a) => a.recipientId === RECIPIENT));
+
+  console.log('--- 正式核定額度（#23 第二部分）---');
+  const authCall = (userId, body) => call(authorizationFn.handler, 'POST', userId, body);
+  const authBody = (extra = {}) => ({ recipientId: RECIPIENT, programCode: 'transportation_primary', validFrom: '2026-01-01',
+    approvedAmount: 1000, referenceNo: '合成核定 115-001', ...extra });
+  const balance = async (id) => {
+    const r = (await admin.query('select * from app.benefit_balance($1)', [id])).rows[0];
+    return { reserved: Number(r.reserved), settled: Number(r.settled), available: Number(r.available), adjustment: Number(r.adjustment) };
+  };
+  const reservedFor = async (bookingId) => Number((await admin.query(
+    'select coalesce(sum(reserved_delta), 0) as n from benefit_ledger where booking_id = $1', [bookingId])).rows[0].n);
+  const reqAuth = await authCall(U.req, { action: 'save', authorization: authBody() });
+  record('需求者不能自己登錄正式核定', reqAuth.status === 403, outcome(reqAuth));
+  const otherOrg = await authCall(U.dspB, { action: 'save', organizationId: ORG_B, authorization: authBody() });
+  record('沒有在服務這位服務對象的機構不能登錄', otherOrg.status === 403, outcome(otherOrg));
+  const noRef = await authCall(U.dsp, { action: 'save', organizationId: ORG, authorization: authBody({ referenceNo: '' }) });
+  record('沒有核定文號被拒', noRef.status === 400, outcome(noRef));
+  const saved = await authCall(U.dsp, { action: 'save', organizationId: ORG, authorization: authBody() });
+  const AUTH = saved.data && saved.data.authorizationId;
+  record('服務中的機構調度員登錄核定 1000', saved.status === 200 && Boolean(AUTH) && (await balance(AUTH)).available === 1000, outcome(saved));
+
+  console.log('--- 建立預約時保留、取消釋放 ---');
+  await writeBooking(U.req, booking('BKG-BEN-L1'));
+  record('建立預約保留伺服器估算的金額（450）', (await reservedFor('BKG-BEN-L1')) === 450 && (await balance(AUTH)).available === 550);
+  await writeBooking(U.req, { ...(await bookingRow('BKG-BEN-L1')), pickupTime: '11:00' });
+  record('沒改日期的修改不重複保留', (await reservedFor('BKG-BEN-L1')) === 450);
+  await writeBooking(U.req, booking('BKG-BEN-L2'));
+  await writeBooking(U.req, booking('BKG-BEN-L3'));
+  const afterThree = await balance(AUTH);
+  record('額度不足時只保留剩下的（450 + 450 + 100），可用額度歸零',
+    (await reservedFor('BKG-BEN-L2')) === 450 && (await reservedFor('BKG-BEN-L3')) === 100 && afterThree.available === 0 && afterThree.reserved === 1000,
+    JSON.stringify(afterThree));
+  const cancelled = await call(cancelFn.handler, 'POST', U.req, { bookingId: 'BKG-BEN-L1', reasonCode: 'requester_no_longer_needed' });
+  const afterCancel = await balance(AUTH);
+  record('需求者取消後釋放 450，剩餘額度正確', cancelled.status === 200 && (await reservedFor('BKG-BEN-L1')) === 0
+    && afterCancel.available === 450 && afterCancel.reserved === 550, JSON.stringify(afterCancel));
+  const again = await call(cancelFn.handler, 'POST', U.req, { bookingId: 'BKG-BEN-L1', reasonCode: 'requester_no_longer_needed' });
+  record('重複取消不會重複釋放', again.status === 400 && (await balance(AUTH)).available === 450);
+
+  console.log('--- 併發保留不超出額度 ---');
+  await Promise.all([writeBooking(U.req, booking('BKG-BEN-C1')), writeBooking(U.req, booking('BKG-BEN-C2'))]);
+  const concurrent = await balance(AUTH);
+  record('兩筆同時建立：保留總額不超過核定（可用額度不為負）', concurrent.reserved <= 1000 && concurrent.available >= 0
+    && (await reservedFor('BKG-BEN-C1')) + (await reservedFor('BKG-BEN-C2')) === 450, JSON.stringify(concurrent));
+
+  console.log('--- 不受理釋放、完成結算 ---');
+  await call(claimFn.handler, 'POST', U.dsp, { bookingId: 'BKG-BEN-L2', organizationId: ORG });
+  const rejected = await writeBooking(U.dsp, { ...(await bookingRow('BKG-BEN-L2')), state: 'rejected', status: 'rejected', claimStatus: 'rejected' });
+  record('承接機構不受理後釋放額度', rejected.status === 200 && (await reservedFor('BKG-BEN-L2')) === 0, outcome(rejected));
+
+  await call(claimFn.handler, 'POST', U.dsp, { bookingId: 'BKG-BEN-L3', organizationId: ORG });
+  const TRIP = 'TRP-BEN-L3';
+  await writeBooking(U.dsp, { ...(await bookingRow('BKG-BEN-L3')), state: 'scheduled', status: 'scheduled', tripId: TRIP });
+  const trip = F.makeTrip({ id: TRIP, organizationId: ORG, driverId: DRIVER, vehicleId: 'VEH-BEN-1', bookingId: 'BKG-BEN-L3',
+    startAt: F.addMinutes(new Date().toISOString(), 10), extra: { bookingIds: ['BKG-BEN-L3'] } });
+  const tw = await call(tripWriteFn.handler, 'POST', U.dsp, { changes: [{ collection: 'trips', id: TRIP, record: trip }] });
+  record('（前提）排車並建立行程', tw.status === 200, outcome(tw));
+  const tripState = async () => {
+    const r = (await admin.query(`select data, organization_id, revision from app_state where collection = 'trips' and id = $1`, [TRIP])).rows[0];
+    return { ...r.data, organizationId: r.organization_id, revision: r.revision };
+  };
+  for (let i = 0; i < 3; i++) await call(executeFn.handler, 'POST', U.drv, F.completeStep(await tripState(), U.drv, new Date().toISOString()).request);
+  const proof = await call(executeFn.handler, 'POST', U.drv, F.addProof(await tripState(), U.drv, new Date().toISOString()).request);
+  const settledRow = (await admin.query(
+    `select coalesce(sum(settled_delta), 0) as s from benefit_ledger where booking_id = 'BKG-BEN-L3'`)).rows[0];
+  record('行程完成後保留額度轉為已結算（100）', proof.status === 200 && proof.data.status === 'completed'
+    && (await reservedFor('BKG-BEN-L3')) === 0 && Number(settledRow.s) === 100, outcome(proof));
+  const undo = await call(executeFn.handler, 'POST', U.drv, F.undoStep(await tripState(), U.drv, new Date().toISOString()).request);
+  record('完成後修正（返回上一步）時結算回轉為保留', undo.status === 200 && (await reservedFor('BKG-BEN-L3')) === 100
+    && (await balance(AUTH)).settled === 0, outcome(undo));
+
+  console.log('--- 撤銷、調整與權限 ---');
+  const revokeBusy = await authCall(U.dsp, { action: 'revoke', id: AUTH, organizationId: ORG, reason: '合成撤銷' });
+  record('仍有保留額度時不能撤銷', revokeBusy.status === 400, outcome(revokeBusy));
+  const bal = await balance(AUTH);
+  const tooLow = await authCall(U.dsp, { action: 'adjust', id: AUTH, organizationId: ORG, amount: -(1000 - bal.reserved - bal.settled + 1), reason: '合成調降測試' });
+  record('調整後不能低於已保留＋已結算', tooLow.status === 400, outcome(tooLow));
+  const raise = await authCall(U.root, { action: 'adjust', id: AUTH, amount: 500, reason: '合成追加核定' });
+  record('平台管理者追加 500，可用額度增加', raise.status === 200 && (await balance(AUTH)).available === bal.available + 500, outcome(raise));
+  for (const collection of ['benefitAuthorizations', 'benefitLedger', 'benefitAuthorizationEvents']) {
+    const r = await call(mutateFn.handler, 'POST', U.root, { changes: [{ collection, id: 'X-2', record: { id: 'X-2' } }] });
+    record(`${collection} 不能經一般寫入端點寫`, r.status === 403 && r.error.code === 'COLLECTION_FORBIDDEN', outcome(r));
+  }
+  const forgeLedger = await db.withUser(U.root, (c) => c.query(
+    `insert into benefit_ledger (id, authorization_id, recipient_id, entry_type, amount, authorization_delta) values ('L-X', $1, $2, 'adjustment', 99999, 99999)`,
+    [AUTH, RECIPIENT])).then(() => 'allowed', (e) => e.code);
+  record('[資料庫層] 不能直接寫帳本（連平台管理者都只能經受控函式）', forgeLedger === '42501', forgeLedger);
+  const reqLoad2 = await load(U.req);
+  const req2Load2 = await load(U.req2);
+  record('需求者讀得到自己服務對象的核定與帳本', (reqLoad2.data.collections.benefitAuthorizations || []).some((a) => a.id === AUTH)
+    && (reqLoad2.data.collections.benefitLedger || []).some((l) => l.authorizationId === AUTH && l.entryType === 'reserve'));
+  record('其他需求者與其他機構讀不到', !(req2Load2.data.collections.benefitAuthorizations || []).length
+    && !((await load(U.dspB)).data.collections.benefitLedger || []).length);
+  const ledgerRow = (reqLoad2.data.collections.benefitLedger || []).find((l) => l.entryType === 'reserve');
+  record('帳本記錄保留時使用的規則版本', ledgerRow && Boolean(ledgerRow.rulesetId) && typeof ledgerRow.amount === 'number');
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n結果：${results.length - failed.length} 通過 / ${failed.length} 失敗`);

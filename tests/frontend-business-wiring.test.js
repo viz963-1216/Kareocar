@@ -65,8 +65,9 @@ t('Booking.cancelOwn 呼叫 APP_CONFIG.cancelBookingUrl', cancel.includes('APP_C
 t('Booking.cancelOwn 不在本機 store.mutate', cancel.length > 0 && !cancel.includes('store.mutate'));
 t('Booking.cancelOwn 不在本機排通知（通知由後端同一交易排入）', cancel.length > 0 && !cancel.includes('Notification.queue'));
 t('confirmBookingAction 等待非同步取消', html.includes('result=await Booking.cancelOwn('));
-t('福利額度釋放的取消包裝等待非同步取消結果（否則 r.ok 永遠不成立）',
-  html.includes('Booking.cancelOwn=async function(id,userId,reasonCode,reasonText){const r=await _bookingCancelOwn('));
+// #23：補助額度的保留、釋放、結算改在伺服器同一交易內處理，前端不再包裝預約與行程流程寫帳本
+t('前端不再在預約／行程流程上自行保留或釋放補助額度',
+  !html.includes('_bookingCancelOwn') && !html.includes('p1SettleIfCompleted') && !html.includes('Benefit.reserveForBooking(r.booking.id'));
 
 console.log('--- 通知 ---');
 const stateMutateSrc = fs.readFileSync(path.join(ROOT, 'netlify', 'functions', 'v2-state-mutate.js'), 'utf8');
