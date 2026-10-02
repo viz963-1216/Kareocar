@@ -24,6 +24,8 @@ const APP_CONFIG = Object.freeze({
   benefitRulesetUrl: '/api/v2/benefit-ruleset',
   benefitAssessUrl: '/api/v2/benefit-assess',
   benefitAuthorizationUrl: '/api/v2/benefit-authorization',
+  consentUrl: '/api/v2/consent',
+  platformSettingsUrl: '/api/v2/platform-settings',
   identityWriteUrl: '/api/v2/identity-write',
   claimBookingUrl: '/api/v2/claim-booking',
   cancelBookingUrl: '/api/v2/cancel-booking',
@@ -1013,6 +1015,8 @@ const AppStateDatabase={
                         lastSyncAt:result.data?.loadedAt||nowISO(),source:'postgres'};
       },{remote:false,reason:'state_load'});
       this.lastLoadedAt=result.data?.loadedAt||nowISO();
+      this.consent=result.data?.consent||null;this.platformSettings=result.data?.platformSettings||null;
+      if(typeof ensureConsent_==='function'&&typeof setTimeout==='function')setTimeout(()=>{try{ensureConsent_();}catch{}},0);
       if(result.data?.truncated)console.warn('[StateLoad] 資料量達到上限，只載入了一部分');
       return {ok:true,details,counts:result.data?.counts||{}};
     }catch(error){
@@ -5919,7 +5923,39 @@ function platformHome(){
 }
 function platformOrganizations(){
   const rows=Organization.list();
-  return `<div class="page-head"><div><h2>組織管理</h2><p>平台超級管理者可修改公司名稱、聯絡電話、統一編號與唯一負責人；「需求者組織」維持系統固定管理。</p></div><div class="page-actions"><button type="button" class="btn primary" id="openAddOrganizationBtn">＋ 新增組織</button></div></div><div class="list">${rows.map(o=>{const isRequesterHub=o.id===APP_CONFIG.requesterOrganizationId||o.type==='requester_hub',memberCount=store.state.memberships.filter(m=>m.organizationId===o.id&&Identity.membershipStatus(m)==='active').length,ownerM=isRequesterHub?null:store.state.memberships.find(m=>m.organizationId===o.id&&m.role==='owner'&&Identity.membershipStatus(m)!=='revoked'),ownerU=ownerM?store.state.users.find(u=>u.id===ownerM.userId):null;return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(o.name)}</h4><p>${isRequesterHub?'系統需求者組織・不可手動新增公司角色':o.type==='transport_provider'?'交通／車隊公司':o.type==='care_facility'?'長照／日照機構':'其他合作組織'}${!isRequesterHub?(o.taxId?`・統編 ${escapeHTML(o.taxId)}`:'・統編未填'):''}<br>${isRequesterHub?`有效需求者：${memberCount} 人`:`聯絡電話：${escapeHTML(o.contactPhone||'未填')}<br>負責人：${escapeHTML(ownerU?.name||'尚未指定')}・有效成員：${memberCount} 人`}</p></div><span class="pill ${isRequesterHub?'purple':o.active!==false?'green':'gray'}">${isRequesterHub?'系統組織':o.active!==false?'有效':'已移除'}</span>${isRequesterHub?'':orgReviewPill(o)}</div>${!isRequesterHub&&(o.application?.contactName||o.application?.documentsNote||o.reviewNote)?`<p class="small muted">${o.application?.contactName?`聯絡人：${escapeHTML(o.application.contactName)}<br>`:''}${o.application?.documentsNote?`文件：${escapeHTML(o.application.documentsNote)}<br>`:''}${o.reviewNote?`審核備註：${escapeHTML(o.reviewNote)}`:''}</p>`:''}<div class="item-actions">${isRequesterHub?`<button type="button" class="btn outline sm platform-enter-org-btn" data-org="${o.id}">查看需求者</button>`:`${(()=>{const st=orgReviewStatus(o),btn=(d,label,cls)=>`<button type="button" class="btn ${cls} sm platform-org-review-btn" data-org="${o.id}" data-decision="${d}">${label}</button>`;return st==='pending'?btn('approve','核准申請','success')+btn('reject','駁回','warning'):st==='approved'?btn('suspend','停權','warning'):btn('approve',st==='suspended'?'恢復（重新核准）':'重新核准','success');})()}<button type="button" class="btn outline sm platform-edit-org-btn" data-org="${o.id}">編輯名稱／聯絡／負責人</button>${o.active!==false?`<button type="button" class="btn outline sm platform-enter-org-btn" data-org="${o.id}">管理成員</button><button type="button" class="btn warning sm platform-org-active-btn" data-org="${o.id}" data-active="false">停用組織</button>`:`<button type="button" class="btn success sm platform-org-active-btn" data-org="${o.id}" data-active="true">重新啟用</button>`}`}</div></div>`;}).join('')}</div>`;
+  return `<div class="page-head"><div><h2>組織管理</h2><p>平台超級管理者可修改公司名稱、聯絡電話、統一編號與唯一負責人；「需求者組織」維持系統固定管理。</p></div><div class="page-actions"><button type="button" class="btn primary" id="openAddOrganizationBtn">＋ 新增組織</button></div></div><div class="list">${rows.map(o=>{const isRequesterHub=o.id===APP_CONFIG.requesterOrganizationId||o.type==='requester_hub',memberCount=store.state.memberships.filter(m=>m.organizationId===o.id&&Identity.membershipStatus(m)==='active').length,ownerM=isRequesterHub?null:store.state.memberships.find(m=>m.organizationId===o.id&&m.role==='owner'&&Identity.membershipStatus(m)!=='revoked'),ownerU=ownerM?store.state.users.find(u=>u.id===ownerM.userId):null;return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(o.name)}</h4><p>${isRequesterHub?'系統需求者組織・不可手動新增公司角色':o.type==='transport_provider'?'交通／車隊公司':o.type==='care_facility'?'長照／日照機構':'其他合作組織'}${!isRequesterHub?(o.taxId?`・統編 ${escapeHTML(o.taxId)}`:'・統編未填'):''}<br>${isRequesterHub?`有效需求者：${memberCount} 人`:`聯絡電話：${escapeHTML(o.contactPhone||'未填')}<br>負責人：${escapeHTML(ownerU?.name||'尚未指定')}・有效成員：${memberCount} 人`}</p></div><span class="pill ${isRequesterHub?'purple':o.active!==false?'green':'gray'}">${isRequesterHub?'系統組織':o.active!==false?'有效':'已移除'}</span>${isRequesterHub?'':orgReviewPill(o)}</div>${!isRequesterHub&&(o.application?.contactName||o.application?.documentsNote||o.reviewNote)?`<p class="small muted">${o.application?.contactName?`聯絡人：${escapeHTML(o.application.contactName)}<br>`:''}${o.application?.documentsNote?`文件：${escapeHTML(o.application.documentsNote)}<br>`:''}${o.reviewNote?`審核備註：${escapeHTML(o.reviewNote)}`:''}</p>`:''}<div class="item-actions">${isRequesterHub?`<button type="button" class="btn outline sm platform-enter-org-btn" data-org="${o.id}">查看需求者</button>`:`${(()=>{const st=orgReviewStatus(o),btn=(d,label,cls)=>`<button type="button" class="btn ${cls} sm platform-org-review-btn" data-org="${o.id}" data-decision="${d}">${label}</button>`;return st==='pending'?btn('approve','核准申請','success')+btn('reject','駁回','warning'):st==='approved'?btn('suspend','停權','warning'):btn('approve',st==='suspended'?'恢復（重新核准）':'重新核准','success');})()}<button type="button" class="btn outline sm platform-edit-org-btn" data-org="${o.id}">編輯名稱／聯絡／負責人</button>${o.active!==false?`<button type="button" class="btn outline sm platform-enter-org-btn" data-org="${o.id}">管理成員</button><button type="button" class="btn warning sm platform-org-active-btn" data-org="${o.id}" data-active="false">停用組織</button>`:`<button type="button" class="btn success sm platform-org-active-btn" data-org="${o.id}" data-active="true">重新啟用</button>`}`}</div></div>`;}).join('')}</div>${platformPrivacySettingsCard()}`;
+}
+// 已發布的個資告知、服務條款沒同意最新版本時，要求同意（#26）；平台管理者不需要
+function ensureConsent_(){
+  const c=AppStateDatabase.consent,missing=c?.missing||[];
+  if(!missing.length||Identity?.isSuperAdmin?.()){if($('consentModal')?.classList.contains('open'))closeModal('consentModal');return;}
+  const list=$('consentDocumentList');if(!list)return;
+  list.innerHTML=missing.map(k=>{const d=c.documents?.[k]||{};return `<li><strong>${escapeHTML(d.title||k)}</strong>（版本 ${escapeHTML(d.version||'')}）${d.url?` <a href="${escapeHTML(d.url)}" target="_blank" rel="noopener">閱讀全文</a>`:''}</li>`;}).join('');
+  $('consentAgreeCheck').checked=false;openModal('consentModal');
+}
+async function acceptConsent_(){
+  if(!$('consentAgreeCheck').checked){showToast('請先勾選已閱讀並同意');return;}
+  const c=AppStateDatabase.consent||{};
+  try{for(const k of c.missing||[]){await backendJsonPost(APP_CONFIG.consentUrl,{action:'accept',document:k,version:c.documents?.[k]?.version});}
+    closeModal('consentModal');await AppStateDatabase.loadAll({silent:true});render();showToast('已記錄你的同意');}
+  catch(error){showToast(error.message||'同意紀錄失敗，請重新整理後再試');}
+}
+
+// 個資保存期限與條款版本（#26）：只有平台超級管理者；條款內容由律師撰寫，發布版本後使用者要同意才能預約
+function platformPrivacySettingsCard(){
+  const docs=AppStateDatabase.consent?.documents||{},years=AppStateDatabase.platformSettings?.retentionYears||5;
+  const docRow=(key)=>{const d=docs[key]||{};return `<div class="form-grid"><label>${escapeHTML(d.title||key)} 版本<input id="legalDoc_${key}_version" value="${escapeHTML(d.version||'')}" placeholder="尚未發布（留空）"/></label><label>${escapeHTML(d.title||key)} 網址<input id="legalDoc_${key}_url" value="${escapeHTML(d.url||'')}" placeholder="https://"/></label></div>`;};
+  return `<section class="card" id="platformPrivacySettings" style="margin-top:16px"><div class="card-head"><div><h3>個資保存與條款</h3><p>行程日期超過保存期限的預約與行程每天自動匿名化（清除姓名、電話、完整地址，保留行政區、日期、距離、金額）。條款改版後，使用者要重新同意才能建立預約。</p></div></div>
+  <div class="form-grid"><label>保存期限（年）<input id="retentionYearsInput" type="number" min="1" max="30" value="${escapeHTML(String(years))}"/></label></div>
+  <div class="item-actions"><button type="button" class="btn outline sm" id="saveRetentionYearsBtn">儲存保存期限</button><button type="button" class="btn warning sm" id="runRetentionNowBtn">立即執行匿名化</button></div>
+  ${docRow('privacy_notice')}${docRow('terms')}
+  <div class="item-actions"><button type="button" class="btn primary sm" id="saveLegalDocumentsBtn">儲存條款版本</button></div></section>`;
+}
+async function platformSettingsRequest_(payload,message){try{const r=await backendJsonPost(APP_CONFIG.platformSettingsUrl,payload);await AppStateDatabase.loadAll({silent:true});render();showToast(typeof message==='function'?message(r.data||{}):message);}catch(error){showToast(error.message||'平台設定儲存失敗');}}
+function bindPlatformPrivacySettings(){
+  $('saveRetentionYearsBtn')?.addEventListener('click',()=>platformSettingsRequest_({action:'set_retention',years:Number($('retentionYearsInput').value)},'保存期限已更新'));
+  $('runRetentionNowBtn')?.addEventListener('click',()=>{if(!confirm('立即把超過保存期限的預約與行程匿名化？匿名化後無法還原。'))return;platformSettingsRequest_({action:'run_retention'},d=>`已匿名化 ${d.anonymized?.bookings||0} 筆預約、${d.anonymized?.trips||0} 趟行程`);});
+  $('saveLegalDocumentsBtn')?.addEventListener('click',()=>{const doc=(k)=>({version:$(`legalDoc_${k}_version`).value,url:$(`legalDoc_${k}_url`).value});platformSettingsRequest_({action:'set_documents',documents:{privacy_notice:doc('privacy_notice'),terms:doc('terms')}},'條款版本已更新；使用者下次登入時會被要求同意');});
 }
 
 function platformMembers(){
@@ -6854,6 +6890,7 @@ function bindViewEvents(){
   }));
   $('openAddStaffBtn')?.addEventListener('click',openAddStaff);
   $('openAddOrganizationBtn')?.addEventListener('click',openAddOrganization);
+  bindPlatformPrivacySettings();
   document.querySelectorAll('.booking-leg-org-select').forEach(select=>select.addEventListener('change',e=>{const target=e.currentTarget.value;if(!target)return;const result=Booking.assignPendingLegOrganization(e.currentTarget.dataset.booking,e.currentTarget.dataset.leg,target,Identity.currentUser()?.id);if(!result.ok){showToast(result.error);render();return;}render();showToast(`已將 ${result.leg?.label||'此行程段'} 指定給 ${Organization.get(target)?.name||'目標組織'}`);}));
   document.querySelectorAll('.platform-edit-org-btn').forEach(btn=>btn.addEventListener('click',()=>openEditOrganization(btn.dataset.org)));
   document.querySelectorAll('.platform-requester-toggle-btn').forEach(btn=>btn.addEventListener('click',()=>{
@@ -6922,6 +6959,7 @@ $('saveBenefitRulesetBtn')?.addEventListener('click',saveBenefitRuleset);
 $('saveBenefitAssessmentBtn')?.addEventListener('click',saveBenefitAssessment);
 $('saveBenefitAuthorizationBtn')?.addEventListener('click',saveBenefitAuthorization);
 $('runBenefitImportBtn')?.addEventListener('click',runBenefitImport);
+$('consentAcceptBtn')?.addEventListener('click',acceptConsent_);
 $('runBenefitDiffBtn')?.addEventListener('click',runBenefitDiff);
 $('saveBenefitAdjustmentBtn')?.addEventListener('click',saveBenefitAdjustment);
 $('benefitAssessmentRecipient')?.addEventListener('change',updateBenefitAssessmentRecipientCity);

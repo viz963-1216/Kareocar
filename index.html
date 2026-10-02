@@ -1950,6 +1950,14 @@ body.driver-mode .route-row.active{border-color:#9AC5F5;background:var(--cr-blue
   <nav class="mobile-nav" id="mobileNav"></nav>
 </div>
 
+<!-- 個資告知與服務條款同意（#26）：沒有關閉按鈕，同意後才繼續 -->
+<div class="modal" id="consentModal"><div class="modal-panel small">
+  <div class="modal-head"><h3>請閱讀並同意</h3></div>
+  <p>使用安心接送之前，請先閱讀以下文件。我們會保存你同意的版本與時間；文件改版時會再次請你確認。</p>
+  <ul id="consentDocumentList"></ul>
+  <label class="check-row"><input type="checkbox" id="consentAgreeCheck"/> 我已閱讀並同意上述文件</label>
+  <div class="modal-actions"><button class="btn primary" id="consentAcceptBtn" type="button">同意並繼續</button></div>
+</div></div>
 <div class="modal" id="registerRequesterModal"><div class="modal-panel small">
   <div class="modal-head"><h3>新增需求者身分</h3><button class="icon-btn" data-close="registerRequesterModal" type="button" aria-label="關閉視窗">×</button></div>
   <p class="small muted">新增需求者帳號會先寫入正式資料庫的「使用者」與「成員資格」，成功後才建立本機登入狀態；若電子信箱或手機已存在，系統會阻擋重複建帳。</p>
