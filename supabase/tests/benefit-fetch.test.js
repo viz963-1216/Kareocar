@@ -110,7 +110,8 @@ const assess = (facts) => call(assessFn.handler, 'POST', U.req, { recipientId: '
   const r3 = await runScheduled();
   const draft2 = (await rulesets()).find((r) => r.status === 'draft');
   record('金額改變產生新草稿，差異只有第 4 區', r3.status === 'draft_created' && draft2
-    && JSON.stringify(draft2.diff.changes) === JSON.stringify([{ field: '第 4 區月額度', from: 2400, to: 2500 }])
+    && draft2.diff.changes.length === 1 && draft2.diff.changes[0].field === '第 4 區月額度'
+    && draft2.diff.changes[0].from === 2400 && draft2.diff.changes[0].to === 2500
     && draft2.diff.comparedWith === (await rulesets())[0].version, JSON.stringify(draft2 && draft2.diff));
   record('草稿沿用已核准版本的自付比例', draft2.calculation.copayByZone['4'].general === 21 && /沿用已核准版本/.test(draft2.calculation.copaySource));
   const stillOld = await assess({ cmsLevel: 4, residenceCity: '臺東縣', identityCategory: 'general' });
