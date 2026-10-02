@@ -227,8 +227,12 @@ async function scenario1(t) {
   await expectRejected(S, '[安全] 透過 state-mutate 接案', mutateAs(t.dspA, [{
     collection: 'bookings', id, record: forgedClaim
   }]), { status: 403, code: 'COLLECTION_FORBIDDEN' }, [['bookings', id]]);
+  // 調度員看不到未承接的預約，會被當成新增；偽造的需求者欄位先被擋下
   await expectRejected(S, '[安全] 透過預約端點接案', bookingWriteAs(t.dspA, [{
     collection: 'bookings', id, record: forgedClaim
+  }]), { status: 400, code: 'VALIDATION_ERROR' }, [['bookings', id]]);
+  await expectRejected(S, '[安全] 透過預約端點接案（不帶需求者）', bookingWriteAs(t.dspA, [{
+    collection: 'bookings', id, record: { ...forgedClaim, requestedByUserId: null }
   }]), { status: 403, code: 'FORBIDDEN' }, [['bookings', id]]);
   await expectRejected(S, '[安全] 需求者自己把預約改成已承接', bookingWriteAs(t.req, [{
     collection: 'bookings', id, record: forgedClaim
