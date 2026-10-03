@@ -140,8 +140,13 @@ Data Scrubber。
 ### 正式資料庫
 
 - [ ] 目前的正式 Supabase 是早期以 SQL Editor 手動建立的，沒有 migration 紀錄，執行器會拒絕
-      （exit 3）。上線前需清空 public 與 app schema 後，以人工觸發套用全部 migration。
-      **這是正式資料庫寫入，需另外取得同意。**
+      （exit 3）。**這是正式資料庫寫入，需另外取得同意。** 步驟：
+      1. 確認 Database → Backups 有最近的每日備份
+      2. SQL Editor 執行 `tools/reset-legacy-production.sql`：一個交易內刪掉 public（擴充套件的物件除外）
+         與 app、ops schema，不碰 auth 等 Supabase 自己的 schema；已有 migration 紀錄的庫會拒絕。
+         CI 的 `supabase/tests/reset-legacy.test.sh` 以模擬的舊庫驗證過整個流程
+      3. 選擇性：Authentication → Users 刪掉舊的測試帳號（沒有對應的 users 資料，留著登入後狀態不完整）
+      4. 以人工觸發套用全部 migration（見「資料庫 migration」）
 - [ ] 套用後在 SQL Editor 給 `care_ride_app` 設密碼，更新 Netlify production 的 `DATABASE_URL`
 - [ ] 建立平台超級管理者帳號
 

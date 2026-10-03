@@ -138,6 +138,9 @@ jobs:
       - name: migration 執行器（紀錄、checksum、順序、舊庫拒絕、回滾、lock_timeout）
         run: bash supabase/tests/apply-migrations.test.sh
 
+      - name: 舊正式庫清空腳本（模擬手動建立的庫 → 清空 → 從頭套用；auth 與擴充套件不受影響；已有紀錄的庫拒絕）
+        run: bash supabase/tests/reset-legacy.test.sh
+
   browser-e2e:
     # 在真的 Chrome 裡操作 index.html：調度接案、司機執行（含離線／返回／服務
     # 證明照片）、需求者取消與通知。Chrome 是 runner 映像內建的，不另外安裝；
