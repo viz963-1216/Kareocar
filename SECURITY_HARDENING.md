@@ -51,6 +51,12 @@
 
 詳見 supabase/README.md 的「同意紀錄與保存期限」。
 
+## 監控
+
+伺服器與前端的未處理錯誤送到 Sentry，前端經本站的 `/api/v2/client-error` 轉送，不直接連外部；
+送出前經 `_scrub.js` 清掉電話、Email、身分證號、地址與敏感欄位。告警送到 Email 與 Discord。
+細節見 DEPLOYMENT.md 的「監控與告警」。
+
 ## 持續驗證
 
 | 項目 | 在哪裡 |

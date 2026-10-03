@@ -63,6 +63,10 @@
 | `PRODUCTION_SUPABASE_PROJECT_REF` | 正式專案 ref；所有 context 設同一個值，建置檢查用 | 否 |
 | `GOOGLE_MAPS_API_KEY` | Geocoding API 與 Routes API；沒設定時建立預約會失敗 | 是 |
 | `PASSWORD_RESET_SMS_WEBHOOK_URL`、`PASSWORD_RESET_SMS_WEBHOOK_SECRET` | 忘記密碼簡訊（#19 換成台灣廠商） | 是 |
+| `SENTRY_DSN` | Sentry 專案的 DSN；沒設定就不回報錯誤 | 否（但不要公開） |
+| `DISCORD_ALERT_WEBHOOK_URL` | 告警送到 Discord 頻道的 webhook | **是** |
+| `RESEND_API_KEY` | 告警 Email（Resend） | **是** |
+| `ALERT_EMAIL_FROM`、`ALERT_EMAIL_TO` | 告警寄件人（Resend 驗證過的網域）、收件人（逗號分隔） | 否 |
 
 ### Supabase
 
@@ -87,7 +91,28 @@
 - **補助規則**：第一次排程抓取會產生草稿，平台管理者核對自付比例（附表五）後核准，補助估算
   才會開始有金額。
 
-## 3. 部署後確認
+## 3. 監控與告警（#17）
+
+程式端已接好，帳號與設定由 repo 擁有者操作：
+
+| 項目 | 程式端 | 要你設定 |
+|---|---|---|
+| 伺服器錯誤 | 所有 5xx 經 `_http.handleError` 送到 Sentry，回應帶 `errorId` 方便對照 | 在 Sentry 建專案（平台選 Node.js），把 DSN 填進 `SENTRY_DSN` |
+| 前端錯誤 | `js/monitoring.js` 送到 `/api/v2/client-error`，伺服器轉給 Sentry（瀏覽器不直接連 Sentry） | 同上，同一個 DSN |
+| 錯誤率告警 | — | Sentry → Alerts 建規則：新錯誤、錯誤數超過門檻時通知 Email；Discord 用 Sentry 的 Discord 整合或 webhook |
+| 存活檢查 | `/api/health` 支援 GET 與 HEAD，資料庫或設定有問題時回 503 | 在外部服務（例如 UptimeRobot 免費方案）建 HTTP 監測，每 5 分鐘檢查 `https://<正式網域>/api/health`，告警聯絡人設 Email 與 Discord |
+| 應用程式告警（補助公告抓取失敗等） | `_alerts.js` 送到 Discord 與 Email，另寫稽核紀錄 | `DISCORD_ALERT_WEBHOOK_URL`、`RESEND_API_KEY`、`ALERT_EMAIL_FROM`、`ALERT_EMAIL_TO` |
+
+**個資**：送出前經 `_scrub.js` 清掉電話、Email、身分證號、地址，敏感欄位（姓名、電話、地址、
+token 等）整個拿掉；不送請求內容、cookie、查詢字串與使用者資料。Sentry 專案設定另外建議：
+關閉 IP 記錄（Settings → Security & Privacy → Prevent Storing of IP Addresses），開啟
+Data Scrubber。
+
+**驗收**：平台管理者在「組織管理 → 個資保存與條款 → 監控與告警」按「觸發測試錯誤」（Sentry
+應出現一筆錯誤、錯誤告警寄出）與「送出測試告警」（Email 與 Discord 都收到）；存活檢查可以暫時把
+監測網址改成不存在的路徑，確認收到失敗通知後改回。
+
+## 4. 部署後確認
 
 1. `GET https://<網域>/api/health` 回 HTTP 200，內容 `ok: true`、`configured: true`、
    `database: true`。缺任何必要變數或連不到資料庫時回 503。
@@ -104,8 +129,8 @@
 - [ ] **律師文件**：個資告知、服務條款完成；在平台設定填入版本與網址
 - [ ] **簡訊廠商**（#19）：選定台灣廠商並開通；Supabase 正式專案的 Phone provider 改用真的廠商；
       忘記密碼的簡訊測試成功
-- [ ] **監控與告警**（#17）：Sentry、`/api/health` 存活檢查、Email 與 Discord 告警（`_alerts.js`
-      目前只寫稽核紀錄與 Function 記錄）
+- [ ] **監控與告警**（#17）：程式端已完成，依「3. 監控與告警」建 Sentry 專案與告警規則、外部存活
+      檢查、Discord webhook、Resend 寄件網域，並完成驗收（測試錯誤、測試告警、存活檢查失敗各一次）
 - [ ] **Google Maps**：正式與 Staging 的 `GOOGLE_MAPS_API_KEY`，在 Google Cloud 限制可用的 API
       與用量上限
 - [ ] **Supabase Pro 與 PITR**（#28）：正式專案開啟 point-in-time recovery，在 Staging 做一次還原

@@ -6,6 +6,8 @@
  * 移除之後只留下這些。
  */
 
+const sentry = require('./_sentry');
+
 function json(statusCode, body) {
   return {
     statusCode,
@@ -63,10 +65,20 @@ function handleError(error) {
     : code === 'NO_ACTIVE_IDENTITY' ? 403
     : code === 'IDENTITY_CONFLICT' ? 409
     : 502;
-  const detail = { code, message: error?.message || '服務暫時無法使用' };
+  // 沒有我們定義錯誤碼的例外（程式錯誤、資料庫原始錯誤）不把內部訊息回給前端
+  const unexpected = !error?.code || code === 'FUNCTION_ERROR' || /^[0-9A-Z]{5}$/.test(code);
+  const detail = { code, message: unexpected && userStatus >= 500 ? '服務暫時無法使用，請稍後再試' : (error?.message || '服務暫時無法使用') };
   // 欄位層級的錯誤（例如哪一個地址找不到）讓前端可以標在正確的輸入框
   if (error && typeof error.field === 'string') detail.field = error.field;
-  return json(userStatus, { ok: false, error: detail });
+  const response = json(userStatus, { ok: false, error: detail });
+  // 伺服器端錯誤（5xx）送到 Sentry（#17）；有設定 SENTRY_DSN 時回傳 Promise，等送出後才回應，
+  // 避免 Function 回應後被凍結、事件沒送出去。所有呼叫端都是 `return handleError(...)`。
+  if (userStatus >= 500 && sentry.enabled()) {
+    return sentry.captureException(error, { tags: { code, status: String(userStatus) } })
+      .then((eventId) => (eventId ? { ...response, body: JSON.stringify({ ok: false, error: { ...detail, errorId: eventId } }) } : response),
+        () => response);
+  }
+  return response;
 }
 
 module.exports = { json, withCookies, parseBody, handleError, clientIp };

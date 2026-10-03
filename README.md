@@ -22,6 +22,8 @@ Netlify Functions（netlify/functions/）
    ├──► Supabase Auth（手機＋密碼、建立／停用帳號）
    ├──► Google Maps（建立預約時定位與算距離，結果存進預約）
    ├──► 政府長照公告（每日排程抓取，產生規則草稿）
+   ├──► Sentry（伺服器與前端錯誤，送出前清除個資）
+   ├──► Discord、Email（告警）
    ▼
 Postgres（Supabase）            ← 唯一的真實資料來源；RLS 做列層級授權
 ```
