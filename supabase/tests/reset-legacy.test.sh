@@ -28,7 +28,7 @@ expect() { if [ "$2" = "$3" ]; then check "$1" 0; else check "$1（實得 '$2'�
 relations() { q "$1" "select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace
                       where n.nspname in ('public','app') and c.relkind in ('r','v','m','p')"; }
 
-DB=careride_reset_test
+DB=careride_legacy_reset_test
 createdb "$DB" || exit 1
 N="$(ls "$ROOT"/supabase/migrations/*.sql | wc -l | tr -d ' ')"
 
