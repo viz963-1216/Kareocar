@@ -7,7 +7,8 @@
 - [README.md](README.md) — 架構、測試指令、版本紀錄
 - [supabase/README.md](supabase/README.md) — schema、RLS、本機測試環境
 - [DEPLOYMENT.md](DEPLOYMENT.md) — 部署與正式上線檢查
-- [SECURITY_HARDENING.md](SECURITY_HARDENING.md) — 安全強化紀錄
+- [SECURITY_HARDENING.md](SECURITY_HARDENING.md) — 資安模型
+- [docs/RESTORE_RUNBOOK.md](docs/RESTORE_RUNBOOK.md) — 備份與還原
 
 其中兩條最容易踩、且後果最嚴重的，在這裡再提一次：
 
@@ -110,18 +111,17 @@ Supabase 可能有版本庫外的 trigger、webhook、排程或外部訂閱；Ne
 
 ## 資料庫環境
 
-**不要把所有環境都當成同一個正式庫。** 目前已知的是：
+兩個 Supabase 專案，見 [README.md](README.md) 的「環境」：
 
-- Netlify 的 Production context 有自己的 `DATABASE_URL`；Deploy previews、
-  Branch deploys、Preview server 各有自己的設定。
-- **這些是否指向同一個資料庫尚未核實。** `DATABASE_URL` 設為 Secret，值無法
-  從 UI／API／CLI 讀回，遮蔽後也無從比對。在核實之前，既不要假設預覽是隔離的
-  （可能寫到正式資料），也不要斷言它們就是正式庫。
+- **Production**：Netlify 的 Production context。migration 只在人工觸發時套用。
+- **Staging**：Netlify 的 Deploy Previews 與 Branch deploys。合併到 main 後自動套用 migration。
+- 建置檢查（`tools/check-db-config.js`）會擋下「非 production 的建置連到正式資料庫」；
+  migration workflow 套用前會確認連線字串指向預期的專案（`describe-db-url.py --expect-ref`）。
+  `DATABASE_URL` 本身是 Secret、讀不回來，所以隔離靠的是這兩道檢查，不是肉眼比對。
 
 規則：
 
-- 不拿正式庫試跑未驗證的 SQL。
-- 不在預覽環境做寫入驗收，直到隔離狀況確認為止。
+- 不拿正式庫試跑未驗證的 SQL；寫入驗收在 Staging 或拋棄式資料庫做。
 - 正式庫的寫入一律另行取得同意，見上面的授權邊界。
 
 ## SQL 與 RLS 怎麼驗證
@@ -129,8 +129,9 @@ Supabase 可能有版本庫外的 trigger、webhook、排程或外部訂閱；Ne
 有隔離 CI 可以用，**不要再用「本機沒有 Postgres 所以只能標示未執行」當結論**：
 
 - `.github/workflows/isolated-sql-review.yml` 會在用完即丟的 `postgres:16`
-  容器上，用 `supabase/migrations/` 的實際 migration 建庫，跑 seed 情境、
-  密碼重設的交易與併發、連線設定解析，Node 20 與 24 各一輪。觸發條件是
+  容器上，用 `supabase/migrations/` 的實際 migration 建庫，跑 seed 情境、各項
+  整合測試（RLS、業務流程、登入、補助、隱私、備份還原等）、連線設定解析，
+  Node 20 與 24 各一輪。觸發條件是
   `supabase/**`、`netlify/functions/**`、`tests/**`、`package.json` 與該
   workflow 本身的變動，也可以手動 `workflow_dispatch`。
 - 本機若有 Postgres 16，可用 [supabase/README.md](supabase/README.md#本機測試)
