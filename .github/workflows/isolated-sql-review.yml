@@ -141,6 +141,9 @@ jobs:
       - name: 舊正式庫清空腳本（模擬手動建立的庫 → 清空 → 從頭套用；auth 與擴充套件不受影響；已有紀錄的庫拒絕）
         run: bash supabase/tests/reset-legacy.test.sh
 
+      - name: 備份與還原演練腳本（加密、筆數清單、還原比對；密碼錯、檔案被改、筆數不符、目標非空都失敗）
+        run: bash supabase/tests/backup-restore.test.sh
+
   browser-e2e:
     # 在真的 Chrome 裡操作 index.html：調度接案、司機執行（含離線／返回／服務
     # 證明照片）、需求者取消與通知。Chrome 是 runner 映像內建的，不另外安裝；
