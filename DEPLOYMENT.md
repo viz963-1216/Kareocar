@@ -95,6 +95,11 @@
 - **Google Cloud**（API 和服務 → 憑證 → 建立 OAuth 用戶端 ID，類型「網頁應用程式」）：已授權的重新導向
   URI 填 `https://<Supabase 專案 ref>.supabase.co/auth/v1/callback`。OAuth 同意畫面只需要 email、
   profile，不必送審；要顯示 logo 才需要品牌驗證。
+  - 2026-10-04 已建立：專案 `kareocar`、用戶端「Kareocar Supabase」（正式與 Staging 的 Supabase 回呼網址
+    都在同一個用戶端），已填入兩個 Supabase 專案。
+  - **目前是「測試」狀態**：只有 Google Auth Platform → 目標對象 → 測試使用者（最多 100 人）能用
+    Google 登入。發布前要在「品牌」頁填應用程式首頁與隱私權政策網址（律師文件完成後），再按
+    「發布應用程式」；只用非機密範圍、沒有 logo，不需要 Google 審查。
 - **Meta 開發者後台**（建立應用程式 → 使用 Facebook 登入）：有效的 OAuth 重新導向 URI 填同一個
   Supabase 回呼網址；切換成「上線」前要填隱私權政策網址與資料刪除說明（律師文件完成後）。
 
@@ -153,6 +158,7 @@ Data Scrubber。
 
 - [ ] **律師文件**：個資告知、服務條款完成；在平台設定填入版本與網址。個資告知要包含透過 Google、
       Facebook 登入取得的資料（Email、姓名），以及 Facebook 要求的資料刪除說明
+- [ ] **Google 登入發布**：隱私權政策網址填進 Google 品牌頁，按「發布應用程式」（目前只有測試使用者能用）
 - [ ] **登入方式**（#58）：不接簡訊廠商。程式已完成（後台重設密碼、Google／Facebook 登入與綁定
       手機）；依上方「Supabase」設定 Google Cloud、Meta 與 Supabase 的登入提供者，並在 Staging 實際
       走一次：新帳號、綁定既有帳號、我的帳戶綁定與解除
