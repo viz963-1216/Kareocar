@@ -6478,8 +6478,8 @@ async function submitOAuthBind_(mode){
     :{mode,name:$('oauthBindNameInput').value.trim(),email:$('oauthBindEmailInput').value.trim(),phone:digitsOnly($('oauthBindNewPhoneInput').value),password:$('oauthBindNewPasswordInput').value};
   setButtonBusy(btn,true,'處理中…');
   try{
+    // 登入狀態由轉回後的 /api/v2/session 確認（markBackendSession 在這個範圍拿不到，也不需要）
     const result=await backendJsonPost(APP_CONFIG.oauthBindUrl,body);
-    markBackendSession(true);
     // 綁定既有帳號：已用手機密碼登入，再回 Google／Facebook 確認一次就完成綁定。
     // 這一步沒完成的話帳號不會綁上，所以轉過去之前先講清楚
     if(result?.data?.redirectUrl){
