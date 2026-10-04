@@ -36,7 +36,6 @@ process.env.DATABASE_URL = isSocket
   ? `postgresql://care_ride_app@${encodeURIComponent(host)}:${process.env.PGPORT}/careride_flow_test?sslmode=disable`
   : `postgresql://care_ride_app@${host}:${process.env.PGPORT}/careride_flow_test?sslmode=disable`;
 process.env.AUTH_SESSION_SECRET = 'synthetic-session-secret-flow-0123456789';
-process.env.AUTH_PASSWORD_PEPPER = 'synthetic-password-pepper-flow-0123456789';
 // access token 以測試金鑰簽發，function 端走正式的 JWT 驗證；必須在載入 function 之前
 const fx = require('./_auth-fixture');
 

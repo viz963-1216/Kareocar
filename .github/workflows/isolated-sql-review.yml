@@ -95,12 +95,10 @@ jobs:
       - name: 確認資料庫連得上
         run: psql -X -v ON_ERROR_STOP=1 -c 'select version()'
 
-      # tests/run.sh 會跑 tests/*.test.js，已包含 reset-transaction.test.js
-      # （記憶體 PG 替身的離線交易回歸），不需要再單獨跑一次。
-      - name: 離線回歸測試（純 Node，含離線交易回歸）
+      - name: 離線回歸測試（純 Node）
         run: bash tests/run.sh
 
-      - name: 實際 migration + seed 情境 + 重設交易／併發測試
+      - name: 實際 migration + seed 情境 + 連線 TLS 判斷
         run: bash supabase/tests/run-isolated-review.sh
 
       # 斷言預期業務行為（接案、司機執行、需求者取消）。放在獨立一步，前面各步

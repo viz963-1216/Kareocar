@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 身分流程的共用工具：登入速率限制、手機號碼正規化、驗證碼與比對工具。
+ * 身分流程的共用工具：登入速率限制、手機號碼正規化。
  *
  * 密碼與 session token 已交給 Supabase Auth（見 _supabase-auth.js、_session.js），
  * 這裡不再保存或驗證密碼。
@@ -35,40 +35,8 @@ function requireSecret(name) {
 }
 
 
-/* ------------------------------------------------------------------ 雜湊 */
-
-/**
- * 迭代 HMAC-SHA256（PBKDF2 的 F 函式），忘記密碼驗證碼的雜湊用（_auth-reset.js）。
- * HMAC 的 key 是 pepper、訊息是 salt|值。
- */
-function stretchHex(password, salt, rounds, pepper) {
-  const key = Buffer.from(String(pepper), 'utf8');
-  let u = crypto.createHmac('sha256', key).update(Buffer.from(`${salt}|${password}`, 'utf8')).digest();
-  const acc = Buffer.from(u);
-  for (let i = 1; i < rounds; i++) {
-    u = crypto.createHmac('sha256', key).update(u).digest();
-    for (let j = 0; j < acc.length; j++) acc[j] ^= u[j];
-  }
-  return acc.toString('hex');
-}
-
 function randomHex(bytes) {
   return crypto.randomBytes(Math.max(16, Number(bytes) || 16)).toString('hex');
-}
-
-function secureOtpCode() {
-  // 拒絕取樣，避免取模造成的分布偏差
-  while (true) {
-    const n = crypto.randomBytes(4).readUInt32BE(0);
-    if (n < 4294000000) return String(100000 + (n % 900000));
-  }
-}
-
-function constantTimeEqual(a, b) {
-  const ba = Buffer.from(String(a || ''), 'utf8');
-  const bb = Buffer.from(String(b || ''), 'utf8');
-  if (ba.length !== bb.length) return false;
-  return crypto.timingSafeEqual(ba, bb);
 }
 
 /* ------------------------------------------------------------ 速率限制 */
@@ -173,7 +141,7 @@ function toE164(localPhone) {
 }
 
 module.exports = {
-  authError, requireSecret, stretchHex, randomHex, secureOtpCode, constantTimeEqual,
+  authError, requireSecret, randomHex,
   opaqueKey, assertLoginAllowed, recordLoginFailure, clearLoginRate,
   normalizeTaiwanPhone, toE164
 };

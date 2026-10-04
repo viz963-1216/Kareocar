@@ -23,8 +23,6 @@ const PGPORT = process.env.PGPORT || '5433';
 const PGDATABASE = process.env.PGDATABASE || 'careride';
 process.env.DATABASE_URL = `postgresql://care_ride_app@${encodeURIComponent(PGHOST)}:${PGPORT}/${PGDATABASE}`;
 process.env.AUTH_SESSION_SECRET = 'test-session-secret-0123456789abcdef';
-process.env.AUTH_PASSWORD_PEPPER = 'test-pepper-0123456789abcdefghijkl';
-process.env.AUTH_PBKDF2_ITERATIONS = '1000';
 
 // 假的 Supabase Auth 與測試簽章金鑰；舊測試的 token 寫法由 fx.adapt 轉成 cookie
 const fx = require('./_auth-fixture');

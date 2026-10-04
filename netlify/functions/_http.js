@@ -50,14 +50,12 @@ function parseBody(event) {
 function handleError(error) {
   const code = error?.code || 'FUNCTION_ERROR';
   const userStatus = code === 'INVALID_CREDENTIALS' ? 401
-    : code === 'LOGIN_RATE_LIMITED' || code === 'PASSWORD_RESET_REQUIRED' ? 429
+    : code === 'LOGIN_RATE_LIMITED' ? 429
     : code === 'FORBIDDEN' || code === 'COLLECTION_FORBIDDEN' || code === 'TABLE_FORBIDDEN' || code === 'CONSENT_REQUIRED' ? 403
     : code === 'BOOKING_CONFLICT' || code === 'TRIP_CONFLICT' ? 409
     : code === 'SESSION_INVALID' || code === 'SESSION_EXPIRED' || code === 'SESSION_REQUIRED' ? 401
-    : code === 'VALIDATION_ERROR' || code === 'ADDRESS_NOT_FOUND' || code === 'ROUTE_NOT_FOUND' || code === 'WEAK_PASSWORD' || code === 'ACCOUNT_EXISTS' || code === 'PHONE_EXISTS' || code === 'MEMBERSHIP_EXISTS' || code === 'OWNER_EXISTS' || code === 'RESET_CODE_INVALID' ? 400
-    : code === 'RESET_RATE_LIMITED' ? 429
+    : code === 'VALIDATION_ERROR' || code === 'ADDRESS_NOT_FOUND' || code === 'ROUTE_NOT_FOUND' || code === 'WEAK_PASSWORD' || code === 'ACCOUNT_EXISTS' || code === 'PHONE_EXISTS' || code === 'MEMBERSHIP_EXISTS' || code === 'OWNER_EXISTS' ? 400
     : code === 'CURRENT_PASSWORD_REQUIRED' ? 400
-    : code === 'RESET_PROVIDER_UNAVAILABLE' ? 503
     : code === 'CONFIG_MISSING' || code === 'CONFIG_INVALID' || code === 'AUTH_PROVIDER_UNAVAILABLE' || code === 'AUTH_PROVIDER_MISCONFIGURED' || code === 'GEO_PROVIDER_UNAVAILABLE' ? 503
     // 「找不到」與「沒有權限」不是伺服器故障。漏掉這幾個會掉進最後的 502，
     // 前端就會顯示「後端服務錯誤」，而實際上只是這個人看不到那個組織。

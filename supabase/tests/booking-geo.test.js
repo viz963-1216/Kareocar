@@ -20,7 +20,6 @@ process.env.DATABASE_URL = isSocket
   ? `postgresql://care_ride_app@${encodeURIComponent(host)}:${process.env.PGPORT}/careride_geo_test?sslmode=disable`
   : `postgresql://care_ride_app@${host}:${process.env.PGPORT}/careride_geo_test?sslmode=disable`;
 process.env.AUTH_SESSION_SECRET = 'synthetic-session-secret-geo-0123456789';
-process.env.AUTH_PASSWORD_PEPPER = 'synthetic-password-pepper-geo-0123456789';
 const fx = require('./_auth-fixture');
 
 const admin = new Pool({ host, port: Number(process.env.PGPORT), database: 'careride_geo_test', user: 'postgres' });

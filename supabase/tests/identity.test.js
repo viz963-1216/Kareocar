@@ -1,5 +1,5 @@
 /**
- * v2 身分流程接線測試：註冊、忘記密碼、建立員工、修改帳號。
+ * v2 身分流程接線測試：註冊、後台重設密碼、建立員工、修改帳號。
  * Netlify Function 的實際程式碼，跑在真實 Postgres + 真實 RLS 上。
  */
 const path = require('path');
@@ -18,18 +18,8 @@ const PGPORT = process.env.PGPORT || '5433';
 const PGDATABASE = process.env.PGDATABASE || 'careride';
 process.env.DATABASE_URL = `postgresql://care_ride_app@${encodeURIComponent(PGHOST)}:${PGPORT}/${PGDATABASE}`;
 process.env.AUTH_SESSION_SECRET = 'test-session-secret-0123456789abcdef';
-process.env.AUTH_PASSWORD_PEPPER = 'test-pepper-0123456789abcdefghijkl';
-process.env.AUTH_PBKDF2_ITERATIONS = '1000';
 
 const sql = (q) => execFileSync('psql', ['-h', PGHOST, '-p', PGPORT, '-U', 'postgres', '-d', PGDATABASE, '-tAc', q]).toString().trim();
-
-// 攔截簡訊發送，把驗證碼留下來給測試用
-let lastCode = null;
-const smsPath = require.resolve(path.join(FN, '_sms.js'));
-require(smsPath);
-require.cache[smsPath].exports = {
-  sendPasswordResetSms: async (_phone, code) => { lastCode = code; }
-};
 
 // 假的 Supabase Auth 與測試簽章金鑰；舊測試的 token 寫法由 fx.adapt 轉成 cookie
 const fx = require('./_auth-fixture');
@@ -37,8 +27,7 @@ const auth = require(path.join(FN, '_auth-pg.js'));
 const { withUser, withoutUser, getPool } = require(path.join(FN, '_db.js'));
 const login = fx.adapt(require(path.join(FN, 'v2-password-login.js')));
 const register = fx.adapt(require(path.join(FN, 'v2-register-requester.js')));
-const reqReset = fx.adapt(require(path.join(FN, 'v2-request-password-reset.js')));
-const confirmReset = fx.adapt(require(path.join(FN, 'v2-confirm-password-reset.js')));
+const adminReset = fx.adapt(require(path.join(FN, 'v2-admin-reset-password.js')));
 const createStaff = fx.adapt(require(path.join(FN, 'v2-create-staff.js')));
 const updateAccount = fx.adapt(require(path.join(FN, 'v2-update-account.js')));
 
@@ -94,58 +83,64 @@ const R_PHONE = '0933111222', R_PW = 'RequesterPass123';
   await t('交易性：註冊失敗不留孤兒成員資格', () =>
     sql("select count(*) from memberships m left join users u on u.id=m.user_id where u.id is null") === '0');
 
-  console.log('--- 忘記密碼 ---');
+  console.log('--- 後台重設密碼（平台管理者） ---');
   const NEW_PW = 'BrandNewPass456';
-  await t('請求重設會發出驗證碼', async () => {
-    lastCode = null;
-    const r = parse(await post(reqReset, { phone: R_PHONE }));
-    return r.ok === true && /^\d{6}$/.test(String(lastCode));
+  fx.setSeedPassword('USR-ROOT', 'RootPass12345');
+  let rootToken = null, tempPw = null;
+  await t('平台管理者登入', async () => {
+    const r = parse(await post(login, { phone: '0912000009', password: 'RootPass12345' }, { 'x-nf-client-connection-ip': '198.51.100.10' }));
+    rootToken = r.data && r.data.sessionToken;
+    return r.ok === true;
   });
-  await t('未註冊的號碼回應完全相同，且不發簡訊', async () => {
-    lastCode = null;
-    const r = parse(await post(reqReset, { phone: '0900000123' }));
-    return r.ok === true && r.data.requested === true && lastCode === null;
+  await t('沒有 token 不能重設', async () =>
+    parse(await post(adminReset, { userId: rUserId })).status === 401);
+  await t('需求者不能重設別人的密碼，Supabase Auth 沒被呼叫', async () => {
+    const before = fx.calls.filter((c) => c[0] === 'updateUser').length;
+    const r = parse(await post(adminReset, { sessionToken: regToken, userId: 'USR-DRV1' }));
+    return r.status === 403 && r.error.code === 'FORBIDDEN'
+      && fx.calls.filter((c) => c[0] === 'updateUser').length === before;
   });
-  await t('重複請求會沿用同一組碼，不重發', async () => {
-    lastCode = null;
-    const r = parse(await post(reqReset, { phone: R_PHONE }));
-    return r.ok === true && lastCode === null && r.data.expiresInSeconds > 0;
+  await t('不存在的帳號與沒有權限的回應相同（不洩漏帳號是否存在）', async () => {
+    const r = parse(await post(adminReset, { sessionToken: regToken, userId: 'USR-NOT-EXIST' }));
+    return r.status === 403 && r.error.code === 'FORBIDDEN';
   });
-  let theCode = null;
-  await t('取得目前有效的驗證碼（重建一組來測驗證）', async () => {
-    sql(`delete from auth_rate_limits`);
-    lastCode = null;
-    await post(reqReset, { phone: R_PHONE });
-    theCode = lastCode;
-    return /^\d{6}$/.test(String(theCode));
+  await t('不能用這個方式重設自己', async () => {
+    const r = parse(await post(adminReset, { sessionToken: rootToken, userId: 'USR-ROOT' }));
+    return r.status === 403 && r.error.code === 'FORBIDDEN';
   });
-  await t('錯誤驗證碼被拒', async () => {
-    const wrong = String((Number(theCode) + 1) % 1000000).padStart(6, '0');
-    const r = parse(await post(confirmReset, { phone: R_PHONE, otp: wrong, newPassword: NEW_PW }));
-    return r.status === 400 && r.error.code === 'RESET_CODE_INVALID';
+  await t('平台管理者可以重設需求者，取得 12 碼臨時密碼', async () => {
+    const r = parse(await post(adminReset, { sessionToken: rootToken, userId: rUserId }));
+    tempPw = r.data && r.data.temporaryPassword;
+    return r.ok === true && r.data.reset === true && /^[A-Za-z2-9]{12}$/.test(String(tempPw));
   });
-  await t('驗證碼不以明文存在資料庫', () =>
-    sql(`select count(*) from auth_rate_limits where state::text like '%${theCode}%'`) === '0');
-  await t('正確驗證碼可以改密碼', async () => {
-    const r = parse(await post(confirmReset, { phone: R_PHONE, otp: theCode, newPassword: NEW_PW }));
-    return r.ok === true && r.data.reset === true;
-  });
+  await t('稽核紀錄記下操作者與範圍，沒有臨時密碼', () =>
+    sql(`select actor_user_id || '|' || (details->>'scope') || '|' || (details::text like '%${tempPw}%')
+           from audit_events where event_type = 'auth.password.admin_reset' and entity_id = '${rUserId}'`) === 'USR-ROOT|platform|false');
+  await t('對方其他裝置的 refresh token 一併撤銷（global sign out）', () =>
+    fx.calls.some((c) => c[0] === 'signOut' && c[1] === 'global'));
   await t('舊密碼登不進去了', async () => {
     const r = parse(await post(login, { phone: R_PHONE, password: R_PW }, { 'x-nf-client-connection-ip': '198.51.100.2' }));
     return r.status === 401 && r.error.code === 'INVALID_CREDENTIALS';
-  });
-  await t('新密碼可以登入', async () => {
-    const r = parse(await post(login, { phone: R_PHONE, password: NEW_PW }, { 'x-nf-client-connection-ip': '198.51.100.3' }));
-    rToken = r.data && r.data.sessionToken;
-    return r.ok === true;
   });
   await t('重設前簽發的 session token 立刻失效', async () => {
     const r = parse(await post(updateAccount, { sessionToken: regToken, name: '王小明', phone: R_PHONE }));
     return r.status === 401 && r.error.code === 'SESSION_INVALID';
   });
-  await t('同一組驗證碼不能用第二次', async () => {
-    const r = parse(await post(confirmReset, { phone: R_PHONE, otp: theCode, newPassword: 'YetAnotherPw789' }));
-    return r.error.code === 'RESET_CODE_INVALID';
+  let tempToken = null;
+  await t('臨時密碼可以登入', async () => {
+    const r = parse(await post(login, { phone: R_PHONE, password: tempPw }, { 'x-nf-client-connection-ip': '198.51.100.3' }));
+    tempToken = r.data && r.data.sessionToken;
+    return r.ok === true && r.data.user.userId === rUserId;
+  });
+  await t('本人用臨時密碼改成自己的新密碼', async () => {
+    const r = parse(await post(updateAccount, { sessionToken: tempToken, name: '王小明', phone: R_PHONE,
+      currentPassword: tempPw, newPassword: NEW_PW }));
+    return r.ok === true;
+  });
+  await t('新密碼可以登入', async () => {
+    const r = parse(await post(login, { phone: R_PHONE, password: NEW_PW }, { 'x-nf-client-connection-ip': '198.51.100.11' }));
+    rToken = r.data && r.data.sessionToken;
+    return r.ok === true;
   });
 
   console.log('--- 建立員工 ---');
@@ -197,6 +192,55 @@ const R_PHONE = '0933111222', R_PW = 'RequesterPass123';
     const r = parse(await post(createStaff, { sessionToken: ownerToken, organizationId: 'ORG-TP-002',
       role: 'dispatcher', name: '管理者', phone: '0912000009', password: 'WhateverPw12' }));
     return r.ok !== true && r.error.code === 'FORBIDDEN';
+  });
+
+  console.log('--- 後台重設密碼（機構負責人） ---');
+  const idByPhone = (e164) => sql(`select id from users where phone_e164 = '${e164}'`);
+  const driverId = idByPhone('+886955444555');
+  const dispatcherId = idByPhone('+886955222333');
+  await t('負責人可以重設自己機構的司機', async () => {
+    const r = parse(await post(adminReset, { sessionToken: ownerToken, userId: driverId }));
+    return r.ok === true && sql(`select details->>'scope' from audit_events
+      where event_type = 'auth.password.admin_reset' and entity_id = '${driverId}' order by created_at desc limit 1`) === 'owner';
+  });
+  await t('負責人不能重設別家機構的司機', async () => {
+    const r = parse(await post(adminReset, { sessionToken: ownerToken, userId: 'USR-DRV1' }));
+    return r.status === 403 && r.error.code === 'FORBIDDEN';
+  });
+  await t('負責人不能重設需求者', async () => {
+    const r = parse(await post(adminReset, { sessionToken: ownerToken, userId: rUserId }));
+    return r.status === 403;
+  });
+  await t('負責人不能重設平台管理者', async () => {
+    const r = parse(await post(adminReset, { sessionToken: ownerToken, userId: 'USR-ROOT' }));
+    return r.status === 403;
+  });
+  await t('司機同時是別家機構成員時，負責人不能重設（避免接管別家帳號）', async () => {
+    sql(`insert into memberships (id, user_id, organization_id, role, status) values ('M-TMP-X', '${driverId}', 'ORG-TP-001', 'driver', 'active')`);
+    const r = parse(await post(adminReset, { sessionToken: ownerToken, userId: driverId }));
+    sql(`delete from memberships where id = 'M-TMP-X'`);
+    return r.status === 403;
+  });
+  await t('別家的成員資格停權中也一樣不能重設', async () => {
+    sql(`insert into memberships (id, user_id, organization_id, role, status) values ('M-TMP-S', '${driverId}', 'ORG-TP-001', 'dispatcher', 'suspended')`);
+    const r = parse(await post(adminReset, { sessionToken: ownerToken, userId: driverId }));
+    sql(`delete from memberships where id = 'M-TMP-S'`);
+    return r.status === 403;
+  });
+  await t('司機同時有需求者身分時，負責人仍可重設', async () => {
+    sql(`insert into memberships (id, user_id, organization_id, role, status) values ('M-TMP-R', '${driverId}', 'ORG-REQ-001', 'requester', 'active')`);
+    const r = parse(await post(adminReset, { sessionToken: ownerToken, userId: driverId }));
+    sql(`delete from memberships where id = 'M-TMP-R'`);
+    return r.ok === true;
+  });
+  await t('調度員不能重設司機', async () => {
+    const d = parse(await post(login, { phone: '0955222333', password: 'DispPass1234' }, { 'x-nf-client-connection-ip': '198.51.100.12' }));
+    const r = parse(await post(adminReset, { sessionToken: d.data && d.data.sessionToken, userId: driverId }));
+    return d.ok === true && r.status === 403;
+  });
+  await t('平台管理者可以重設任何機構的負責人', async () => {
+    const r = parse(await post(adminReset, { sessionToken: rootToken, userId: 'USR-OWN2' }));
+    return r.ok === true && !!dispatcherId;
   });
 
   console.log('--- 修改自己的帳號 ---');

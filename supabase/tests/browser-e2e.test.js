@@ -28,7 +28,6 @@ if (!['localhost', '127.0.0.1'].includes(host) || process.env.PGDATABASE !== 'ca
 if (typeof WebSocket !== 'function') throw Error('需要 Node 22 以上（內建 WebSocket）');
 process.env.DATABASE_URL = `postgresql://care_ride_app@${host}:${process.env.PGPORT}/careride_e2e_test?sslmode=disable`;
 process.env.AUTH_SESSION_SECRET = 'synthetic-session-secret-e2e-0123456789';
-process.env.AUTH_PASSWORD_PEPPER = 'synthetic-password-pepper-e2e-0123456789';
 // 假的 Supabase Auth 與測試簽章金鑰。本機伺服器與 function 跑在同一個行程，所以登入畫面
 // 送出的帳密會由這個替身驗證、function 端以正式的 JWT 驗證程式驗 cookie 裡的 token
 const fx = require('./_auth-fixture');

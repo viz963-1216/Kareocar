@@ -16,7 +16,7 @@
 const { json } = require('./_http');
 const { withoutUser } = require('./_db');
 
-const REQUIRED_ENV = ['DATABASE_URL', 'AUTH_SESSION_SECRET', 'AUTH_PASSWORD_PEPPER',
+const REQUIRED_ENV = ['DATABASE_URL', 'AUTH_SESSION_SECRET',
   'SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY'];
 
 exports.handler = async (event) => {
