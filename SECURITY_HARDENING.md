@@ -65,6 +65,13 @@
 | 依賴套件弱點 | `security.yml` 的 `npm audit`，high 以上失敗 |
 | 網站被動掃描 | `security.yml` 的 ZAP baseline（Staging），高風險失敗，報告存 artifact |
 | 瀏覽器實際行為 | 端對端測試在實際 CSP 下執行 |
+| 備份可以還原 | `restore-drill.yml` 每月在拋棄式 Postgres 還原最新備份並逐表比對 |
+
+## 備份
+
+正式資料庫有 Supabase 每日備份（7 天）與每 6 小時的加密邏輯備份（GitHub Actions artifact，7 天）。
+備份含個資，以 gpg 對稱加密（AES-256）後才離開 runner，明文只在暫存目錄；加密密碼是 repo secret，
+另由 repo 擁有者保存。沒有 PITR，最多遺失約 6 小時的資料。見 [docs/RESTORE_RUNBOOK.md](docs/RESTORE_RUNBOOK.md)。
 
 ## 已知、接受的風險
 

@@ -1,0 +1,89 @@
+name: Database backup
+
+# 正式資料庫每 6 小時一次加密的邏輯備份（#28；取代 PITR）。Supabase Pro 內含的每日備份是
+# 第一道防線，這個是第二道：最多遺失約 6 小時的資料。
+#
+# 備份檔以 gpg 對稱加密（AES-256）後存成 Actions artifact，保留 7 天；明文只存在 runner 的
+# 暫存目錄。每月的還原演練見 restore-drill.yml，還原步驟見 docs/RESTORE_RUNBOOK.md。
+#
+# 需要的 repo secrets：
+#   PRODUCTION_MIGRATION_DATABASE_URL  正式專案的 postgres 管理連線（session pooler），與 migration 共用
+#   BACKUP_ENCRYPTION_PASSPHRASE       加密密碼；repo 擁有者另外保存一份，遺失就無法解密
+# 選用：DISCORD_ALERT_WEBHOOK_URL      失敗時通知 Discord（沒設定就只有 GitHub 的失敗 Email）
+on:
+  schedule:
+    # 錯開整點，避開 GitHub 排程的尖峰（UTC 00:17、06:17、12:17、18:17）
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+env:
+  PRODUCTION_PROJECT_REF: vcbhtlwkzavqvxthicis
+
+jobs:
+  backup:
+    name: 備份正式資料庫
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安裝 PostgreSQL 17 client（pg_dump 版本不能比伺服器舊）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common gnupg
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-17
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+
+      - name: 確認已設定 secrets
+        env:
+          MIGRATION_DATABASE_URL: ${{ secrets.PRODUCTION_MIGRATION_DATABASE_URL }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_ENCRYPTION_PASSPHRASE }}
+        run: |
+          [ -n "$MIGRATION_DATABASE_URL" ] || { echo '::error::沒有設定 PRODUCTION_MIGRATION_DATABASE_URL'; exit 1; }
+          [ -n "$BACKUP_PASSPHRASE" ] || { echo '::error::沒有設定 BACKUP_ENCRYPTION_PASSPHRASE'; exit 1; }
+
+      - name: 連線字串診斷與目標專案確認（不含密碼）
+        env:
+          MIGRATION_DATABASE_URL: ${{ secrets.PRODUCTION_MIGRATION_DATABASE_URL }}
+        run: python3 tools/describe-db-url.py --expect-ref "$PRODUCTION_PROJECT_REF"
+
+      - name: 備份並加密
+        shell: bash
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.PRODUCTION_MIGRATION_DATABASE_URL }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_ENCRYPTION_PASSPHRASE }}
+        run: |
+          pg_dump --version
+          bash tools/db-backup.sh backup | tee -a "$GITHUB_STEP_SUMMARY"
+          ls -l backup
+
+      - name: 存成 artifact（保留 7 天）
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup-${{ github.run_id }}
+          path: backup/
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: 失敗時通知 Discord
+        if: failure()
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_ALERT_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          [ -n "$WEBHOOK" ] || { echo '沒有設定 DISCORD_ALERT_WEBHOOK_URL，只靠 GitHub 的失敗 Email'; exit 0; }
+          python3 - <<'PY'
+          import json, os, urllib.request
+          body = json.dumps({'content': f"🚨 **[安心接送｜正式] 資料庫備份失敗**\n{os.environ['RUN_URL']}",
+                             'allowed_mentions': {'parse': []}}).encode()
+          req = urllib.request.Request(os.environ['WEBHOOK'], data=body, headers={'content-type': 'application/json'})
+          urllib.request.urlopen(req, timeout=10)
+          PY

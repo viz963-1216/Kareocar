@@ -47,6 +47,15 @@
 兩者也可以由平台管理者在畫面上手動執行（「組織管理 → 個資保存與條款」、「補助規則與資格 →
 立即抓取公告」）。
 
+### 備份（GitHub Actions）
+
+| Workflow | 頻率 | 做什麼 |
+|---|---|---|
+| `db-backup.yml` | 每 6 小時 | 正式資料庫的加密邏輯備份，存成 artifact 保留 7 天 |
+| `restore-drill.yml` | 每月 1 日 | 在拋棄式 Postgres 還原最新備份、逐表比對筆數，確認備份沒有中斷 |
+
+加上 Supabase Pro 內含的每日備份。還原步驟與演練紀錄見 [docs/RESTORE_RUNBOOK.md](docs/RESTORE_RUNBOOK.md)。
+
 ## 2. 環境變數與設定
 
 ### Netlify（每個 deploy context 各自設定）
@@ -80,7 +89,9 @@
 | 名稱 | 種類 | 用途 |
 |---|---|---|
 | `STAGING_MIGRATION_DATABASE_URL` | secret | 套用 migration 到 Staging |
-| `PRODUCTION_MIGRATION_DATABASE_URL` | secret | 套用 migration 到 Production（人工觸發） |
+| `PRODUCTION_MIGRATION_DATABASE_URL` | secret | 套用 migration 到 Production（人工觸發）；定時備份也用它 |
+| `BACKUP_ENCRYPTION_PASSPHRASE` | secret | 備份的加密密碼；另存一份在密碼管理器，遺失就無法解密 |
+| `DISCORD_ALERT_WEBHOOK_URL` | secret，選用 | 備份失敗時通知 Discord |
 | `STAGING_URL` | variable，選用 | 每週 ZAP 排程掃描的網址；PR 的掃描不需要 |
 
 ### 平台設定（上線後在畫面上設定）
@@ -133,8 +144,9 @@ Data Scrubber。
       檢查、Discord webhook、Resend 寄件網域，並完成驗收（測試錯誤、測試告警、存活檢查失敗各一次）
 - [ ] **Google Maps**：正式與 Staging 的 `GOOGLE_MAPS_API_KEY`，在 Google Cloud 限制可用的 API
       與用量上限
-- [ ] **Supabase Pro 與 PITR**（#28）：正式專案開啟 point-in-time recovery，在 Staging 做一次還原
-      演練並把步驟寫成文件
+- [ ] **備份與還原演練**（#28）：不加購 PITR，改用 Supabase 每日備份＋每 6 小時的加密備份
+      （見 [docs/RESTORE_RUNBOOK.md](docs/RESTORE_RUNBOOK.md)）。設定 `BACKUP_ENCRYPTION_PASSPHRASE`、
+      手動跑一次 Database backup 與 Restore drill，並在上線前做一次 Supabase 每日備份的還原演練
 - [ ] **Netlify 方案**：正式上線前確認團隊方案與額度（目前降為免費方案時合併不會部署）
 
 ### 正式資料庫
