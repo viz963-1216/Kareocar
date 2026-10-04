@@ -40,6 +40,26 @@
   status = 200
 
 [[redirects]]
+  from = "/api/v2/oauth-start"
+  to = "/.netlify/functions/v2-oauth-start"
+  status = 200
+
+[[redirects]]
+  from = "/api/v2/oauth-callback"
+  to = "/.netlify/functions/v2-oauth-callback"
+  status = 200
+
+[[redirects]]
+  from = "/api/v2/oauth-bind"
+  to = "/.netlify/functions/v2-oauth-bind"
+  status = 200
+
+[[redirects]]
+  from = "/api/v2/login-methods"
+  to = "/.netlify/functions/v2-login-methods"
+  status = 200
+
+[[redirects]]
   from = "/api/v2/admin-reset-password"
   to = "/.netlify/functions/v2-admin-reset-password"
   status = 200

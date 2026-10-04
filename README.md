@@ -19,7 +19,7 @@
 Netlify Functions（netlify/functions/）
    │  驗證 Supabase Auth 的 JWT，以 care_ride_app 角色連線，
    │  每筆交易設定 app.user_id，金額、狀態轉換、通知都由伺服器決定
-   ├──► Supabase Auth（手機＋密碼、建立／停用帳號）
+   ├──► Supabase Auth（手機＋密碼、Google／Facebook、建立／停用帳號）
    ├──► Google Maps（建立預約時定位與算距離，結果存進預約）
    ├──► 政府長照公告（每日排程抓取，產生規則草稿）
    ├──► Sentry（伺服器與前端錯誤，送出前清除個資）

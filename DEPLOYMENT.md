@@ -84,6 +84,19 @@
 - 已不使用的環境變數可以從 Netlify 刪除：`AUTH_PASSWORD_PEPPER`、`PASSWORD_RESET_SMS_WEBHOOK_URL`、
   `PASSWORD_RESET_SMS_WEBHOOK_SECRET`。
 - 超級管理者的建立方式見 supabase/README.md 的「身分驗證」。
+- **Google、Facebook 登入**（#58，Staging 與正式專案各設一次）：
+  - **Authentication → Sign In / Providers → Google**：啟用，填入 Google Cloud 的用戶端 ID 與密鑰
+  - **Authentication → Sign In / Providers → Facebook**：啟用，填入 Meta app 的應用程式編號與密鑰
+  - 同一頁的 **Allow manual linking** 打開（綁定既有帳號、在「我的帳戶」綁定都需要）；
+    **Allow new users to sign up** 保持打開（第一次社群登入會先建立帳號，綁定手機後才能使用）
+  - **Authentication → URL Configuration → Redirect URLs** 加入
+    `https://<正式網域>/api/v2/oauth-callback`；Staging 專案加入 `https://*--kareocar.netlify.app/api/v2/oauth-callback`
+    （Deploy Previews）
+- **Google Cloud**（API 和服務 → 憑證 → 建立 OAuth 用戶端 ID，類型「網頁應用程式」）：已授權的重新導向
+  URI 填 `https://<Supabase 專案 ref>.supabase.co/auth/v1/callback`。OAuth 同意畫面只需要 email、
+  profile，不必送審；要顯示 logo 才需要品牌驗證。
+- **Meta 開發者後台**（建立應用程式 → 使用 Facebook 登入）：有效的 OAuth 重新導向 URI 填同一個
+  Supabase 回呼網址；切換成「上線」前要填隱私權政策網址與資料刪除說明（律師文件完成後）。
 
 ### GitHub
 
@@ -139,8 +152,9 @@ Data Scrubber。
 ### 需要外部帳號或人工決定
 
 - [ ] **律師文件**：個資告知、服務條款完成；在平台設定填入版本與網址
-- [ ] **登入方式**（#58）：不接簡訊廠商。後台重設密碼已完成；Google、Facebook 登入與綁定手機
-      完成後，依 DEPLOYMENT 設定 Google Cloud、Meta 與 Supabase 的登入提供者
+- [ ] **登入方式**（#58）：不接簡訊廠商。程式已完成（後台重設密碼、Google／Facebook 登入與綁定
+      手機）；依上方「Supabase」設定 Google Cloud、Meta 與 Supabase 的登入提供者，並在 Staging 實際
+      走一次：新帳號、綁定既有帳號、我的帳戶綁定與解除
 - [ ] **監控與告警**（#17）：程式端已完成，依「3. 監控與告警」建 Sentry 專案與告警規則、外部存活
       檢查、Discord webhook、Resend 寄件網域，並完成驗收（測試錯誤、測試告警、存活檢查失敗各一次）
 - [ ] **Google Maps**：正式與 Staging 的 `GOOGLE_MAPS_API_KEY`，在 Google Cloud 限制可用的 API

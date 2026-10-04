@@ -35,6 +35,9 @@
         </div>
       </div>
       <button class="btn primary block" id="loginBtn" type="button">登入系統</button>
+      <div class="login-divider"><span>或</span></div>
+      <button class="btn outline block social-login-btn" id="oauthGoogleBtn" type="button">使用 Google 登入</button>
+      <button class="btn outline block social-login-btn" id="oauthFacebookBtn" type="button">使用 Facebook 登入</button>
       <button class="btn outline sm block" id="forgotPasswordBtn" type="button">忘記密碼</button>
       <button class="btn secondary sm block" id="openRegisterBtn" type="button">新增帳號</button>
     </div>
@@ -182,6 +185,28 @@
     <li><strong>需求者、機構負責人</strong>：請聯絡平台管理者</li>
   </ul>
   <div class="login-note">拿到臨時密碼後直接登入，再到「我的帳戶」改成自己的密碼。為了你的帳號安全，重設時對方會確認你的身分。</div>
+</div></div>
+
+<div class="modal" id="oauthBindModal"><div class="modal-panel small">
+  <div class="modal-head"><h3>綁定手機</h3><button class="icon-btn" data-close="oauthBindModal" type="button" aria-label="關閉視窗">×</button></div>
+  <p class="small" id="oauthBindIntro"></p>
+  <div class="oauth-bind-tabs" role="tablist">
+    <button class="btn primary sm" id="oauthBindExistingTab" type="button" role="tab">我已經有帳號</button>
+    <button class="btn outline sm" id="oauthBindNewTab" type="button" role="tab">我是第一次使用</button>
+  </div>
+  <div class="form-grid" id="oauthBindExistingPane">
+    <div class="form-field"><label for="oauthBindPhoneInput">手機號碼</label><input id="oauthBindPhoneInput" inputmode="tel" autocomplete="username" placeholder="原本登入用的手機號碼" /></div>
+    <div class="form-field"><label for="oauthBindPasswordInput">密碼</label><input id="oauthBindPasswordInput" type="password" autocomplete="current-password" placeholder="原本的密碼" /></div>
+    <button class="btn primary" id="oauthBindExistingBtn" type="button">驗證並綁定</button>
+  </div>
+  <div class="form-grid hidden" id="oauthBindNewPane">
+    <div class="form-field"><label for="oauthBindNameInput">姓名</label><input id="oauthBindNameInput" autocomplete="name" /></div>
+    <div class="form-field"><label for="oauthBindEmailInput">電子信箱</label><input id="oauthBindEmailInput" type="email" autocomplete="email" /></div>
+    <div class="form-field"><label for="oauthBindNewPhoneInput">手機號碼</label><input id="oauthBindNewPhoneInput" inputmode="tel" autocomplete="tel" placeholder="09 開頭共 10 碼" /></div>
+    <div class="form-field"><label for="oauthBindNewPasswordInput">設定密碼</label><input id="oauthBindNewPasswordInput" type="password" autocomplete="new-password" placeholder="至少 8 碼" /></div>
+    <button class="btn primary" id="oauthBindNewBtn" type="button">建立帳號</button>
+  </div>
+  <div class="login-note">手機號碼用來聯絡接送事宜；綁定後也可以用手機＋密碼登入。</div>
 </div></div>
 
 <div class="modal" id="tempPasswordModal"><div class="modal-panel small">
