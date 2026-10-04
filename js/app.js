@@ -6480,8 +6480,12 @@ async function submitOAuthBind_(mode){
   try{
     const result=await backendJsonPost(APP_CONFIG.oauthBindUrl,body);
     markBackendSession(true);
-    // 綁定既有帳號：已用手機密碼登入，再回 Google／Facebook 確認一次就完成綁定
-    if(result?.data?.redirectUrl){location.assign(result.data.redirectUrl);return;}
+    // 綁定既有帳號：已用手機密碼登入，再回 Google／Facebook 確認一次就完成綁定。
+    // 這一步沒完成的話帳號不會綁上，所以轉過去之前先講清楚
+    if(result?.data?.redirectUrl){
+      showToast('密碼正確。接下來會再到 Google／Facebook 確認一次：請選同一個帳號並按「繼續」，才會完成綁定');
+      const url=result.data.redirectUrl;setTimeout(()=>location.assign(url),2500);return;
+    }
     location.replace('/');
   }catch(error){showToast(error?.message||'綁定失敗');}
   finally{setButtonBusy(btn,false);}
