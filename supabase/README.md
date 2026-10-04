@@ -141,6 +141,9 @@ SELECT；寫入只經檢查身分與狀態的函式，連有漏洞的 handler �
 | `GET /api/health` | 設定與資料庫連線狀態 |
 | `POST /api/v2/password-login`、`logout`、`session` | 登入、登出、換新 token |
 | `POST /api/v2/register-requester` | 需求者註冊 |
+| `GET /api/v2/oauth-start`、`oauth-callback` | Google、Facebook 登入（PKCE；尚未綁定手機時轉到綁定畫面） |
+| `GET`／`POST /api/v2/oauth-bind` | 社群帳號第一次登入後綁定手機：綁定既有帳號（要密碼）或建立需求者 |
+| `GET`／`POST /api/v2/login-methods` | 我的帳戶：查看、綁定、解除綁定 Google／Facebook（手機＋密碼一定保留） |
 | `POST /api/v2/admin-reset-password` | 後台重設密碼：平台管理者重設任何人、負責人重設自己機構的調度員與司機；回傳一次性臨時密碼（見 0013） |
 | `POST /api/v2/update-account` | 改密碼、手機 |
 | `POST /api/v2/create-staff` | 機構負責人建立人員帳號 |

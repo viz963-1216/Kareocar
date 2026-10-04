@@ -13,6 +13,10 @@
  *   fx.addUser('USR-A', '0912000001', 'Password123!');
  *   handler({ httpMethod: 'POST', headers: fx.headersFor('USR-A'), body })
  *   fx.cookiesFrom(response)  // 從回應的 Set-Cookie 取出 cookie 標頭，供下一個請求使用
+ *
+ * 社群登入（#58）：fx.oauthLogin() 模擬「使用者在 Google／Facebook 完成登入、Supabase 轉回
+ * 回呼網址」，回傳授權碼；fx.completeLink() 模擬綁定時的同一段。授權碼只能以對應的
+ * code_verifier 換一次 session（PKCE），和 Supabase 相同。
  */
 const crypto = require('node:crypto');
 const path = require('node:path');
@@ -29,6 +33,24 @@ const supabaseAuth = require(path.join(FN, '_supabase-auth.js'));
 const byPhone = new Map();     // +8869… → { id, password }
 const refreshTokens = new Map(); // refresh token → userId
 const calls = [];               // 呼叫紀錄，測試可以斷言「有撤銷 refresh token」等行為
+const identities = new Map();   // provider:subject → { userId, identityId, email }
+const profiles = new Map();     // 社群登入建立的 userId → { email, name }
+const codes = new Map();        // 授權碼 → { userId, challenge, provider }
+const links = new Map();        // 綁定請求 → { userId, provider, challenge }
+const sha256url = (v) => crypto.createHash('sha256').update(String(v)).digest('base64url');
+const subOf = (token) => JSON.parse(Buffer.from(String(token).split('.')[1], 'base64url').toString()).sub;
+const phoneOf = (userId) => { for (const [phone, u] of byPhone) if (u.id === userId) return phone; return null; };
+function identitiesOf(userId) {
+  const list = [];
+  if (phoneOf(userId)) list.push({ identityId: `phone-${userId}`, provider: 'phone', email: '' });
+  for (const [key, i] of identities) if (i.userId === userId) list.push({ identityId: i.identityId, provider: key.split(':')[0], email: i.email });
+  return list;
+}
+function newCode(userId, challenge, provider) {
+  const code = crypto.randomBytes(12).toString('hex');
+  codes.set(code, { userId, challenge, provider });
+  return code;
+}
 
 const b64 = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
 
@@ -78,6 +100,13 @@ const fakeProvider = {
   async updateUser(userId, { phoneE164, password } = {}) {
     calls.push(['updateUser', userId, Boolean(phoneE164), Boolean(password)]);
     const entry = [...byPhone.entries()].find(([, u]) => u.id === userId);
+    if (!entry && profiles.has(userId) && phoneE164) {
+      // 社群登入建立、還沒有手機的帳號：加上手機與密碼
+      const owner = byPhone.get(phoneE164);
+      if (owner && owner.id !== userId) throw Object.assign(new Error('此手機號碼已經註冊'), { code: 'PHONE_EXISTS' });
+      byPhone.set(phoneE164, { id: userId, password: password || '' });
+      return;
+    }
     if (!entry) throw Object.assign(new Error('找不到帳號'), { code: 'AUTH_PROVIDER_ERROR' });
     const [oldPhone, u] = entry;
     if (password) u.password = password;
@@ -86,6 +115,35 @@ const fakeProvider = {
   async deleteUser(userId) {
     calls.push(['deleteUser', userId]);
     for (const [phone, u] of byPhone) if (u.id === userId) byPhone.delete(phone);
+    for (const [key, i] of identities) if (i.userId === userId) identities.delete(key);
+    profiles.delete(userId);
+  },
+  async exchangeCode(code, verifier) {
+    calls.push(['exchangeCode']);
+    const pending = codes.get(code);
+    codes.delete(code);   // 授權碼只能用一次
+    if (!pending || sha256url(verifier) !== pending.challenge) {
+      throw Object.assign(new Error('社群登入失敗'), { code: 'OAUTH_FAILED' });
+    }
+    const p = profiles.get(pending.userId) || {};
+    const own = [...identities.values()].find((i) => i.userId === pending.userId);
+    return { ...issue(pending.userId), profile: { authUserId: pending.userId, email: (own && own.email) || p.email || '', name: p.name || '' } };
+  },
+  async linkIdentityUrl(accessToken, { provider, redirectTo, codeChallenge }) {
+    calls.push(['linkIdentityUrl', provider, codeChallenge]);
+    const token = crypto.randomBytes(8).toString('hex');
+    links.set(token, { userId: subOf(accessToken), provider, challenge: codeChallenge, redirectTo });
+    return `https://synthetic-project.supabase.co/auth/v1/link?req=${token}`;
+  },
+  async listIdentities(accessToken) {
+    calls.push(['listIdentities']);
+    return identitiesOf(subOf(accessToken));
+  },
+  async unlinkIdentity(accessToken, identityId) {
+    calls.push(['unlinkIdentity']);
+    const userId = subOf(accessToken);
+    if (identitiesOf(userId).length < 2) throw Object.assign(new Error('至少要保留一種登入方式'), { code: 'VALIDATION_ERROR' });
+    for (const [key, i] of identities) if (i.userId === userId && i.identityId === identityId) identities.delete(key);
   },
   async signOut(accessToken, scope) {
     calls.push(['signOut', scope]);
@@ -124,6 +182,38 @@ geo.setProvider({
     return { distanceMeters: d, durationSeconds: Math.round(d / 8) };
   }
 });
+
+/**
+ * 模擬在 Google／Facebook 完成登入後，Supabase 轉回回呼網址：這個社群身分已經掛在某個帳號上
+ * 就用那個帳號，否則 Supabase 自動建立一個新帳號。回傳授權碼（綁在 codeChallenge 上）。
+ */
+function oauthLogin({ provider, subject, email = '', name = '', codeChallenge }) {
+  const key = `${provider}:${subject}`;
+  let entry = identities.get(key);
+  if (!entry) {
+    const userId = crypto.randomUUID();
+    entry = { userId, identityId: crypto.randomUUID(), email };
+    identities.set(key, entry);
+    profiles.set(userId, { email, name });
+  }
+  return newCode(entry.userId, codeChallenge, provider);
+}
+
+/** 模擬綁定流程的授權完成。社群身分已經在別人身上時，回傳 Supabase 的錯誤參數。 */
+function completeLink(url, { subject, email = '' }) {
+  const req = new URL(url).searchParams.get('req');
+  const link = links.get(req);
+  links.delete(req);
+  if (!link) throw new Error('沒有這個綁定請求');
+  const key = `${link.provider}:${subject}`;
+  const owner = identities.get(key);
+  if (owner && owner.userId !== link.userId) return { error: 'server_error', error_code: 'identity_already_exists' };
+  identities.set(key, { userId: link.userId, identityId: crypto.randomUUID(), email });
+  return { code: newCode(link.userId, link.challenge, link.provider) };
+}
+
+/** 從授權網址取出 code_challenge（測試用，模擬 Supabase 記住它）。 */
+function challengeFrom(url) { return new URL(url).searchParams.get('code_challenge'); }
 
 /** 在假的 Supabase Auth 裡建立帳號（資料庫的 users 列由測試自己建立，id 要相同）。 */
 function addUser(userId, phone, password) {
@@ -210,4 +300,5 @@ function adapt(mod) {
   };
 }
 
-module.exports = { SECRET, mintAccessToken, addUser, setSeedPassword, adapt, headersFor, cookiesFrom, setCookieLines, calls, geoCalls, toE164 };
+module.exports = { SECRET, mintAccessToken, addUser, setSeedPassword, adapt, headersFor, cookiesFrom, setCookieLines, calls, geoCalls, toE164,
+  oauthLogin, completeLink, challengeFrom, identitiesOf };

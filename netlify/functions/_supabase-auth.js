@@ -3,9 +3,11 @@
 /**
  * Supabase Auth 的窄介面。
  *
- * 密碼、token 簽發與撤銷都由 Supabase Auth 負責；這支模組只做兩件事：
+ * 密碼、token 簽發與撤銷都由 Supabase Auth 負責；這支模組只做三件事：
  *   1. 呼叫 Supabase Auth 的 HTTP API（登入、換 token、建立／更新使用者、登出）
- *   2. 驗證 access token（JWT）的簽章與有效期
+ *   2. Google、Facebook 登入（#58）：產生授權網址（PKCE）、以授權碼換 session、
+ *      綁定與解除綁定登入方式
+ *   3. 驗證 access token（JWT）的簽章與有效期
  *
  * 測試時用 setProvider() 換成假的實作（supabase/tests/_auth-fixture.js），CI 不需要
  * 啟動 Supabase Auth。JWT 驗證本身不換：測試用測試金鑰簽 HS256，走的是跟正式
@@ -85,6 +87,13 @@ function providerError(result, fallbackCode, fallbackMessage) {
   if (/provider_disabled|signup_disabled|phone_provider|sms_send_failed|hook_/.test(code)) {
     return authError('AUTH_PROVIDER_MISCONFIGURED', '登入服務設定不完整，請聯絡平台管理者');
   }
+  if (/identity_already_exists/.test(code)) {
+    return authError('IDENTITY_IN_USE', '這個社群帳號已經綁定在其他帳號上');
+  }
+  if (/manual_linking_disabled|single_identity_not_deletable/.test(code)) {
+    return authError(/single_identity/.test(code) ? 'VALIDATION_ERROR' : 'AUTH_PROVIDER_MISCONFIGURED',
+      /single_identity/.test(code) ? '至少要保留一種登入方式' : '登入服務尚未啟用帳號綁定，請聯絡平台管理者');
+  }
   if (/phone_exists|user_already_exists|email_exists/.test(code) || result.status === 422 && /already/i.test(String(result.data && result.data.msg))) {
     return authError('PHONE_EXISTS', '此手機號碼已經註冊');
   }
@@ -103,6 +112,50 @@ function tokensFrom(data) {
     expiresIn: Number(data.expires_in) || 3600,
     authUserId: data.user && data.user.id ? String(data.user.id) : null
   };
+}
+
+/** Supabase 使用者物件裡，社群登入用得到的欄位（不含 token）。 */
+function profileFrom(user) {
+  const meta = (user && user.user_metadata) || {};
+  return {
+    authUserId: user && user.id ? String(user.id) : null,
+    email: String((user && user.email) || meta.email || '').trim().toLowerCase(),
+    name: String(meta.full_name || meta.name || '').trim().slice(0, 80)
+  };
+}
+
+function identitiesFrom(user) {
+  return ((user && user.identities) || []).map((i) => ({
+    identityId: String(i.identity_id || i.id || ''),
+    provider: String(i.provider || ''),
+    email: String((i.identity_data && i.identity_data.email) || i.email || '').toLowerCase()
+  }));
+}
+
+/* ---------------------------------------------------------- 社群登入（PKCE） */
+
+const OAUTH_PROVIDERS = ['google', 'facebook'];
+
+function assertOAuthProvider(name) {
+  const p = String(name || '').toLowerCase();
+  if (!OAUTH_PROVIDERS.includes(p)) throw authError('VALIDATION_ERROR', '不支援的登入方式');
+  return p;
+}
+
+/** 產生 PKCE 的 code_verifier 與 code_challenge（S256）。 */
+function pkcePair() {
+  const verifier = crypto.randomBytes(48).toString('base64url');
+  const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+  return { verifier, challenge };
+}
+
+/** 瀏覽器要前往的 Supabase 授權網址（Supabase 再轉到 Google／Facebook）。 */
+function authorizeUrl({ provider, redirectTo, codeChallenge }) {
+  const q = new URLSearchParams({
+    provider: assertOAuthProvider(provider), redirect_to: redirectTo,
+    code_challenge: codeChallenge, code_challenge_method: 's256'
+  });
+  return `${baseUrl()}/auth/v1/authorize?${q}`;
 }
 
 const httpProvider = {
@@ -155,6 +208,41 @@ const httpProvider = {
     if (result.status !== 204 && result.status !== 200 && result.status !== 401) {
       throw providerError(result, 'AUTH_PROVIDER_ERROR', '登出失敗');
     }
+  },
+
+  /** 以授權碼與 code_verifier 換 session（PKCE）。驗證碼不符或用過就失敗。 */
+  async exchangeCode(authCode, codeVerifier) {
+    const result = await call('/auth/v1/token?grant_type=pkce',
+      { key: env('SUPABASE_ANON_KEY'), body: { auth_code: authCode, code_verifier: codeVerifier } });
+    if (result.status !== 200) throw providerError(result, 'OAUTH_FAILED', '社群登入失敗，請再試一次');
+    return { ...tokensFrom(result.data), profile: profileFrom(result.data && result.data.user) };
+  },
+
+  /** 已登入的使用者綁定新的登入方式：回傳要前往的授權網址。 */
+  async linkIdentityUrl(accessToken, { provider, redirectTo, codeChallenge }) {
+    const q = new URLSearchParams({
+      provider: assertOAuthProvider(provider), redirect_to: redirectTo, skip_http_redirect: 'true',
+      code_challenge: codeChallenge, code_challenge_method: 's256'
+    });
+    const result = await call(`/auth/v1/user/identities/authorize?${q}`,
+      { method: 'GET', key: env('SUPABASE_ANON_KEY'), bearer: accessToken });
+    if (result.status !== 200 || !result.data || !result.data.url) {
+      throw providerError(result, 'OAUTH_FAILED', '無法開始綁定，請確認登入服務已啟用綁定功能');
+    }
+    return String(result.data.url);
+  },
+
+  /** 這個使用者目前的登入方式（Supabase 的 identities）。 */
+  async listIdentities(accessToken) {
+    const result = await call('/auth/v1/user', { method: 'GET', key: env('SUPABASE_ANON_KEY'), bearer: accessToken });
+    if (result.status !== 200) throw providerError(result, 'SESSION_INVALID', '登入工作階段已失效，請重新登入');
+    return identitiesFrom(result.data);
+  },
+
+  async unlinkIdentity(accessToken, identityId) {
+    const result = await call(`/auth/v1/user/identities/${encodeURIComponent(identityId)}`,
+      { method: 'DELETE', key: env('SUPABASE_ANON_KEY'), bearer: accessToken });
+    if (result.status !== 200 && result.status !== 204) throw providerError(result, 'OAUTH_FAILED', '解除綁定失敗');
   },
 
   async fetchJwks() {
@@ -240,5 +328,10 @@ module.exports = {
   updateUser: (...a) => provider.updateUser(...a),
   deleteUser: (...a) => provider.deleteUser(...a),
   signOut: (...a) => provider.signOut(...a),
+  exchangeCode: (...a) => provider.exchangeCode(...a),
+  linkIdentityUrl: (...a) => provider.linkIdentityUrl(...a),
+  listIdentities: (...a) => provider.listIdentities(...a),
+  unlinkIdentity: (...a) => provider.unlinkIdentity(...a),
+  OAUTH_PROVIDERS, assertOAuthProvider, pkcePair, authorizeUrl,
   verifyAccessToken, setProvider, getProvider, authError
 };

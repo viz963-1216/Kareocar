@@ -52,8 +52,9 @@ function handleError(error) {
   const userStatus = code === 'INVALID_CREDENTIALS' ? 401
     : code === 'LOGIN_RATE_LIMITED' ? 429
     : code === 'FORBIDDEN' || code === 'COLLECTION_FORBIDDEN' || code === 'TABLE_FORBIDDEN' || code === 'CONSENT_REQUIRED' ? 403
-    : code === 'BOOKING_CONFLICT' || code === 'TRIP_CONFLICT' ? 409
-    : code === 'SESSION_INVALID' || code === 'SESSION_EXPIRED' || code === 'SESSION_REQUIRED' ? 401
+    : code === 'BOOKING_CONFLICT' || code === 'TRIP_CONFLICT' || code === 'IDENTITY_IN_USE' ? 409
+    : code === 'SESSION_INVALID' || code === 'SESSION_EXPIRED' || code === 'SESSION_REQUIRED' || code === 'BIND_EXPIRED' ? 401
+    : code === 'OAUTH_FAILED' ? 400
     : code === 'VALIDATION_ERROR' || code === 'ADDRESS_NOT_FOUND' || code === 'ROUTE_NOT_FOUND' || code === 'WEAK_PASSWORD' || code === 'ACCOUNT_EXISTS' || code === 'PHONE_EXISTS' || code === 'MEMBERSHIP_EXISTS' || code === 'OWNER_EXISTS' ? 400
     : code === 'CURRENT_PASSWORD_REQUIRED' ? 400
     : code === 'CONFIG_MISSING' || code === 'CONFIG_INVALID' || code === 'AUTH_PROVIDER_UNAVAILABLE' || code === 'AUTH_PROVIDER_MISCONFIGURED' || code === 'GEO_PROVIDER_UNAVAILABLE' ? 503

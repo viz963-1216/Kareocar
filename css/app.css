@@ -1878,3 +1878,8 @@ body.driver-mode .route-row.active{border-color:#9AC5F5;background:var(--cr-blue
 
 /* 後台重設密碼產生的臨時密碼（#58）：等寬、放大，方便口頭或手寫轉交 */
 .temp-password{margin:14px 0;padding:14px;border-radius:12px;background:#f3f6fa;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:24px;letter-spacing:2px;text-align:center;user-select:all;word-break:break-all}
+
+/* Google、Facebook 登入（#58） */
+.login-divider{display:flex;align-items:center;gap:10px;margin:4px 0;color:var(--muted);font-size:12px}.login-divider::before,.login-divider::after{content:"";flex:1;height:1px;background:#e2e8f0}
+.oauth-bind-tabs{display:flex;gap:8px;margin:10px 0 14px}
+.login-method-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid #eef2f6}.login-method-row:last-child{border-bottom:0}

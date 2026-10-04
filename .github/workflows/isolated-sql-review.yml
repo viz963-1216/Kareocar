@@ -124,6 +124,9 @@ jobs:
       - name: 同意紀錄、保存期限匿名化與刪除申請整合測試（條款改版要求重新同意、到期資料匿名化、刪除申請狀態與執行、稽核）
         run: bash supabase/tests/run-privacy.sh
 
+      - name: Google、Facebook 登入整合測試（PKCE、偽造／重放的回呼、綁定前不能使用、綁定既有帳號要密碼、同一社群帳號不能綁兩人、解除綁定）
+        run: bash supabase/tests/run-oauth.sh
+
       - name: 福利規則排程抓取整合測試（抓取紀錄、內容沒變不產生草稿、差異、核准取代、失敗告警且現行版本不變）
         run: bash supabase/tests/run-benefit-fetch.sh
 

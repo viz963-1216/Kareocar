@@ -32,6 +32,9 @@ const APP_CONFIG = Object.freeze({
   cancelBookingUrl: '/api/v2/cancel-booking',
   tripExecuteUrl: '/api/v2/trip-execute',
   identityAdminResetPasswordUrl: '/api/v2/admin-reset-password',
+  oauthStartUrl: '/api/v2/oauth-start',
+  oauthBindUrl: '/api/v2/oauth-bind',
+  loginMethodsUrl: '/api/v2/login-methods',
   identityUpdateAccountUrl: '/api/v2/update-account',
   organizationApplyUrl: '/api/v2/organization-apply',
   geocodeCheckUrl: '/api/v2/geocode-check',
@@ -5756,7 +5759,7 @@ function genericAccount(){
     ${systemReportAccountCard()}${appVersionNote()}
     <button type="button" class="btn danger block account-logout-btn">登出目前帳號</button>`;
 }
-function accountView(){ return (role()==='driver'?driverAccount():role()==='requester'?requesterAccount():genericAccount())+(Identity.isSuperAdmin()?'':orgApplicationCard()+deletionRequestCard()); }
+function accountView(){ return (role()==='driver'?driverAccount():role()==='requester'?requesterAccount():genericAccount())+loginMethodsCard_()+(Identity.isSuperAdmin()?'':orgApplicationCard()+deletionRequestCard()); }
 // 刪除帳號與個資申請（#26）：由平台管理者處理；核准後預約與行程匿名化、帳號停用
 const DELETION_STATUS_LABELS=Object.freeze({pending:'處理中',cancelled:'已撤回',rejected:'已駁回',completed:'已完成'});
 function deletionRequestCard(){
@@ -5975,7 +5978,7 @@ function platformMembers(){
   const isRequesterHub=org?.id===APP_CONFIG.requesterOrganizationId||org?.type==='requester_hub';
   const statusClass={active:'green',suspended:'gray',revoked:'gray'};
   if(isRequesterHub){
-    return `<div class="page-head"><div><h2>需求者成員</h2><p>需求者可自行透過新增帳號、谷歌、蘋果或臉書登入加入；平台超級管理者也可以替既有公司成員額外新增「需求者」身分。</p></div></div><section class="card"><div class="card-head"><div><h3>需求者組織規則</h3><p>角色固定為需求者。平台超級管理者可查看或調整組織身分狀態；公司工作者也可以在同一個使用者上同時擁有需求者組織身分。</p></div><span class="pill purple">${memberships.filter(m=>Identity.membershipStatus(m)==='active').length} 人</span></div></section><section class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>姓名</th><th>角色</th><th>手機</th><th>Membership</th><th>帳號</th><th>操作</th></tr></thead><tbody>${memberships.map(m=>{const u=store.state.users.find(x=>x.id===m.userId),status=Identity.membershipStatus(m);return `<tr><td><strong>${escapeHTML(u?.name||'未知使用者')}</strong><br><span class="muted small">${escapeHTML(u?.email||'')}</span></td><td><span class="pill purple">需求者</span></td><td>${formatPhone(u?.phone||'')}</td><td><select class="inline-select membership-status-select" data-membership="${m.id}">${membershipStatusOptions(m)}</select><div style="margin-top:5px"><span class="pill ${statusClass[status]||'gray'}">${MEMBERSHIP_STATUS_LABELS[status]||status}</span></div></td><td><span class="pill ${u?.active?'green':'gray'}">${u?.active?'帳號啟用':'帳號停用'}</span></td><td><button type="button" class="btn outline sm membership-history-btn" data-membership="${m.id}">異動歷史</button> <button type="button" class="btn outline sm platform-edit-member-btn" data-membership="${m.id}">編輯姓名／手機</button> ${resetPasswordButton(u?.id)}</td></tr>`;}).join('')||'<tr><td colspan="6"><div class="empty">目前還沒有需求者</div></td></tr>'}</tbody></table></div></section>`;
+    return `<div class="page-head"><div><h2>需求者成員</h2><p>需求者可自行新增帳號，或用 Google、Facebook 登入後綁定手機加入；平台超級管理者也可以替既有公司成員額外新增「需求者」身分。</p></div></div><section class="card"><div class="card-head"><div><h3>需求者組織規則</h3><p>角色固定為需求者。平台超級管理者可查看或調整組織身分狀態；公司工作者也可以在同一個使用者上同時擁有需求者組織身分。</p></div><span class="pill purple">${memberships.filter(m=>Identity.membershipStatus(m)==='active').length} 人</span></div></section><section class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>姓名</th><th>角色</th><th>手機</th><th>Membership</th><th>帳號</th><th>操作</th></tr></thead><tbody>${memberships.map(m=>{const u=store.state.users.find(x=>x.id===m.userId),status=Identity.membershipStatus(m);return `<tr><td><strong>${escapeHTML(u?.name||'未知使用者')}</strong><br><span class="muted small">${escapeHTML(u?.email||'')}</span></td><td><span class="pill purple">需求者</span></td><td>${formatPhone(u?.phone||'')}</td><td><select class="inline-select membership-status-select" data-membership="${m.id}">${membershipStatusOptions(m)}</select><div style="margin-top:5px"><span class="pill ${statusClass[status]||'gray'}">${MEMBERSHIP_STATUS_LABELS[status]||status}</span></div></td><td><span class="pill ${u?.active?'green':'gray'}">${u?.active?'帳號啟用':'帳號停用'}</span></td><td><button type="button" class="btn outline sm membership-history-btn" data-membership="${m.id}">異動歷史</button> <button type="button" class="btn outline sm platform-edit-member-btn" data-membership="${m.id}">編輯姓名／手機</button> ${resetPasswordButton(u?.id)}</td></tr>`;}).join('')||'<tr><td colspan="6"><div class="empty">目前還沒有需求者</div></td></tr>'}</tbody></table></div></section>`;
   }
   const ownerMembership=memberships.find(m=>m.role==='owner'&&Identity.membershipStatus(m)!=='revoked');
   return `<div class="page-head"><div><h2>組織成員</h2><p>${escapeHTML(org?.name||'-')}・公司組織身分只包含負責人、司機、調度員。公司停權＝撤銷該公司工作帳號；平台超級管理者可查看歷史、恢復組織身分，或讓該使用者加入其他公司。</p></div><div class="page-actions"><button type="button" class="btn primary" id="openAddStaffBtn">＋ 新增組織成員</button></div></div><section class="card"><div class="card-head"><div><h3>負責人規則</h3><p>${ownerMembership?'目前已有負責人；平台超級管理者可在「組織管理」直接指定其他成員接任。':'此組織尚未指定負責人，可在「組織管理」直接指定。'}</p></div><span class="pill ${ownerMembership?'green':'yellow'}">${ownerMembership?'1 / 1':'0 / 1'}</span></div></section><section class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>姓名</th><th>角色</th><th>手機</th><th>需求者</th><th>Membership</th><th>帳號</th><th>操作</th></tr></thead><tbody>${memberships.map(m=>{const u=store.state.users.find(x=>x.id===m.userId),status=Identity.membershipStatus(m),isRequester=!!u&&Identity.hasRequesterIdentity(u.id);return `<tr><td><strong>${escapeHTML(u?.name||'未知使用者')}</strong></td><td><select class="inline-select membership-role-select" data-membership="${m.id}"><option value="owner" ${m.role==='owner'?'selected':''}>負責人</option><option value="dispatcher" ${m.role==='dispatcher'?'selected':''}>調度人員</option><option value="driver" ${m.role==='driver'?'selected':''}>司機</option></select></td><td>${formatPhone(u?.phone||'')}</td><td><span class="pill ${isRequester?'purple':'gray'}">${isRequester?'是':'否'}</span><div style="margin-top:6px"><button type="button" class="btn ${isRequester?'danger':'outline'} sm platform-requester-toggle-btn" data-user="${u?.id||''}" data-enabled="${isRequester?'false':'true'}">${isRequester?'移除需求者':'＋需求者身分'}</button></div></td><td><select class="inline-select membership-status-select" data-membership="${m.id}">${membershipStatusOptions(m)}</select><div style="margin-top:5px"><span class="pill ${statusClass[status]||'gray'}">${MEMBERSHIP_STATUS_LABELS[status]||status}</span></div></td><td><span class="pill ${status==='revoked'?'gray':'green'}">${status==='revoked'?'工作帳號已撤銷':'工作帳號有效'}</span></td><td><button type="button" class="btn outline sm membership-history-btn" data-membership="${m.id}">異動歷史</button> <button type="button" class="btn outline sm platform-edit-member-btn" data-membership="${m.id}">編輯成員</button> ${resetPasswordButton(u?.id)}</td></tr>`;}).join('')||'<tr><td colspan="7"><div class="empty">此組織目前沒有成員</div></td></tr>'}</tbody></table></div></section>`;
@@ -6436,6 +6439,74 @@ async function saveStaff(){
   }catch(error){showToast(error?.message||'建立帳號失敗');}
   finally{setButtonBusy(btn,false);}
 }
+// Google、Facebook 登入（#58）：按鈕連到自己的 API，token 只在 HttpOnly cookie
+const OAUTH_LABELS={google:'Google',facebook:'Facebook'};
+const LOGIN_ERROR_MESSAGES={cancelled:'已取消社群登入',expired:'登入逾時，請再試一次',identity_in_use:'這個社群帳號已經綁定在其他帳號上',account_disabled:'此帳號已停用，請聯絡平台管理者',retry:'請再試一次',failed:'社群登入失敗，請再試一次或改用手機登入'};
+function startSocialLogin_(provider){location.assign(`${APP_CONFIG.oauthStartUrl}?provider=${encodeURIComponent(provider)}`);}
+async function getJson_(url){
+  const response=await apiFetch(url,{method:'GET',headers:{Accept:'application/json'},cache:'no-store'});
+  const result=await response.json().catch(()=>null);
+  if(!response.ok||!result?.ok)throw backendApiError(result?.error?.message||`後端請求失敗（HTTP ${response.status}）`,result?.error?.code||`HTTP_${response.status}`);
+  return result.data;
+}
+async function handleOAuthReturn_(){
+  const params=new URLSearchParams(location.search);
+  const err=params.get('login_error'),bind=params.get('bind'),linked=params.get('linked');
+  if(!err&&!bind&&!linked)return;
+  history.replaceState(null,'',location.pathname);
+  if(err)showToast(LOGIN_ERROR_MESSAGES[err]||LOGIN_ERROR_MESSAGES.failed);
+  if(linked)showToast(`已綁定 ${OAUTH_LABELS[linked]||'社群帳號'} 登入`);
+  if(bind&&!Identity.currentUser())await openOAuthBind_();
+}
+async function openOAuthBind_(){
+  try{
+    const d=await getJson_(APP_CONFIG.oauthBindUrl);
+    $('oauthBindIntro').textContent=`你用 ${OAUTH_LABELS[d.provider]||'社群帳號'} 登入${d.email?`（${d.email}）`:''}。第一次使用，請先綁定手機：`;
+    $('oauthBindNameInput').value=d.name||'';$('oauthBindEmailInput').value=d.email||'';
+    setOAuthBindMode_('existing');openModal('oauthBindModal');
+  }catch(error){showToast(error?.message||'綁定時間已過，請重新登入');}
+}
+function setOAuthBindMode_(mode){
+  const existing=mode==='existing';
+  $('oauthBindExistingPane').classList.toggle('hidden',!existing);$('oauthBindNewPane').classList.toggle('hidden',existing);
+  $('oauthBindExistingTab').className=`btn ${existing?'primary':'outline'} sm`;$('oauthBindNewTab').className=`btn ${existing?'outline':'primary'} sm`;
+}
+async function submitOAuthBind_(mode){
+  const btn=$(mode==='existing'?'oauthBindExistingBtn':'oauthBindNewBtn');
+  const body=mode==='existing'
+    ?{mode,phone:digitsOnly($('oauthBindPhoneInput').value),password:$('oauthBindPasswordInput').value}
+    :{mode,name:$('oauthBindNameInput').value.trim(),email:$('oauthBindEmailInput').value.trim(),phone:digitsOnly($('oauthBindNewPhoneInput').value),password:$('oauthBindNewPasswordInput').value};
+  setButtonBusy(btn,true,'處理中…');
+  try{
+    const result=await backendJsonPost(APP_CONFIG.oauthBindUrl,body);
+    markBackendSession(true);
+    // 綁定既有帳號：已用手機密碼登入，再回 Google／Facebook 確認一次就完成綁定
+    if(result?.data?.redirectUrl){location.assign(result.data.redirectUrl);return;}
+    location.replace('/');
+  }catch(error){showToast(error?.message||'綁定失敗');}
+  finally{setButtonBusy(btn,false);}
+}
+function loginMethodsCard_(){
+  return `<section class="card" id="loginMethodsCard"><div class="card-head"><div><h3>登入方式</h3><p>手機＋密碼會一直保留；也可以綁定 Google、Facebook 登入。</p></div></div><div class="meta" id="loginMethodsBody">載入中…</div></section>`;
+}
+async function loadLoginMethods_(){
+  const body=$('loginMethodsBody');if(!body)return;
+  try{
+    const d=await getJson_(APP_CONFIG.loginMethodsUrl);
+    body.innerHTML=`<div class="login-method-row"><span>手機＋密碼</span><span class="pill green">使用中</span></div>`+d.social.map(s=>`<div class="login-method-row"><span>${escapeHTML(OAUTH_LABELS[s.provider]||s.provider)}${s.email?`<br><span class="muted small">${escapeHTML(s.email)}</span>`:''}</span>${s.linked?`<button type="button" class="btn outline sm login-method-unlink-btn" data-provider="${escapeHTML(s.provider)}">解除綁定</button>`:`<button type="button" class="btn primary sm login-method-link-btn" data-provider="${escapeHTML(s.provider)}">綁定</button>`}</div>`).join('');
+    body.querySelectorAll('.login-method-link-btn').forEach(btn=>btn.addEventListener('click',async()=>{
+      setButtonBusy(btn,true,'前往中…');
+      try{const r=await backendJsonPost(APP_CONFIG.loginMethodsUrl,{action:'link',provider:btn.dataset.provider});location.assign(r.data.url);}
+      catch(error){showToast(error?.message||'無法開始綁定');setButtonBusy(btn,false);}
+    }));
+    body.querySelectorAll('.login-method-unlink-btn').forEach(btn=>btn.addEventListener('click',async()=>{
+      if(!confirm(`解除綁定 ${OAUTH_LABELS[btn.dataset.provider]||''}？之後就不能用它登入，手機＋密碼不受影響。`))return;
+      setButtonBusy(btn,true,'處理中…');
+      try{await backendJsonPost(APP_CONFIG.loginMethodsUrl,{action:'unlink',provider:btn.dataset.provider});showToast('已解除綁定');loadLoginMethods_();}
+      catch(error){showToast(error?.message||'解除綁定失敗');setButtonBusy(btn,false);}
+    }));
+  }catch(error){body.textContent=error?.message||'無法載入登入方式';}
+}
 function resetPasswordButton(userId){
   return userId?`<button type="button" class="btn outline sm reset-password-btn" data-user="${escapeHTML(userId)}">重設密碼</button>`:'';
 }
@@ -6839,6 +6910,7 @@ function bindViewEvents(){
   document.querySelectorAll('.resolve-trip-issue-btn').forEach(btn=>btn.addEventListener('click',()=>openResolveTripIssue(btn.dataset.id)));
   $('kpiDateInput')?.addEventListener('change',e=>{kpiDate=e.target.value||preferredOperationalDate();render();});
   document.querySelector('.account-logout-btn')?.addEventListener('click',logout);
+  if($('loginMethodsBody'))loadLoginMethods_();
   $('saveSuperAdminAccountBtn')?.addEventListener('click',updateCurrentSuperAdminAccount);
   $('profilePhotoInput')?.addEventListener('change',e=>saveProfilePhoto(e.target.files?.[0]));
   $('removeProfilePhotoBtn')?.addEventListener('click',removeProfilePhoto);
@@ -6913,6 +6985,9 @@ $('confirmRegisterBtn')?.addEventListener('click',()=>{
   });
 });
 $('forgotPasswordBtn')?.addEventListener('click',openForgotPassword);
+$('oauthGoogleBtn')?.addEventListener('click',()=>startSocialLogin_('google'));$('oauthFacebookBtn')?.addEventListener('click',()=>startSocialLogin_('facebook'));
+$('oauthBindExistingTab')?.addEventListener('click',()=>setOAuthBindMode_('existing'));$('oauthBindNewTab')?.addEventListener('click',()=>setOAuthBindMode_('new'));
+$('oauthBindExistingBtn')?.addEventListener('click',()=>submitOAuthBind_('existing'));$('oauthBindNewBtn')?.addEventListener('click',()=>submitOAuthBind_('new'));
 $('tempPasswordDoneBtn')?.addEventListener('click',()=>{$('tempPasswordValue').textContent='';closeModal('tempPasswordModal');});
 $('saveStaffBtn')?.addEventListener('click',saveStaff);
 $('saveOrganizationBtn')?.addEventListener('click',saveOrganization);
@@ -7029,6 +7104,8 @@ async function bootstrapApplication(){
   renderLoginSecurityState();
   setInterval(()=>{const screen=$('loginScreen');if(screen&&!screen.classList.contains('hidden'))renderLoginSecurityState();},1000);
   if(Identity.currentUser()){$('loginScreen').classList.add('hidden');$('appShell').classList.remove('hidden');setupApp();}
+  // 從 Google／Facebook 登入回來：錯誤訊息、綁定成功提示，或還沒綁定手機時打開綁定視窗
+  await handleOAuthReturn_();
 
   // Core UI/identity boot succeeded. Background sync errors after this point are non-fatal.
   careRideBootCompleted=true;
