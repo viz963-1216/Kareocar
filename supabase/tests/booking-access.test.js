@@ -20,7 +20,6 @@ process.env.DATABASE_URL = isSocket
   ? `postgresql://care_ride_app@${encodeURIComponent(host)}:${process.env.PGPORT}/careride_access_test?sslmode=disable`
   : `postgresql://care_ride_app@${host}:${process.env.PGPORT}/careride_access_test?sslmode=disable`;
 process.env.AUTH_SESSION_SECRET = 'synthetic-session-secret-access-0123456789';
-process.env.AUTH_PASSWORD_PEPPER = 'synthetic-password-pepper-access-0123456789';
 const fx = require('./_auth-fixture');
 const F = require('../../tests/_trip-fixtures');
 

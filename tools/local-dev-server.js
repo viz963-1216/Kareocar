@@ -16,7 +16,7 @@
  * 啟動（資料庫必須是本機隔離庫，這支會拒絕其他主機）：
  *
  *   DATABASE_URL=postgresql://care_ride_app@127.0.0.1:5432/careride_e2e_test?sslmode=disable \
- *   AUTH_SESSION_SECRET=... AUTH_PASSWORD_PEPPER=... \
+ *   AUTH_SESSION_SECRET=... \
  *   PORT=8888 node tools/local-dev-server.js
  */
 const http = require('node:http');

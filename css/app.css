@@ -1875,3 +1875,6 @@ body.driver-mode .route-row.active{border-color:#9AC5F5;background:var(--cr-blue
 /* V12.25.62 — SEAL QA HARDENING
    Functional hardening only: safe requester-draft storage and explicit button types.
    No visual design, RBAC, Booking, Dispatch, Trip, Benefit or demo-data behavior changed. */
+
+/* 後台重設密碼產生的臨時密碼（#58）：等寬、放大，方便口頭或手寫轉交 */
+.temp-password{margin:14px 0;padding:14px;border-radius:12px;background:#f3f6fa;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:24px;letter-spacing:2px;text-align:center;user-select:all;word-break:break-all}

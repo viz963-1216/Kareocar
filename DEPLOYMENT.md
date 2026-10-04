@@ -68,10 +68,8 @@
 | `SUPABASE_SERVICE_ROLE_KEY` | 秘密金鑰，建立、更新、刪除登入帳號用 | **是** |
 | `SUPABASE_JWT_SECRET` | 選用；舊版 HS256 專案才需要，新版自動用 JWKS | 是 |
 | `AUTH_SESSION_SECRET` | 速率限制鍵的 HMAC 金鑰 | 是 |
-| `AUTH_PASSWORD_PEPPER` | 忘記密碼驗證碼的雜湊 pepper | 是 |
 | `PRODUCTION_SUPABASE_PROJECT_REF` | 正式專案 ref；所有 context 設同一個值，建置檢查用 | 否 |
 | `GOOGLE_MAPS_API_KEY` | Geocoding API 與 Routes API；沒設定時建立預約會失敗 | 是 |
-| `PASSWORD_RESET_SMS_WEBHOOK_URL`、`PASSWORD_RESET_SMS_WEBHOOK_SECRET` | 忘記密碼簡訊（#19 換成台灣廠商） | 是 |
 | `SENTRY_DSN` | Sentry 專案的 DSN；沒設定就不回報錯誤 | 否（但不要公開） |
 | `DISCORD_ALERT_WEBHOOK_URL` | 告警送到 Discord 頻道的 webhook | **是** |
 | `RESEND_API_KEY` | 告警 Email（Resend） | **是** |
@@ -80,8 +78,11 @@
 ### Supabase
 
 - 每個專案都要給 `care_ride_app` 設密碼（`alter role care_ride_app with password …`）。
-- **Authentication → Sign In / Providers → Phone** 啟用。Staging 用 Twilio 假值即可（手機＋密碼
-  登入不發簡訊）；**正式專案不可用假值**，等 #19 接上真的簡訊廠商。
+- **Authentication → Sign In / Providers → Phone** 啟用（手機＋密碼登入需要）。系統不發簡訊
+  （#58），Staging 與正式專案的簡訊設定都填假值即可；有人直接呼叫 Supabase 的簡訊驗證碼 API
+  也只會發送失敗，不會產生簡訊費用。
+- 已不使用的環境變數可以從 Netlify 刪除：`AUTH_PASSWORD_PEPPER`、`PASSWORD_RESET_SMS_WEBHOOK_URL`、
+  `PASSWORD_RESET_SMS_WEBHOOK_SECRET`。
 - 超級管理者的建立方式見 supabase/README.md 的「身分驗證」。
 
 ### GitHub
@@ -138,8 +139,8 @@ Data Scrubber。
 ### 需要外部帳號或人工決定
 
 - [ ] **律師文件**：個資告知、服務條款完成；在平台設定填入版本與網址
-- [ ] **簡訊廠商**（#19）：選定台灣廠商並開通；Supabase 正式專案的 Phone provider 改用真的廠商；
-      忘記密碼的簡訊測試成功
+- [ ] **登入方式**（#58）：不接簡訊廠商。後台重設密碼已完成；Google、Facebook 登入與綁定手機
+      完成後，依 DEPLOYMENT 設定 Google Cloud、Meta 與 Supabase 的登入提供者
 - [ ] **監控與告警**（#17）：程式端已完成，依「3. 監控與告警」建 Sentry 專案與告警規則、外部存活
       檢查、Discord webhook、Resend 寄件網域，並完成驗收（測試錯誤、測試告警、存活檢查失敗各一次）
 - [ ] **Google Maps**：正式與 Staging 的 `GOOGLE_MAPS_API_KEY`，在 Google Cloud 限制可用的 API

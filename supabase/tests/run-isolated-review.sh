@@ -20,6 +20,5 @@ for task_db in careride_seed_test careride_reset_test; do
 done
 PGDATABASE=careride_seed_test bash "$ROOT/supabase/tests/seed-test-org.test.sh"
 psql -X -v ON_ERROR_STOP=1 -d careride_reset_test -f "$ROOT/supabase/tests/seed.sql"
-PGDATABASE=careride_reset_test node "$ROOT/supabase/tests/reset-transaction.test.js"
 # _db.js 的 TLS 判斷：全部用寫死的合成連線字串，最後一項才真的連本機測試庫。
 PGDATABASE=careride_reset_test node "$ROOT/supabase/tests/db-ssl.test.js"

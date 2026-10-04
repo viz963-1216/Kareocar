@@ -40,13 +40,8 @@
   status = 200
 
 [[redirects]]
-  from = "/api/v2/request-password-reset"
-  to = "/.netlify/functions/v2-request-password-reset"
-  status = 200
-
-[[redirects]]
-  from = "/api/v2/confirm-password-reset"
-  to = "/.netlify/functions/v2-confirm-password-reset"
+  from = "/api/v2/admin-reset-password"
+  to = "/.netlify/functions/v2-admin-reset-password"
   status = 200
 
 [[redirects]]

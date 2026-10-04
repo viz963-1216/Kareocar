@@ -31,8 +31,7 @@ const APP_CONFIG = Object.freeze({
   claimBookingUrl: '/api/v2/claim-booking',
   cancelBookingUrl: '/api/v2/cancel-booking',
   tripExecuteUrl: '/api/v2/trip-execute',
-  identityRequestPasswordResetUrl: '/api/v2/request-password-reset',
-  identityConfirmPasswordResetUrl: '/api/v2/confirm-password-reset',
+  identityAdminResetPasswordUrl: '/api/v2/admin-reset-password',
   identityUpdateAccountUrl: '/api/v2/update-account',
   organizationApplyUrl: '/api/v2/organization-apply',
   geocodeCheckUrl: '/api/v2/geocode-check',
@@ -4317,7 +4316,7 @@ LoginSecurity=(()=>{
     const locked=Number(state.lockedUntil||0)>now;
     const remainingMs=locked?Number(state.lockedUntil)-now:0;
     const forceReset=!!state.forceReset||state.failures>=LOGIN_SECURITY_POLICY.forceResetAfter;
-    const captchaRequired=!forceReset&&state.failures>=LOGIN_SECURITY_POLICY.captchaAfter;
+    const captchaRequired=state.failures>=LOGIN_SECURITY_POLICY.captchaAfter;
     return {...state,locked,remainingMs,forceReset,captchaRequired};
   };
   return {
@@ -4327,7 +4326,6 @@ LoginSecurity=(()=>{
     refreshCaptcha(phone){return ensureCaptcha(phone,true);},
     beforeAttempt(phone,captchaInput=''){
       const s=status(phone);
-      if(s.forceReset)return {ok:false,reason:'force_reset',error:'密碼已連續輸入錯誤 10 次，請先使用「忘記密碼」設定新密碼。'};
       if(s.locked)return {ok:false,reason:'locked',remainingMs:s.remainingMs,error:'密碼錯誤已達 5 次，登入暫停 3 分鐘。'};
       if(s.captchaRequired){
         const expected=ensureCaptcha(phone);
@@ -4337,9 +4335,9 @@ LoginSecurity=(()=>{
     },
     recordFailure(phone){
       const s=read(phone);s.failures=Number(s.failures||0)+1;
-      if(s.failures>=LOGIN_SECURITY_POLICY.forceResetAfter){s.forceReset=true;s.lockedUntil=0;}
-      else if(s.failures===LOGIN_SECURITY_POLICY.lockAfter){s.lockedUntil=Date.now()+LOGIN_SECURITY_POLICY.lockMs;}
-      if(s.failures>=LOGIN_SECURITY_POLICY.captchaAfter&&!s.forceReset){s.captchaCode=randomCode();s.captchaIssuedAt=Date.now();}
+      if(s.failures>=LOGIN_SECURITY_POLICY.forceResetAfter)s.forceReset=true;
+      if(s.failures===LOGIN_SECURITY_POLICY.lockAfter){s.lockedUntil=Date.now()+LOGIN_SECURITY_POLICY.lockMs;}
+      if(s.failures>=LOGIN_SECURITY_POLICY.captchaAfter){s.captchaCode=randomCode();s.captchaIssuedAt=Date.now();}
       write(phone,s);return status(phone);
     },
     clear(phone){const key=normalize(phone);if(!key)return;const all=loadAll();delete all[key];saveAll(all);},
@@ -4730,11 +4728,9 @@ CloudIdentity=Object.freeze({
     const result=await backendJsonPost(APP_CONFIG.identityCreateStaffUrl,{organizationId,name:String(name||'').trim(),phone:String(phone||'').replace(/\D/g,''),password:String(password||''),role:String(role||''),alsoRequester:!!alsoRequester});
     return result?.data||{};
   },
-  async requestPasswordReset({phone}){
-    const result=await backendJsonPost(APP_CONFIG.identityRequestPasswordResetUrl,{phone:String(phone||'').replace(/\D/g,'')});return result?.data||{};
-  },
-  async confirmPasswordReset({phone,otp,newPassword}){
-    const result=await backendJsonPost(APP_CONFIG.identityConfirmPasswordResetUrl,{phone:String(phone||'').replace(/\D/g,''),otp:String(otp||'').replace(/\D/g,''),newPassword:String(newPassword||'')});return result?.data||{};
+  async adminResetPassword({userId}){
+    if(!hasBackendSession())throw backendApiError('登入工作階段已遺失，請重新登入','SESSION_REQUIRED');
+    const result=await backendJsonPost(APP_CONFIG.identityAdminResetPasswordUrl,{userId:String(userId||'')});return result?.data||{};
   },
   async applyOrganization(input={}){
     if(!hasBackendSession())throw backendApiError('登入工作階段已遺失，請重新登入','SESSION_REQUIRED');
@@ -5089,19 +5085,16 @@ function renderLoginSecurityState(){
   const phone=$('loginPhone').value.trim(),state=LoginSecurity.status(phone),panel=$('loginSecurityPanel'),row=$('loginCaptchaRow'),msg=$('loginSecurityMessage'),loginBtn=$('loginBtn'),password=$('loginPassword'),forgot=$('forgotPasswordBtn');
   panel.classList.remove('warning','danger');forgot.classList.remove('security-required');
   password.disabled=false;loginBtn.disabled=false;
-  if(state.forceReset){
-    panel.classList.remove('hidden');panel.classList.add('danger');row.classList.add('hidden');msg.textContent=`此帳號已連續輸入錯誤 ${state.failures} 次，密碼登入已暫停。請先選擇「忘記密碼」設定新密碼。`;password.disabled=true;loginBtn.disabled=true;forgot.classList.add('security-required');forgot.textContent='必須先使用忘記密碼';return;
-  }
   if(state.locked){
     panel.classList.remove('hidden');panel.classList.add('danger');row.classList.add('hidden');msg.textContent=`密碼輸入錯誤已達 ${state.failures} 次，暫停輸入 3 分鐘。剩餘 ${formatLockCountdown(state.remainingMs)}。`;password.disabled=true;loginBtn.disabled=true;forgot.textContent='忘記密碼';return;
   }
   if(state.captchaRequired){
-    panel.classList.remove('hidden');panel.classList.add('warning');row.classList.remove('hidden');$('loginCaptchaCode').textContent=LoginSecurity.ensureCaptcha(phone);msg.textContent=`已連續輸入錯誤 ${state.failures} 次。從第 3 次起，下一次登入前必須先填寫隨機數字驗證碼。`;forgot.textContent='忘記密碼';return;
+    panel.classList.remove('hidden');panel.classList.add(state.forceReset?'danger':'warning');row.classList.remove('hidden');$('loginCaptchaCode').textContent=LoginSecurity.ensureCaptcha(phone);msg.textContent=state.forceReset?`已連續輸入錯誤 ${state.failures} 次。若忘記密碼，請聯絡機構負責人或平台管理者重設，取得臨時密碼後再登入。`:`已連續輸入錯誤 ${state.failures} 次。從第 3 次起，下一次登入前必須先填寫隨機數字驗證碼。`;if(state.forceReset)forgot.classList.add('security-required');forgot.textContent='忘記密碼';return;
   }
   panel.classList.add('hidden');row.classList.add('hidden');msg.textContent='';$('loginCaptchaInput').value='';forgot.textContent='忘記密碼';
 }
 function openForgotPassword(){
-  $('forgotPhoneInput').value=$('loginPhone').value;$('resetOtpInput').value='';$('newPasswordInput').value='';$('resetOtpHint').classList.add('hidden');openModal('forgotPasswordModal');
+  openModal('forgotPasswordModal');
 }
 async function login(){
   const phone=$('loginPhone').value.trim(),
@@ -5212,7 +5205,7 @@ async function login(){
       renderLoginSecurityState();
 
       if(state.forceReset){
-        showToast('登入失敗次數已達上限，請使用忘記密碼重設');
+        showToast('若忘記密碼，請聯絡機構負責人或平台管理者重設');
       }else if(state.locked){
         showToast('登入暫停 3 分鐘');
       }else if(state.captchaRequired){
@@ -5227,12 +5220,6 @@ async function login(){
         error?.message||
         '伺服器已暫停此手機的密碼登入，請稍後再試'
       );
-    }else if(error?.code==='PASSWORD_RESET_REQUIRED'){
-      showToast(
-        error?.message||
-        '伺服器要求先重設密碼'
-      );
-      setTimeout(()=>openForgotPassword(),350);
     }else{
       showToast(error?.message||'登入失敗');
     }
@@ -5988,10 +5975,10 @@ function platformMembers(){
   const isRequesterHub=org?.id===APP_CONFIG.requesterOrganizationId||org?.type==='requester_hub';
   const statusClass={active:'green',suspended:'gray',revoked:'gray'};
   if(isRequesterHub){
-    return `<div class="page-head"><div><h2>需求者成員</h2><p>需求者可自行透過新增帳號、谷歌、蘋果或臉書登入加入；平台超級管理者也可以替既有公司成員額外新增「需求者」身分。</p></div></div><section class="card"><div class="card-head"><div><h3>需求者組織規則</h3><p>角色固定為需求者。平台超級管理者可查看或調整組織身分狀態；公司工作者也可以在同一個使用者上同時擁有需求者組織身分。</p></div><span class="pill purple">${memberships.filter(m=>Identity.membershipStatus(m)==='active').length} 人</span></div></section><section class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>姓名</th><th>角色</th><th>手機</th><th>Membership</th><th>帳號</th><th>操作</th></tr></thead><tbody>${memberships.map(m=>{const u=store.state.users.find(x=>x.id===m.userId),status=Identity.membershipStatus(m);return `<tr><td><strong>${escapeHTML(u?.name||'未知使用者')}</strong><br><span class="muted small">${escapeHTML(u?.email||'')}</span></td><td><span class="pill purple">需求者</span></td><td>${formatPhone(u?.phone||'')}</td><td><select class="inline-select membership-status-select" data-membership="${m.id}">${membershipStatusOptions(m)}</select><div style="margin-top:5px"><span class="pill ${statusClass[status]||'gray'}">${MEMBERSHIP_STATUS_LABELS[status]||status}</span></div></td><td><span class="pill ${u?.active?'green':'gray'}">${u?.active?'帳號啟用':'帳號停用'}</span></td><td><button type="button" class="btn outline sm membership-history-btn" data-membership="${m.id}">異動歷史</button> <button type="button" class="btn outline sm platform-edit-member-btn" data-membership="${m.id}">編輯姓名／手機</button></td></tr>`;}).join('')||'<tr><td colspan="6"><div class="empty">目前還沒有需求者</div></td></tr>'}</tbody></table></div></section>`;
+    return `<div class="page-head"><div><h2>需求者成員</h2><p>需求者可自行透過新增帳號、谷歌、蘋果或臉書登入加入；平台超級管理者也可以替既有公司成員額外新增「需求者」身分。</p></div></div><section class="card"><div class="card-head"><div><h3>需求者組織規則</h3><p>角色固定為需求者。平台超級管理者可查看或調整組織身分狀態；公司工作者也可以在同一個使用者上同時擁有需求者組織身分。</p></div><span class="pill purple">${memberships.filter(m=>Identity.membershipStatus(m)==='active').length} 人</span></div></section><section class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>姓名</th><th>角色</th><th>手機</th><th>Membership</th><th>帳號</th><th>操作</th></tr></thead><tbody>${memberships.map(m=>{const u=store.state.users.find(x=>x.id===m.userId),status=Identity.membershipStatus(m);return `<tr><td><strong>${escapeHTML(u?.name||'未知使用者')}</strong><br><span class="muted small">${escapeHTML(u?.email||'')}</span></td><td><span class="pill purple">需求者</span></td><td>${formatPhone(u?.phone||'')}</td><td><select class="inline-select membership-status-select" data-membership="${m.id}">${membershipStatusOptions(m)}</select><div style="margin-top:5px"><span class="pill ${statusClass[status]||'gray'}">${MEMBERSHIP_STATUS_LABELS[status]||status}</span></div></td><td><span class="pill ${u?.active?'green':'gray'}">${u?.active?'帳號啟用':'帳號停用'}</span></td><td><button type="button" class="btn outline sm membership-history-btn" data-membership="${m.id}">異動歷史</button> <button type="button" class="btn outline sm platform-edit-member-btn" data-membership="${m.id}">編輯姓名／手機</button> ${resetPasswordButton(u?.id)}</td></tr>`;}).join('')||'<tr><td colspan="6"><div class="empty">目前還沒有需求者</div></td></tr>'}</tbody></table></div></section>`;
   }
   const ownerMembership=memberships.find(m=>m.role==='owner'&&Identity.membershipStatus(m)!=='revoked');
-  return `<div class="page-head"><div><h2>組織成員</h2><p>${escapeHTML(org?.name||'-')}・公司組織身分只包含負責人、司機、調度員。公司停權＝撤銷該公司工作帳號；平台超級管理者可查看歷史、恢復組織身分，或讓該使用者加入其他公司。</p></div><div class="page-actions"><button type="button" class="btn primary" id="openAddStaffBtn">＋ 新增組織成員</button></div></div><section class="card"><div class="card-head"><div><h3>負責人規則</h3><p>${ownerMembership?'目前已有負責人；平台超級管理者可在「組織管理」直接指定其他成員接任。':'此組織尚未指定負責人，可在「組織管理」直接指定。'}</p></div><span class="pill ${ownerMembership?'green':'yellow'}">${ownerMembership?'1 / 1':'0 / 1'}</span></div></section><section class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>姓名</th><th>角色</th><th>手機</th><th>需求者</th><th>Membership</th><th>帳號</th><th>操作</th></tr></thead><tbody>${memberships.map(m=>{const u=store.state.users.find(x=>x.id===m.userId),status=Identity.membershipStatus(m),isRequester=!!u&&Identity.hasRequesterIdentity(u.id);return `<tr><td><strong>${escapeHTML(u?.name||'未知使用者')}</strong></td><td><select class="inline-select membership-role-select" data-membership="${m.id}"><option value="owner" ${m.role==='owner'?'selected':''}>負責人</option><option value="dispatcher" ${m.role==='dispatcher'?'selected':''}>調度人員</option><option value="driver" ${m.role==='driver'?'selected':''}>司機</option></select></td><td>${formatPhone(u?.phone||'')}</td><td><span class="pill ${isRequester?'purple':'gray'}">${isRequester?'是':'否'}</span><div style="margin-top:6px"><button type="button" class="btn ${isRequester?'danger':'outline'} sm platform-requester-toggle-btn" data-user="${u?.id||''}" data-enabled="${isRequester?'false':'true'}">${isRequester?'移除需求者':'＋需求者身分'}</button></div></td><td><select class="inline-select membership-status-select" data-membership="${m.id}">${membershipStatusOptions(m)}</select><div style="margin-top:5px"><span class="pill ${statusClass[status]||'gray'}">${MEMBERSHIP_STATUS_LABELS[status]||status}</span></div></td><td><span class="pill ${status==='revoked'?'gray':'green'}">${status==='revoked'?'工作帳號已撤銷':'工作帳號有效'}</span></td><td><button type="button" class="btn outline sm membership-history-btn" data-membership="${m.id}">異動歷史</button> <button type="button" class="btn outline sm platform-edit-member-btn" data-membership="${m.id}">編輯成員</button></td></tr>`;}).join('')||'<tr><td colspan="7"><div class="empty">此組織目前沒有成員</div></td></tr>'}</tbody></table></div></section>`;
+  return `<div class="page-head"><div><h2>組織成員</h2><p>${escapeHTML(org?.name||'-')}・公司組織身分只包含負責人、司機、調度員。公司停權＝撤銷該公司工作帳號；平台超級管理者可查看歷史、恢復組織身分，或讓該使用者加入其他公司。</p></div><div class="page-actions"><button type="button" class="btn primary" id="openAddStaffBtn">＋ 新增組織成員</button></div></div><section class="card"><div class="card-head"><div><h3>負責人規則</h3><p>${ownerMembership?'目前已有負責人；平台超級管理者可在「組織管理」直接指定其他成員接任。':'此組織尚未指定負責人，可在「組織管理」直接指定。'}</p></div><span class="pill ${ownerMembership?'green':'yellow'}">${ownerMembership?'1 / 1':'0 / 1'}</span></div></section><section class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>姓名</th><th>角色</th><th>手機</th><th>需求者</th><th>Membership</th><th>帳號</th><th>操作</th></tr></thead><tbody>${memberships.map(m=>{const u=store.state.users.find(x=>x.id===m.userId),status=Identity.membershipStatus(m),isRequester=!!u&&Identity.hasRequesterIdentity(u.id);return `<tr><td><strong>${escapeHTML(u?.name||'未知使用者')}</strong></td><td><select class="inline-select membership-role-select" data-membership="${m.id}"><option value="owner" ${m.role==='owner'?'selected':''}>負責人</option><option value="dispatcher" ${m.role==='dispatcher'?'selected':''}>調度人員</option><option value="driver" ${m.role==='driver'?'selected':''}>司機</option></select></td><td>${formatPhone(u?.phone||'')}</td><td><span class="pill ${isRequester?'purple':'gray'}">${isRequester?'是':'否'}</span><div style="margin-top:6px"><button type="button" class="btn ${isRequester?'danger':'outline'} sm platform-requester-toggle-btn" data-user="${u?.id||''}" data-enabled="${isRequester?'false':'true'}">${isRequester?'移除需求者':'＋需求者身分'}</button></div></td><td><select class="inline-select membership-status-select" data-membership="${m.id}">${membershipStatusOptions(m)}</select><div style="margin-top:5px"><span class="pill ${statusClass[status]||'gray'}">${MEMBERSHIP_STATUS_LABELS[status]||status}</span></div></td><td><span class="pill ${status==='revoked'?'gray':'green'}">${status==='revoked'?'工作帳號已撤銷':'工作帳號有效'}</span></td><td><button type="button" class="btn outline sm membership-history-btn" data-membership="${m.id}">異動歷史</button> <button type="button" class="btn outline sm platform-edit-member-btn" data-membership="${m.id}">編輯成員</button> ${resetPasswordButton(u?.id)}</td></tr>`;}).join('')||'<tr><td colspan="7"><div class="empty">此組織目前沒有成員</div></td></tr>'}</tbody></table></div></section>`;
 }
 
 function platformReports(){
@@ -6005,7 +5992,7 @@ function ownerHome(){
 function ownerUsers(){
   const memberships=store.state.memberships.filter(m=>m.organizationId===orgId()&&['driver','dispatcher'].includes(m.role));
   const statusClass={active:'green',suspended:'gray',revoked:'gray'};
-  return `<div class="page-head"><div><h2>公司人員</h2><p>負責人可新增司機或調度員、授予需求者身分，並可撤銷本公司的工作帳號。公司停權＝撤銷；已撤銷後只有 平台超級管理者可以恢復或安排到其他公司。</p></div><div class="page-actions"><button type="button" class="btn primary" id="openAddStaffBtn">＋ 新增人員</button></div></div><div class="metric-grid"><div class="metric"><span>司機</span><strong>${memberships.filter(m=>m.role==='driver'&&Identity.membershipStatus(m)==='active').length}</strong></div><div class="metric"><span>調度人員</span><strong>${memberships.filter(m=>m.role==='dispatcher'&&Identity.membershipStatus(m)==='active').length}</strong></div><div class="metric"><span>同時為需求者</span><strong>${memberships.filter(m=>{const u=store.state.users.find(x=>x.id===m.userId);return !!u&&Identity.hasRequesterIdentity(u.id);}).length}</strong></div><div class="metric"><span>目前公司</span><strong style="font-size:15px">${escapeHTML(currentOrg()?.name||'-')}</strong></div></div><section class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>姓名</th><th>角色</th><th>手機</th><th>需求者</th><th>Membership</th><th>帳號</th></tr></thead><tbody>${memberships.map(m=>{const u=store.state.users.find(x=>x.id===m.userId),status=Identity.membershipStatus(m),isRequester=!!u&&Identity.hasRequesterIdentity(u.id);return `<tr><td><strong>${escapeHTML(u?.name||'未知使用者')}</strong></td><td><span class="pill ${m.role==='dispatcher'?'blue':'green'}">${ROLE_LABELS[m.role]}</span></td><td>${formatPhone(u?.phone||'')}</td><td><span class="pill ${isRequester?'purple':'gray'}">${isRequester?'是':'否'}</span><div style="margin-top:6px"><button type="button" class="btn ${isRequester?'danger':'outline'} sm owner-requester-toggle-btn" data-user="${u?.id||''}" data-enabled="${isRequester?'false':'true'}">${isRequester?'移除需求者':'＋需求者身分'}</button></div></td><td><span class="pill ${status==='revoked'?'gray':'green'}">${status==='revoked'?'已撤銷':'有效'}</span></td><td><span class="pill ${status==='revoked'?'gray':'green'}">${status==='revoked'?'工作帳號已撤銷':'工作帳號有效'}</span><div style="margin-top:6px">${status==='active'?`<button type="button" class="btn danger sm revoke-membership-btn" data-membership="${m.id}">撤銷帳號</button>`:''} <button type="button" class="btn outline sm membership-history-btn" data-membership="${m.id}">異動歷史</button></div></td></tr>`;}).join('')||'<tr><td colspan="6"><div class="empty">目前沒有公司員工</div></td></tr>'}</tbody></table></div></section>`;
+  return `<div class="page-head"><div><h2>公司人員</h2><p>負責人可新增司機或調度員、授予需求者身分，並可撤銷本公司的工作帳號。公司停權＝撤銷；已撤銷後只有 平台超級管理者可以恢復或安排到其他公司。</p></div><div class="page-actions"><button type="button" class="btn primary" id="openAddStaffBtn">＋ 新增人員</button></div></div><div class="metric-grid"><div class="metric"><span>司機</span><strong>${memberships.filter(m=>m.role==='driver'&&Identity.membershipStatus(m)==='active').length}</strong></div><div class="metric"><span>調度人員</span><strong>${memberships.filter(m=>m.role==='dispatcher'&&Identity.membershipStatus(m)==='active').length}</strong></div><div class="metric"><span>同時為需求者</span><strong>${memberships.filter(m=>{const u=store.state.users.find(x=>x.id===m.userId);return !!u&&Identity.hasRequesterIdentity(u.id);}).length}</strong></div><div class="metric"><span>目前公司</span><strong style="font-size:15px">${escapeHTML(currentOrg()?.name||'-')}</strong></div></div><section class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>姓名</th><th>角色</th><th>手機</th><th>需求者</th><th>Membership</th><th>帳號</th></tr></thead><tbody>${memberships.map(m=>{const u=store.state.users.find(x=>x.id===m.userId),status=Identity.membershipStatus(m),isRequester=!!u&&Identity.hasRequesterIdentity(u.id);return `<tr><td><strong>${escapeHTML(u?.name||'未知使用者')}</strong></td><td><span class="pill ${m.role==='dispatcher'?'blue':'green'}">${ROLE_LABELS[m.role]}</span></td><td>${formatPhone(u?.phone||'')}</td><td><span class="pill ${isRequester?'purple':'gray'}">${isRequester?'是':'否'}</span><div style="margin-top:6px"><button type="button" class="btn ${isRequester?'danger':'outline'} sm owner-requester-toggle-btn" data-user="${u?.id||''}" data-enabled="${isRequester?'false':'true'}">${isRequester?'移除需求者':'＋需求者身分'}</button></div></td><td><span class="pill ${status==='revoked'?'gray':'green'}">${status==='revoked'?'已撤銷':'有效'}</span></td><td><span class="pill ${status==='revoked'?'gray':'green'}">${status==='revoked'?'工作帳號已撤銷':'工作帳號有效'}</span><div style="margin-top:6px">${status==='active'?`<button type="button" class="btn danger sm revoke-membership-btn" data-membership="${m.id}">撤銷帳號</button> ${resetPasswordButton(u?.id)}`:''} <button type="button" class="btn outline sm membership-history-btn" data-membership="${m.id}">異動歷史</button></div></td></tr>`;}).join('')||'<tr><td colspan="6"><div class="empty">目前沒有公司員工</div></td></tr>'}</tbody></table></div></section>`;
 }
 function ownerVehicles(){
   const vehicles=Organization.vehicles(orgId());
@@ -6449,20 +6436,19 @@ async function saveStaff(){
   }catch(error){showToast(error?.message||'建立帳號失敗');}
   finally{setButtonBusy(btn,false);}
 }
-async function requestResetOtp(){
-  const phone=digitsOnly($('forgotPhoneInput').value),btn=$('requestResetOtpBtn');if(!/^09\d{8}$/.test(phone)){showToast('請輸入有效的 10 碼手機號碼');return;}setButtonBusy(btn,true,'發送中…');
-  try{
-    {await CloudIdentity.requestPasswordReset({phone});const hint=$('resetOtpHint');hint.classList.remove('hidden');hint.textContent='若此手機為有效帳號，6 位數驗證碼已透過正式簡訊服務送出，5 分鐘內有效。';}
-  }catch(error){showToast(error?.message||'驗證碼發送失敗');}
-  finally{setButtonBusy(btn,false);}
+function resetPasswordButton(userId){
+  return userId?`<button type="button" class="btn outline sm reset-password-btn" data-user="${escapeHTML(userId)}">重設密碼</button>`:'';
 }
-async function confirmResetPassword(){
-  const phone=digitsOnly($('forgotPhoneInput').value),otp=$('resetOtpInput').value.trim(),newPassword=$('newPasswordInput').value,btn=$('confirmResetPasswordBtn');if(newPassword.length<8){showToast('新密碼至少需要 8 碼');return;}setButtonBusy(btn,true,'更新中…');
+async function resetUserPassword(userId,btn){
+  const u=store.state.users.find(x=>x.id===userId);
+  if(!confirm(`替「${u?.name||'這位使用者'}」重設密碼？\n\n系統會產生一組臨時密碼，對方所有裝置上的登入會立刻失效。請當面或電話把臨時密碼交給本人。`))return;
+  setButtonBusy(btn,true,'重設中…');
   try{
-    let userPhone=phone;
-    await CloudIdentity.confirmPasswordReset({phone,otp,newPassword});
-    LoginSecurity.clear(userPhone);CloudIdentity.clearSessionToken();closeModal('forgotPasswordModal');$('loginPhone').value=userPhone;$('loginPassword').value='';$('loginCaptchaInput').value='';renderLoginSecurityState();showToast('密碼已由伺服器更新，舊登入工作階段已失效；請使用新密碼重新登入');
-  }catch(error){showToast(error?.message||'密碼重設失敗');}
+    const data=await CloudIdentity.adminResetPassword({userId});
+    $('tempPasswordUserName').textContent=u?.name||'';
+    $('tempPasswordValue').textContent=data.temporaryPassword||'';
+    openModal('tempPasswordModal');
+  }catch(error){showToast(error?.message||'重設密碼失敗');}
   finally{setButtonBusy(btn,false);}
 }
 function openAddVehicle(){
@@ -6884,6 +6870,7 @@ function bindViewEvents(){
   document.querySelectorAll('.platform-edit-member-btn').forEach(btn=>btn.addEventListener('click',()=>openEditMember(btn.dataset.membership)));
   document.querySelectorAll('.membership-history-btn').forEach(btn=>btn.addEventListener('click',()=>openMembershipHistory(btn.dataset.membership)));
   document.querySelectorAll('.revoke-membership-btn').forEach(btn=>btn.addEventListener('click',()=>openRevokeMembership(btn.dataset.membership)));
+  document.querySelectorAll('.reset-password-btn').forEach(btn=>btn.addEventListener('click',()=>resetUserPassword(btn.dataset.user,btn)));
   $('openSystemReportBtn')?.addEventListener('click',openSystemReport);
   document.querySelectorAll('.identity-switch-btn').forEach(btn=>btn.addEventListener('click',()=>switchOrganization(btn.dataset.org)));
   document.querySelectorAll('.platform-enter-org-btn').forEach(btn=>btn.addEventListener('click',()=>{const result=Identity.switchOrganization(btn.dataset.org);if(!result.ok){showToast(result.error);return;}currentView='platform-members';applyIdentityContext();renderNav();render();showToast(`正在管理 ${result.organization?.name||'組織'} 成員`);}));
@@ -6926,7 +6913,7 @@ $('confirmRegisterBtn')?.addEventListener('click',()=>{
   });
 });
 $('forgotPasswordBtn')?.addEventListener('click',openForgotPassword);
-$('requestResetOtpBtn')?.addEventListener('click',requestResetOtp); $('confirmResetPasswordBtn')?.addEventListener('click',confirmResetPassword);
+$('tempPasswordDoneBtn')?.addEventListener('click',()=>{$('tempPasswordValue').textContent='';closeModal('tempPasswordModal');});
 $('saveStaffBtn')?.addEventListener('click',saveStaff);
 $('saveOrganizationBtn')?.addEventListener('click',saveOrganization);
 $('saveOrganizationDetailsBtn')?.addEventListener('click',saveOrganizationDetails);

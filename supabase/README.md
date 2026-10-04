@@ -19,6 +19,7 @@ API 端點與各項業務規則。部署流程與上線檢查清單見 [DEPLOYME
 | `migrations/0010_consent_retention.sql` | 平台設定 `app_settings`（保存期限、條款版本）、同意紀錄 `consent_records`、到期資料匿名化 `app.anonymize_expired_records` |
 | `migrations/0011_account_deletion.sql` | 刪除帳號與個資申請 `deletion_requests`（pending／cancelled／rejected／completed）；平台管理者核准時在同一交易內匿名化與停用帳號 |
 | `migrations/0012_benefit_fetch.sql` | 福利公告抓取紀錄 `benefit_source_fetches`、自動抓取草稿（origin、內容雜湊、差異）；自動草稿不能手動修改 |
+| `migrations/0013_admin_password_reset.sql` | 後台重設密碼的權限判斷 `app.password_reset_target`：平台管理者可重設自己以外的任何人；負責人只能重設工作身分全在自己機構的調度員、司機 |
 | `rollback/<名稱>.down.sql` | 每支 migration 的回復檔（`0001` 的回復會刪除所有資料，只用在空資料庫或 Staging 重建） |
 | `migrations_archive/` | 壓縮成 baseline 之前的 0001–0008，只供查閱，不再套用 |
 | `seed-test-org.sql` | 建立測試機構與負責人的一次性腳本（`tests/seed-test-org.test.sh` 驗證） |
@@ -133,14 +134,14 @@ SELECT；寫入只經檢查身分與狀態的函式，連有漏洞的 handler �
 
 ## API 端點
 
-全部在 `netlify/functions/`，路由在 `netlify.toml`。除了 `health` 與登入、註冊、忘記密碼以外都要登入。
+全部在 `netlify/functions/`，路由在 `netlify.toml`。除了 `health` 與登入、註冊以外都要登入。
 
 | 路由 | 用途 |
 |---|---|
 | `GET /api/health` | 設定與資料庫連線狀態 |
 | `POST /api/v2/password-login`、`logout`、`session` | 登入、登出、換新 token |
 | `POST /api/v2/register-requester` | 需求者註冊 |
-| `POST /api/v2/request-password-reset`、`confirm-password-reset` | 忘記密碼 |
+| `POST /api/v2/admin-reset-password` | 後台重設密碼：平台管理者重設任何人、負責人重設自己機構的調度員與司機；回傳一次性臨時密碼（見 0013） |
 | `POST /api/v2/update-account` | 改密碼、手機 |
 | `POST /api/v2/create-staff` | 機構負責人建立人員帳號 |
 | `GET /api/v2/state-load` | 載入這個身分看得到的全部資料（含需求池、同意狀態） |
@@ -174,8 +175,8 @@ SELECT；寫入只經檢查身分與狀態的函式，連有漏洞的 handler �
 `users.id` 就是 Supabase Auth 的使用者 ID。token 只放在 HttpOnly cookie（`cr_at`、
 `cr_rt`），瀏覽器的 JavaScript 讀不到。
 
-Supabase 主控台要設定的：**Authentication → Sign In / Providers → Phone** 啟用（簡訊廠商
-在 #19 接上）。
+Supabase 主控台要設定的：**Authentication → Sign In / Providers → Phone** 啟用（系統不發簡訊，
+簡訊設定填假值即可，見 DEPLOYMENT.md）。
 
 **建立超級管理者**（取代原本的 bootstrap 端點）：
 
@@ -241,7 +242,7 @@ context 沒設定這個變數時，建置會失敗，因為無從判斷。
 | 完成 `trip_completed` | `trip-execute` | 需求者 |
 
 每則通知有 `dedupe_key`，同一事件重試不會重複。目前只寫入站內（`channel = in_app`、`status = queued`），
-簡訊或 LINE 推送在 #19 接上。
+不發簡訊；LINE 等推送管道之後再評估。
 
 ### 長照交通補助（#23）
 
