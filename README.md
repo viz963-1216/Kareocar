@@ -62,7 +62,7 @@ CI（`.github/workflows/`）：
 
 | Workflow | 內容 |
 |---|---|
-| `isolated-sql-review.yml` | 離線測試、在拋棄式 Postgres 上跑全部整合測試（RLS、業務流程、預約、行程、通知、補助、隱私）、migration 往返、瀏覽器端對端測試（在實際的 CSP 下） |
+| `isolated-sql-review.yml` | 離線測試、在拋棄式 Postgres 上跑全部整合測試（RLS、業務流程、預約、行程、通知、補助、隱私、登入與社群登入、後台重設密碼、備份還原）、migration 往返、瀏覽器端對端測試（在實際的 CSP 下） |
 | `security.yml` | `npm audit`（high 以上失敗）、ZAP baseline 掃描 Staging（高風險失敗，報告存 artifact） |
 | `deploy-migrations.yml` | migration 驗證後自動套用到 Staging；Production 人工觸發 |
 | `db-backup.yml`、`restore-drill.yml` | 正式資料庫每 6 小時加密備份；每月在拋棄式 Postgres 還原演練（見 [docs/RESTORE_RUNBOOK.md](docs/RESTORE_RUNBOOK.md)） |
