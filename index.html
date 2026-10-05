@@ -43,7 +43,6 @@
     </div>
 <div class="login-legal"><a href="legal/terms.html" target="_blank" rel="noopener">服務條款</a>・<a href="legal/privacy.html" target="_blank" rel="noopener">隱私權政策</a></div>
 <div id="loginReleaseVersion" class="app-version-note">版本 V12.25.81｜正式版</div>
-<div class="login-note">補助資訊與試算會優先使用可追溯的官方公開來源；若暫時無法更新，系統會保留最近成功資料或規則快照。試算結果僅供參考，正式資格與額度仍以主管機關核定為準。</div>
   </div>
 </section>
 
@@ -86,7 +85,7 @@
   <div class="modal-actions"><button class="btn primary" id="consentAcceptBtn" type="button">同意並繼續</button></div>
 </div></div>
 <div class="modal" id="registerRequesterModal"><div class="modal-panel small">
-  <div class="modal-head"><h3>新增需求者身分</h3><button class="icon-btn" data-close="registerRequesterModal" type="button" aria-label="關閉視窗">×</button></div>
+  <div class="modal-head"><h3>新增帳號</h3><button class="icon-btn" data-close="registerRequesterModal" type="button" aria-label="關閉視窗">×</button></div>
   
   <div class="form-grid">
     <div class="form-field"><label for="registerNameInput">姓名</label><input id="registerNameInput" autocomplete="name" placeholder="例如：王小明" /></div>
@@ -144,20 +143,20 @@
   <div class="form-grid">
     <div class="form-field"><label for="editMemberNameInput">姓名</label><input id="editMemberNameInput" /></div>
     <div class="form-field"><label for="editMemberPhoneInput">手機號碼</label><input id="editMemberPhoneInput" inputmode="tel" placeholder="請輸入手機號碼" /></div>
-    <div class="form-field" id="editMemberRequesterField"><label style="display:flex;align-items:center;gap:9px;font-weight:800"><input id="editMemberRequesterInput" type="checkbox" style="width:auto" /> 同時具備「需求者」身分</label><div class="small muted" style="margin-top:5px">勾選後，這個使用者 可在需求者組織使用預約功能；取消勾選會撤銷目前需求者組織身分。</div></div>
+    <div class="form-field" id="editMemberRequesterField"><label style="display:flex;align-items:center;gap:9px;font-weight:800"><input id="editMemberRequesterInput" type="checkbox" style="width:auto" /> 同時具備「需求者」身分</label><div class="small muted" style="margin-top:5px">勾選後，這個使用者可在需求者組織使用預約功能；取消勾選會撤銷目前需求者組織身分。</div></div>
   </div>
   <div class="modal-actions"><button type="button" class="btn secondary" data-close="editMemberModal">取消</button><button class="btn primary" id="saveMemberProfileBtn" type="button">儲存成員資料</button></div>
 </div></div>
 
 <div class="modal" id="membershipHistoryModal"><div class="modal-panel">
-  <div class="modal-head"><div><h3>組織身分異動歷史</h3><p class="small muted" id="membershipHistoryContext">僅 平台超級管理者與該公司負責人可查看。</p></div><button class="icon-btn" data-close="membershipHistoryModal" type="button" aria-label="關閉視窗">×</button></div>
+  <div class="modal-head"><div><h3>身分異動紀錄</h3><p class="small muted" id="membershipHistoryContext">僅平台超級管理者與該公司負責人可查看。</p></div><button class="icon-btn" data-close="membershipHistoryModal" type="button" aria-label="關閉視窗">×</button></div>
   <div class="list" id="membershipHistoryList"></div>
   <div class="modal-actions"><button type="button" class="btn secondary" data-close="membershipHistoryModal">關閉</button></div>
 </div></div>
 
 <div class="modal" id="revokeMembershipModal"><div class="modal-panel small">
   <div class="modal-head"><h3>撤銷公司工作帳號</h3><button class="icon-btn" data-close="revokeMembershipModal" type="button" aria-label="關閉視窗">×</button></div>
-  <p id="revokeMembershipText">撤銷後，此人在目前公司的組織身分 會失效。</p>
+  <p id="revokeMembershipText">撤銷後，此人在目前公司的組織身分會失效。</p>
   
   <div class="danger-confirm-fields" id="revokeMembershipConfirmFields">
     <div class="form-field"><label for="revokeMembershipReasonInput">撤銷原因</label><textarea id="revokeMembershipReasonInput" placeholder="請說明撤銷原因，供後續稽核"></textarea></div>
@@ -185,7 +184,7 @@
     <li><strong>機構的調度員、司機</strong>：請聯絡你的機構負責人</li>
     <li><strong>需求者、機構負責人</strong>：請聯絡平台管理者</li>
   </ul>
-  <div class="login-note">拿到臨時密碼後直接登入，再到「我的帳戶」改成自己的密碼。為了你的帳號安全，重設時對方會確認你的身分。</div>
+  <div class="login-note">拿到臨時密碼後登入，再到「我的帳戶」改密碼。</div>
 </div></div>
 
 <div class="modal" id="oauthBindModal"><div class="modal-panel small">
@@ -207,14 +206,13 @@
     <div class="form-field"><label for="oauthBindNewPasswordInput">設定密碼</label><input id="oauthBindNewPasswordInput" type="password" autocomplete="new-password" placeholder="至少 8 碼" /></div>
     <button class="btn primary" id="oauthBindNewBtn" type="button">建立帳號</button>
   </div>
-  <div class="login-note">手機號碼用來聯絡接送事宜；綁定後也可以用手機＋密碼登入。</div>
 </div></div>
 
 <div class="modal" id="tempPasswordModal"><div class="modal-panel small">
   <div class="modal-head"><h3>臨時密碼</h3></div>
   <p><strong id="tempPasswordUserName"></strong> 的密碼已重設，所有裝置上的登入已失效。</p>
   <p class="temp-password" id="tempPasswordValue"></p>
-  <div class="login-note">這組密碼只會顯示這一次。請當面或電話交給本人，不要用訊息或截圖傳送；本人登入後請到「我的帳戶」改成自己的密碼。</div>
+  <div class="login-note">這組密碼只顯示一次，請當面或電話交給本人。</div>
   <div class="modal-actions"><button class="btn primary" id="tempPasswordDoneBtn" type="button">我已交給本人，關閉</button></div>
 </div></div>
 
@@ -232,7 +230,7 @@
 </div></div>
 
 <div class="modal" id="tripHistoryModal"><div class="modal-panel">
-  <div class="modal-head"><div><h3>行程事件歷史</h3><p class="small muted" id="tripHistoryContext">僅追加 執行歷史</p></div><button class="icon-btn" data-close="tripHistoryModal" type="button" aria-label="關閉視窗">×</button></div>
+  <div class="modal-head"><div><h3>行程紀錄</h3><p class="small muted" id="tripHistoryContext">僅追加執行歷史</p></div><button class="icon-btn" data-close="tripHistoryModal" type="button" aria-label="關閉視窗">×</button></div>
   
   <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin-top:10px">
     <input class="search" id="tripHistorySearch" placeholder="搜尋事件、操作者、停靠點、內容…" autocomplete="off" />
@@ -244,16 +242,16 @@
     <button class="btn outline sm" id="tripHistoryNextBtn" type="button">下一頁</button>
   </div>
   <div id="tripHistoryProofPager" style="display:none;align-items:center;justify-content:space-between;gap:8px;margin-top:7px">
-    <button class="btn outline sm" id="tripProofPrevBtn" type="button">上一批 服務證明</button>
+    <button class="btn outline sm" id="tripProofPrevBtn" type="button">上一批服務證明</button>
     <span class="small muted" id="tripProofPageInfo">服務證明 1 / 1</span>
-    <button class="btn outline sm" id="tripProofNextBtn" type="button">下一批 服務證明</button>
+    <button class="btn outline sm" id="tripProofNextBtn" type="button">下一批服務證明</button>
   </div>
   <div class="list" id="tripHistoryList" style="margin-top:12px"></div>
   <div class="modal-actions"><button type="button" class="btn secondary" data-close="tripHistoryModal">關閉</button></div>
 </div></div>
 
 <div class="modal" id="formalTripCorrectionModal"><div class="modal-panel small">
-  <div class="modal-head"><div><h3>正式 行程 修正</h3></div><button class="icon-btn" data-close="formalTripCorrectionModal" type="button" aria-label="關閉視窗">×</button></div>
+  <div class="modal-head"><div><h3>修正已完成的行程</h3></div><button class="icon-btn" data-close="formalTripCorrectionModal" type="button" aria-label="關閉視窗">×</button></div>
   <p class="small muted" id="formalTripCorrectionText"></p>
   <div class="form-grid">
     <div class="form-field"><label for="formalTripCorrectionReason">修正原因</label><textarea id="formalTripCorrectionReason" placeholder="例如：司機誤將送達完成，經調度確認需重新執行最後一個送達站"></textarea></div>
@@ -266,17 +264,17 @@
   <div class="modal-head"><div><h3>服務證明</h3></div><button class="icon-btn" data-close="proofServiceModal" type="button" aria-label="關閉視窗">×</button></div>
   <input id="proofTripId" type="hidden" /><input id="proofTripRevision" type="hidden" />
   <div class="form-2">
-    <div class="form-field form-full"><label for="proofStepSelect">已完成送達 停靠點</label><select id="proofStepSelect"></select></div>
+    <div class="form-field form-full"><label for="proofStepSelect">已完成送達停靠點</label><select id="proofStepSelect"></select></div>
     <div class="form-field"><label for="proofReceiverName">實際收受／確認人</label><input id="proofReceiverName" placeholder="例如：王女士／家屬林先生" /></div>
     <div class="form-field"><label for="proofReceiverRole">關係</label><select id="proofReceiverRole"><option value="passenger">乘客本人</option><option value="family">家屬</option><option value="care_staff">機構／照護人員</option><option value="medical_staff">醫療院所人員</option><option value="other">其他</option></select></div>
     <div class="form-field form-full"><label for="proofNote">服務證明備註</label><textarea id="proofNote" placeholder="例如：安全送達門診入口，由女兒接手；輪椅已交還家屬"></textarea></div>
     <div class="form-field form-full"><label for="proofPhotoInput">現場照片（選填）</label><input id="proofPhotoInput" type="file" accept="image/*" capture="environment" /><div class="small muted">照片會壓縮後存入瀏覽器資料庫；主行程資料只保存物件參照，避免大型編碼資料塞入本機儲存空間。</div></div>
     <div class="form-field form-full"><div class="smart-modal-hint" id="proofLocationStatus">定位：尚未取得。可離線取得裝置定位；若瀏覽器拒絕定位仍可儲存其他證明。</div></div>
   </div>
-  <div class="modal-actions"><button class="btn outline" id="captureProofGpsBtn" type="button">取得目前 定位</button><button type="button" class="btn secondary" data-close="proofServiceModal">取消</button><button class="btn primary" id="saveProofServiceBtn" type="button">儲存服務證明</button></div>
+  <div class="modal-actions"><button class="btn outline" id="captureProofGpsBtn" type="button">取得目前定位</button><button type="button" class="btn secondary" data-close="proofServiceModal">取消</button><button class="btn primary" id="saveProofServiceBtn" type="button">儲存服務證明</button></div>
 </div></div>
 
-<div class="modal" id="proofPhotoModal"><div class="modal-panel small"><div class="modal-head"><div><h3>服務證明 照片</h3><p class="small muted" id="proofPhotoMeta">服務證明影像</p></div><button class="icon-btn" data-close="proofPhotoModal" type="button" aria-label="關閉視窗">×</button></div><div style="display:grid;place-items:center;min-height:180px;background:#f7f9fc;border:1px solid var(--line);border-radius:14px;overflow:hidden"><img id="proofPhotoImage" alt="服務證明照片" style="display:block;max-width:100%;max-height:65vh;object-fit:contain" /></div><div class="modal-actions"><button type="button" class="btn secondary" data-close="proofPhotoModal">關閉</button></div></div></div>
+<div class="modal" id="proofPhotoModal"><div class="modal-panel small"><div class="modal-head"><div><h3>服務證明照片</h3><p class="small muted" id="proofPhotoMeta">服務證明影像</p></div><button class="icon-btn" data-close="proofPhotoModal" type="button" aria-label="關閉視窗">×</button></div><div style="display:grid;place-items:center;min-height:180px;background:#f7f9fc;border:1px solid var(--line);border-radius:14px;overflow:hidden"><img id="proofPhotoImage" alt="服務證明照片" style="display:block;max-width:100%;max-height:65vh;object-fit:contain" /></div><div class="modal-actions"><button type="button" class="btn secondary" data-close="proofPhotoModal">關閉</button></div></div></div>
 <div class="modal" id="mapModal"><div class="modal-panel small"><div class="modal-head"><h3>選擇導航方式</h3><button class="icon-btn" data-close="mapModal" type="button" aria-label="關閉視窗">×</button></div><p class="muted small" id="mapDestinationText"></p><div class="form-grid"><button type="button" class="btn primary" id="googleMapBtn">Google Maps</button><button type="button" class="btn outline" id="appleMapBtn">Apple Maps</button></div></div></div>
 <div class="modal" id="contactModal"><div class="modal-panel small"><div class="modal-head"><h3>聯絡乘客</h3><button class="icon-btn" data-close="contactModal" type="button" aria-label="關閉視窗">×</button></div><div class="form-grid" id="contactOptions"></div></div></div>
 <div class="modal" id="issueModal"><div class="modal-panel">
@@ -421,7 +419,7 @@
 </div></div>
 
 <div class="modal" id="bookingHistoryModal"><div class="modal-panel">
-  <div class="modal-head"><div><h3>預約事件歷史</h3><p class="small muted" id="bookingHistoryContext">預約生命週期紀錄</p></div><button class="icon-btn" data-close="bookingHistoryModal" type="button" aria-label="關閉視窗">×</button></div>
+  <div class="modal-head"><div><h3>預約異動紀錄</h3><p class="small muted" id="bookingHistoryContext">預約生命週期紀錄</p></div><button class="icon-btn" data-close="bookingHistoryModal" type="button" aria-label="關閉視窗">×</button></div>
   <div class="list" id="bookingHistoryList"></div>
   <div class="modal-actions"><button type="button" class="btn secondary" data-close="bookingHistoryModal">關閉</button></div>
 </div></div>
@@ -502,7 +500,7 @@
 </div></div>
 
 <div class="modal" id="benefitImportModal"><div class="modal-panel">
-  <div class="modal-head"><div><h3>補助規則集匯入｜第三階段</h3></div><button class="icon-btn" data-close="benefitImportModal" type="button" aria-label="關閉視窗">×</button></div>
+  <div class="modal-head"><div><h3>匯入補助規則</h3></div><button class="icon-btn" data-close="benefitImportModal" type="button" aria-label="關閉視窗">×</button></div>
   <div class="form-grid">
     <div class="form-field"><label for="benefitImportFormat">格式</label><select id="benefitImportFormat"><option value="json">結構化資料</option><option value="csv">表格資料</option></select></div>
     <div class="form-field"><label for="benefitImportPayload">資料內容</label><textarea id="benefitImportPayload" style="min-height:220px" placeholder="請貼上結構化規則資料"></textarea></div>
@@ -512,7 +510,7 @@
 </div></div>
 
 <div class="modal" id="benefitDiffModal"><div class="modal-panel">
-  <div class="modal-head"><div><h3>規則集版本差異</h3></div><button class="icon-btn" data-close="benefitDiffModal" type="button" aria-label="關閉視窗">×</button></div>
+  <div class="modal-head"><div><h3>比較規則版本</h3></div><button class="icon-btn" data-close="benefitDiffModal" type="button" aria-label="關閉視窗">×</button></div>
   <div class="form-2"><div class="form-field"><label for="benefitDiffFrom">舊版本</label><select id="benefitDiffFrom"></select></div><div class="form-field"><label for="benefitDiffTo">新版本</label><select id="benefitDiffTo"></select></div></div>
   <div id="benefitDiffResult" class="list" style="margin-top:12px"></div>
   <div class="modal-actions"><button type="button" class="btn secondary" data-close="benefitDiffModal">關閉</button><button class="btn outline" id="runBenefitDiffBtn" type="button">重新比較</button></div>
