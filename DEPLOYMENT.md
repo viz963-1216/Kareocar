@@ -87,8 +87,11 @@
 - **Google、Facebook 登入**（#58，Staging 與正式專案各設一次）：
   - **Authentication → Sign In / Providers → Google**：啟用，填入 Google Cloud 的用戶端 ID 與密鑰
   - **Authentication → Sign In / Providers → Facebook**：啟用，填入 Meta app 的應用程式編號與密鑰
-  - 同一頁的 **Allow manual linking** 打開（綁定既有帳號、在「我的帳戶」綁定都需要）；
-    **Allow new users to sign up** 保持打開（第一次社群登入會先建立帳號，綁定手機後才能使用）
+  - **Authentication → Hooks → Customize Access Token (JWT) Claims**：啟用，類型選 Postgres，
+    函式選 `public.custom_access_token_hook`（migration 0014 建立）。綁定的社群帳號登入時，token 會
+    帶 `app_user_id`；**沒啟用的話，綁定既有帳號後用社群登入會被當成未綁定**
+  - **Allow new users to sign up** 保持打開（第一次社群登入會先建立帳號，綁定手機後才能使用）。
+    Allow manual linking 不再需要（綁定改由 social_logins 記錄，只確認一次）
   - **Authentication → URL Configuration → Redirect URLs** 加入
     `https://<正式網域>/api/v2/oauth-callback`；Staging 專案加入 `https://*--kareocar.netlify.app/api/v2/oauth-callback`
     （Deploy Previews）

@@ -55,10 +55,10 @@ function newCode(userId, challenge, provider) {
 const b64 = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
 
 /** 簽一張 access token。iat 預設現在；可傳 iatOffsetSeconds／expInSeconds 測邊界。 */
-function mintAccessToken(userId, { iatOffsetSeconds = 0, expInSeconds = 3600, role = 'authenticated', secret = SECRET, alg = 'HS256' } = {}) {
+function mintAccessToken(userId, { iatOffsetSeconds = 0, expInSeconds = 3600, role = 'authenticated', secret = SECRET, alg = 'HS256', extra = {} } = {}) {
   const iat = Math.floor(Date.now() / 1000) + iatOffsetSeconds;
   const header = b64({ alg, typ: 'JWT' });
-  const payload = b64({ sub: String(userId), role, iat, exp: iat + expInSeconds, aud: 'authenticated' });
+  const payload = b64({ sub: String(userId), role, iat, exp: iat + expInSeconds, aud: 'authenticated', ...extra });
   const sig = crypto.createHmac('sha256', secret).update(`${header}.${payload}`).digest('base64url');
   return `${header}.${payload}.${sig}`;
 }
@@ -68,10 +68,16 @@ function toE164(phone) {
   return p.startsWith('+') ? p : `+886${p.replace(/^0/, '')}`;
 }
 
+// Supabase 簽發 token 時會呼叫 Custom Access Token Hook（0014）。測試以 setClaimsHook 接上
+// 資料庫裡實際的 hook 函式，模擬「每次簽發都跑一次」。
+let claimsHook = null;
+function setClaimsHook(fn) { claimsHook = fn; }
+
 function issue(userId) {
   const refreshToken = crypto.randomBytes(16).toString('hex');
   refreshTokens.set(refreshToken, userId);
-  return { accessToken: mintAccessToken(userId), refreshToken, expiresIn: 3600, authUserId: userId };
+  const extra = claimsHook ? (claimsHook(userId) || {}) : {};
+  return { accessToken: mintAccessToken(userId, { extra }), refreshToken, expiresIn: 3600, authUserId: userId };
 }
 
 const invalid = () => Object.assign(new Error('帳號或密碼錯誤'), { code: 'INVALID_CREDENTIALS' });
@@ -134,6 +140,10 @@ const fakeProvider = {
     const token = crypto.randomBytes(8).toString('hex');
     links.set(token, { userId: subOf(accessToken), provider, challenge: codeChallenge, redirectTo });
     return `https://synthetic-project.supabase.co/auth/v1/link?req=${token}`;
+  },
+  async listUserIdentities(userId) {
+    calls.push(['listUserIdentities']);
+    return identitiesOf(String(userId));
   },
   async listIdentities(accessToken) {
     calls.push(['listIdentities']);
@@ -301,4 +311,4 @@ function adapt(mod) {
 }
 
 module.exports = { SECRET, mintAccessToken, addUser, setSeedPassword, adapt, headersFor, cookiesFrom, setCookieLines, calls, geoCalls, toE164,
-  oauthLogin, completeLink, challengeFrom, identitiesOf };
+  oauthLogin, completeLink, challengeFrom, identitiesOf, setClaimsHook };

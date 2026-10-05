@@ -38,7 +38,10 @@ exports.handler = (event) => runAuthenticated(event, async (client, body, claims
     const result = (await client.query('select app.review_account_deletion($1, $2, $3) as r',
       [id, action, optionalText(body.note, 500)])).rows[0].r;
     if (result.status === 'completed') {
+      // 綁定的 Google／Facebook 帳號（social_logins，見 0014）也一起刪除
+      const social = (await client.query('select app.purge_social_logins($1) as ids', [result.userId])).rows[0].ids || [];
       try {
+        for (const authUserId of social) await supabaseAuth.deleteUser(authUserId);
         await supabaseAuth.deleteUser(result.userId);
       } catch (error) {
         throw auth.authError('AUTH_PROVIDER_ERROR', `資料已準備清除，但登入帳號刪除失敗，整筆未執行，請稍後再試（${error.message}）`);
