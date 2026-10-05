@@ -164,8 +164,14 @@ Data Scrubber。
 
 ### 需要外部帳號或人工決定
 
-- [ ] **律師文件**：個資告知、服務條款完成；在平台設定填入版本與網址。個資告知要包含透過 Google、
-      Facebook 登入取得的資料（Email、姓名），以及 Facebook 要求的資料刪除說明
+- [ ] **律師文件**：草稿已在 `legal/privacy.html`（隱私權政策暨個資告知，含 Google／Facebook 登入取得的
+      資料與資料刪除說明 `#data-deletion`）與 `legal/terms.html`（服務條款），登入畫面下方有連結。發布前：
+      1. 律師審閱，補上所有【待填】（經營者、統一編號、聯絡 Email、Supabase 區域、管轄法院、版本與生效日），
+         並移除頁面上的「草稿」提示
+      2. 平台設定 → 條款版本：`privacy_notice`、`terms` 填版本與網址（`/legal/privacy.html`、`/legal/terms.html`）；
+         填了版本之後，沒有同意的使用者不能建立預約
+      3. Google 品牌頁填首頁、隱私權政策、服務條款網址；Meta 基本設定填隱私權政策、服務條款與資料刪除說明網址
+         （`/legal/privacy.html#data-deletion`）
 - [ ] **社群登入 Hook**（#58）：正式專案套用 migration 0014 後，在 Authentication → Hooks 啟用
       Customize Access Token，函式 `public.custom_access_token_hook`（Staging 同樣要開）
 - [ ] **Facebook 登入發布**：Meta 商家驗證與應用程式審查、隱私權政策與資料刪除說明網址，切換成「上線」

@@ -1883,3 +1883,4 @@ body.driver-mode .route-row.active{border-color:#9AC5F5;background:var(--cr-blue
 .login-divider{display:flex;align-items:center;gap:10px;margin:4px 0;color:var(--muted);font-size:12px}.login-divider::before,.login-divider::after{content:"";flex:1;height:1px;background:#e2e8f0}
 .oauth-bind-tabs{display:flex;gap:8px;margin:10px 0 14px}
 .login-method-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid #eef2f6}.login-method-row:last-child{border-bottom:0}
+    .login-legal{margin-top:14px;text-align:center;font-size:13px;color:var(--muted)}.login-legal a{color:var(--primary);text-decoration:none;margin:0 4px}.login-legal a:hover{text-decoration:underline}
