@@ -176,8 +176,12 @@ Data Scrubber。
       走一次：新帳號、綁定既有帳號、我的帳戶綁定與解除
 - [ ] **監控與告警**（#17）：程式端已完成，依「3. 監控與告警」建 Sentry 專案與告警規則、外部存活
       檢查、Discord webhook、Resend 寄件網域，並完成驗收（測試錯誤、測試告警、存活檢查失敗各一次）
-- [ ] **Google Maps**：正式與 Staging 的 `GOOGLE_MAPS_API_KEY`，在 Google Cloud 限制可用的 API
-      與用量上限
+- [x] **Google Maps 金鑰**（2026-10-05）：Google Cloud 專案 `kareocar` 啟用 Geocoding API、Routes API；
+      金鑰「Maps Platform API Key」限制只能呼叫這兩個 API（來源不限制：Netlify 伺服器沒有固定 IP）；
+      已填入 Netlify 的 `GOOGLE_MAPS_API_KEY`（機密，所有 context）；帳單帳戶設 1 美元預算警示
+- [ ] **Google Cloud 免費試用到期（2026-11-28）前升級**：試用結束不升級的話地圖 API 會停止，建立預約會
+      失敗。升級後在 Google 地圖平台 → 配額，把 Geocoding（v3 requests per day）與 Routes 設每日上限
+      （例如各 300 次；每筆預約約 3 次呼叫），試用期間配額不能修改。每月約 1 萬次免費額度，以 Google 價格頁為準
 - [ ] **備份與還原演練**（#28）：不加購 PITR，改用 Supabase 每日備份＋每 6 小時的加密備份
       （見 [docs/RESTORE_RUNBOOK.md](docs/RESTORE_RUNBOOK.md)）。設定 `BACKUP_ENCRYPTION_PASSPHRASE`、
       手動跑一次 Database backup 與 Restore drill，並在上線前做一次 Supabase 每日備份的還原演練
