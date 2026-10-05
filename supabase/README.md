@@ -184,8 +184,9 @@ Supabase 主控台要設定的：**Authentication → Sign In / Providers → Ph
 
 **建立超級管理者**（取代原本的 bootstrap 端點）：
 
-1. 在 **Authentication → Users → Add user** 以手機號碼（+8869…）與密碼建立帳號，勾選自動確認，
-   複製它的 User UID。
+1. 在自己的終端機執行 `bash tools/create-super-admin.sh`：輸入專案 ref、手機、service_role 金鑰
+   與密碼（隱藏輸入），以 Supabase Auth 管理 API 建立已確認手機的帳號並測試登入，印出 User UID
+   與下一步的 SQL。（主控台的 Add user 只能用 Email 建帳號，本系統以手機＋密碼登入，所以不用它。）
 2. 在 SQL Editor 建立對應的使用者列（`guard_user_insert` 只擋應用角色，SQL Editor 可以建）：
 
    ```sql
