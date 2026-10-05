@@ -95,8 +95,15 @@ async function requireSession(event) {
   return { ...claims, accessToken };
 }
 
-/** 在 withUser(session.userId) 交易內呼叫：帳號啟用中、token 沒有被撤銷。 */
+/**
+ * 在 withUser(session.userId) 交易內呼叫：帳號啟用中、token 沒有被撤銷；用綁定的社群帳號登入時
+ * （token 的 sub 與使用者不同，見 0014），對應必須還在——解除綁定後舊 token 立即失效。
+ */
 async function assertSessionActive(client, session) {
+  if (session.authUserId && session.authUserId !== session.userId) {
+    const owner = (await client.query('select app.social_login_user($1) as u', [session.authUserId])).rows[0];
+    if (!owner || owner.u !== session.userId) throw sessionError('SESSION_INVALID', '社群登入已解除綁定，請重新登入');
+  }
   const { rows } = await client.query('select * from app.session_state($1)', [session.userId]);
   const state = rows[0];
   if (!state) throw sessionError('SESSION_INVALID', '使用者不存在，請重新登入');

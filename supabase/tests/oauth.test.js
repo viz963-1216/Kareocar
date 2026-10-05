@@ -4,8 +4,9 @@
  *
  * 實際的 handler（oauth-start、oauth-callback、oauth-bind、login-methods、password-login、
  * state-load）跑在真實 Postgres 與 RLS 上；Supabase Auth 與 Google／Facebook 由
- * _auth-fixture.js 模擬，包含 PKCE（授權碼只能用對應的 verifier 換一次）與社群身分只能
- * 掛在一個帳號上。
+ * _auth-fixture.js 模擬，包含 PKCE（授權碼只能用對應的 verifier 換一次）。
+ * 假 Supabase 簽發 token 時會呼叫資料庫裡實際的 public.custom_access_token_hook（0014），
+ * 和正式環境的 Custom Access Token Hook 相同。
  *
  * 只允許本機隔離端點與固定測試庫名稱。
  */
@@ -39,6 +40,12 @@ const login = require(path.join(FN, 'v2-password-login.js'));
 const stateLoad = require(path.join(FN, 'v2-state-load.js'));
 const { getPool } = require(path.join(FN, '_db.js'));
 
+const hookClaims = (authUserId) => {
+  const v = execFileSync('psql', ['-h', host, '-p', PGPORT, '-U', 'postgres', '-d', 'careride_oauth_test', '-tAc',
+    `select public.custom_access_token_hook(jsonb_build_object('user_id', '${authUserId}', 'claims', '{}'::jsonb))->'claims'->>'app_user_id'`]).toString().trim();
+  return v ? { app_user_id: v } : {};
+};
+fx.setClaimsHook(hookClaims);
 const sql = (q) => execFileSync('psql', ['-h', host, '-p', PGPORT, '-U', 'postgres', '-d', 'careride_oauth_test', '-tAc', q]).toString().trim();
 
 let pass = 0, fail = 0;
@@ -53,6 +60,13 @@ const post = (mod, body, cookie = '') => mod.handler({ httpMethod: 'POST', heade
 const parse = (res) => ({ status: res.statusCode, ...JSON.parse(res.body) });
 const loc = (res) => String((res.headers && res.headers.location) || '');
 const has = (jar, name) => new RegExp(`(?:^|; )${name}=`).test(jar);
+// token 代表的使用者：有 app_user_id（綁定的社群帳號）就用它，否則用 sub
+const userOf = (jar) => {
+  const at = decodeURIComponent((jar.match(/(?:^|; )cr_at=([^;]*)/) || [])[1] || '');
+  if (!at) return null;
+  const c = JSON.parse(Buffer.from(at.split('.')[1], 'base64url').toString());
+  return c.app_user_id || c.sub;
+};
 const subOf = (jar) => {
   const at = decodeURIComponent((jar.match(/(?:^|; )cr_at=([^;]*)/) || [])[1] || '');
   return at ? JSON.parse(Buffer.from(at.split('.')[1], 'base64url').toString()).sub : null;
@@ -163,34 +177,39 @@ async function socialLogin(provider, subject, profile = {}) {
       && sql(`select count(*) from audit_events where event_type = 'auth.oauth.login' and actor_user_id = '${newUserId}'`) === '1';
   });
 
-  console.log('--- 第一次登入：綁定既有帳號 ---');
+  console.log('--- 第一次登入：綁定既有帳號（只確認一次） ---');
   fx.setSeedPassword('USR-VICTIM', 'VictimPass123');
   const second = await socialLogin('google', 'g-victim', { email: 'victim@example.com' });
-  const orphanId = (() => { try { return JSON.parse(Buffer.from(decodeURIComponent((second.jar.match(/cr_bind=([^;.]*)/) || [])[1]), 'base64url').toString()).a; } catch (_) { return null; } })();
+  const pendingSocial = (() => { try { return JSON.parse(Buffer.from(decodeURIComponent((second.jar.match(/cr_bind=([^;.]*)/) || [])[1]), 'base64url').toString()).a; } catch (_) { return null; } })();
   await t('密碼錯誤不能綁定', async () => {
     const r = parse(await post(bind, { mode: 'existing', phone: '0912000001', password: 'wrong-password' }, second.jar));
-    return r.status === 401 && r.error.code === 'INVALID_CREDENTIALS';
+    return r.status === 401 && r.error.code === 'INVALID_CREDENTIALS'
+      && sql("select count(*) from social_logins where user_id = 'USR-VICTIM'") === '0';
   });
-  let linkStart, linkJar;
-  await t('密碼正確：已登入，並回傳要前往的綁定網址', async () => {
-    linkStart = await post(bind, { mode: 'existing', phone: '0912000001', password: 'VictimPass123' }, second.jar);
-    const r = parse(linkStart);
-    linkJar = fx.cookiesFrom(linkStart, second.jar);
-    return r.ok && /\/auth\/v1\/link\?req=/.test(r.data.redirectUrl) && subOf(linkJar) === 'USR-VICTIM'
-      && has(linkJar, 'cr_oauth') && !has(linkJar, 'cr_bind');
-  });
-  await t('社群登入時自動建立、還沒綁定的那個帳號被刪除', () =>
-    Boolean(orphanId) && fx.calls.some((c) => c[0] === 'deleteUser' && c[1] === orphanId));
-  await t('完成綁定：回到 callback 登入原本的帳號', async () => {
-    const done = fx.completeLink(parse(linkStart).data.redirectUrl, { subject: 'g-victim', email: 'victim@example.com' });
-    const cb = await get(callback, { code: done.code }, linkJar);
-    const jar = fx.cookiesFrom(cb, linkJar);
-    return loc(cb) === '/?linked=google' && subOf(jar) === 'USR-VICTIM'
+  await t('密碼正確：直接完成綁定並登入，不必再到 Google', async () => {
+    const res = await post(bind, { mode: 'existing', phone: '0912000001', password: 'VictimPass123' }, second.jar);
+    const r = parse(res);
+    const jar = fx.cookiesFrom(res, second.jar);
+    return r.ok && r.data.mode === 'existing' && r.data.status === 'linked' && !r.data.redirectUrl
+      && userOf(jar) === 'USR-VICTIM' && !has(jar, 'cr_bind') && !has(jar, 'cr_oauth')
+      && sql(`select user_id || '|' || provider || '|' || email from social_logins where auth_user_id = '${pendingSocial}'`) === 'USR-VICTIM|google|victim@example.com'
       && sql(`select count(*) from audit_events where event_type = 'auth.oauth.linked' and actor_user_id = 'USR-VICTIM'`) === '1';
   });
-  await t('之後用這個 Google 帳號登入就是原本的帳號', async () => {
+  await t('社群帳號沒有被刪除（改成記錄對應）', () =>
+    Boolean(pendingSocial) && !fx.calls.some((c) => c[0] === 'deleteUser' && c[1] === pendingSocial));
+  await t('Token Hook：有對應就加 app_user_id，其他宣告原樣保留', () =>
+    sql(`select public.custom_access_token_hook(jsonb_build_object('user_id', '${pendingSocial}', 'claims', '{"role":"authenticated","sub":"${pendingSocial}"}'::jsonb))->'claims'::text`)
+      === `{"sub": "${pendingSocial}", "role": "authenticated", "app_user_id": "USR-VICTIM"}`
+    && sql(`select public.custom_access_token_hook('{"user_id":"nobody","claims":{"x":1}}'::jsonb)::text`) === '{"claims": {"x": 1}}');
+  await t('之後用這個 Google 帳號登入，就是原本的帳號', async () => {
     const again = await socialLogin('google', 'g-victim');
-    return loc(again.res) === '/' && subOf(again.jar) === 'USR-VICTIM';
+    return loc(again.res) === '/' && userOf(again.jar) === 'USR-VICTIM' && subOf(again.jar) === pendingSocial
+      && sql(`select count(*) from audit_events where event_type = 'auth.oauth.login' and actor_user_id = 'USR-VICTIM'`) === '1';
+  });
+  await t('用綁定的社群帳號登入後，API 以原本的帳號身分運作', async () => {
+    const again = await socialLogin('google', 'g-victim');
+    const r = parse(await get(methods, {}, again.jar));
+    return r.ok && r.data.social.find((x) => x.provider === 'google').linked === true;
   });
 
   console.log('--- 我的帳戶：登入方式 ---');
@@ -200,35 +219,69 @@ async function socialLogin(provider, subject, profile = {}) {
     const g = r.data.social.find((s) => s.provider === 'google'), f = r.data.social.find((s) => s.provider === 'facebook');
     return r.ok && r.data.phone === true && g.linked === true && g.email === 'victim@example.com' && f.linked === false;
   });
-  await t('同一個 Google 帳號不能再綁到別人身上', async () => {
+  await t('在我的帳戶綁定 Facebook：只到 Facebook 一次', async () => {
+    const res = await post(methods, { action: 'link', provider: 'facebook' }, victimJar);
+    const url = parse(res).data.url;
+    const jar = fx.cookiesFrom(res, victimJar);
+    const code = fx.oauthLogin({ provider: 'facebook', subject: 'f-victim', email: 'victim@fb.example', codeChallenge: fx.challengeFrom(url) });
+    const cb = await get(callback, { code }, jar);
+    return /\/auth\/v1\/authorize\?/.test(url) && loc(cb) === '/?linked=facebook'
+      && sql("select count(*) from social_logins where user_id = 'USR-VICTIM' and provider = 'facebook'") === '1'
+      && userOf(fx.cookiesFrom(cb, jar)) === 'USR-VICTIM';
+  });
+  await t('同一種登入方式不能再綁第二個帳號', async () => {
+    const res = await post(methods, { action: 'link', provider: 'google' }, victimJar);
+    const jar = fx.cookiesFrom(res, victimJar);
+    const code = fx.oauthLogin({ provider: 'google', subject: 'g-victim-2', codeChallenge: fx.challengeFrom(parse(res).data.url) });
+    const cb = await get(callback, { code }, jar);
+    return loc(cb) === '/?login_error=provider_taken' && sql("select count(*) from social_logins where user_id = 'USR-VICTIM'") === '2';
+  });
+  await t('已綁在別人身上的社群帳號不能再綁', async () => {
     fx.setSeedPassword('USR-ATTACK', 'AttackPass123');
     const attackJar = `cr_at=${fx.mintAccessToken('USR-ATTACK')}`;
     const res = await post(methods, { action: 'link', provider: 'google' }, attackJar);
     const jar = fx.cookiesFrom(res, attackJar);
-    const done = fx.completeLink(parse(res).data.url, { subject: 'g-victim' });
-    const cb = await get(callback, done, jar);
-    return loc(cb) === '/?login_error=identity_in_use' && subOf(fx.cookiesFrom(cb, jar)) === 'USR-ATTACK'
-      && fx.identitiesOf('USR-ATTACK').every((i) => i.provider !== 'google');
-  });
-  await t('綁定回呼換到的不是發起綁定的人 → 拒絕（PKCE 正確也一樣）', async () => {
-    const res = await post(methods, { action: 'link', provider: 'facebook' }, victimJar);
-    const jar = fx.cookiesFrom(res, victimJar).replace(/cr_at=[^;]*;?\s*/, '');
-    const challenge = fx.calls.filter((c) => c[0] === 'linkIdentityUrl').pop()[2];
-    // 換到另一個已存在、啟用中的帳號（社群新人）：沒有這道檢查就會被登入成那個人
-    const code = fx.oauthLogin({ provider: 'google', subject: 'g-new', codeChallenge: challenge });
+    const code = fx.oauthLogin({ provider: 'google', subject: 'g-victim', codeChallenge: fx.challengeFrom(parse(res).data.url) });
     const cb = await get(callback, { code }, jar);
-    return loc(cb) === '/?login_error=failed' && !has(fx.cookiesFrom(cb, jar), 'cr_at')
-      && fx.calls.filter((c) => c[0] === 'exchangeCode').length > 0;
+    return loc(cb) === '/?login_error=identity_in_use' && sql("select count(*) from social_logins where user_id = 'USR-ATTACK'") === '0';
   });
-  await t('解除綁定 Google（手機＋密碼仍保留）', async () => {
+  await t('社群帳號本身就是另一位系統使用者 → 不能綁', async () => {
+    const res = await post(methods, { action: 'link', provider: 'google' }, `cr_at=${fx.mintAccessToken('USR-ATTACK')}`);
+    const jar = fx.cookiesFrom(res, `cr_at=${fx.mintAccessToken('USR-ATTACK')}`);
+    const code = fx.oauthLogin({ provider: 'google', subject: 'g-new', codeChallenge: fx.challengeFrom(parse(res).data.url) });
+    const cb = await get(callback, { code }, jar);
+    return loc(cb) === '/?login_error=identity_in_use' && sql("select count(*) from social_logins where user_id = 'USR-ATTACK'") === '0';
+  });
+  await t('綁定只能綁到自己：受控函式拒絕沒有登入身分的呼叫', () => {
+    try { sql("set app.user_id = ''; select app.link_social_login('x', 'google', null)"); return false; }
+    catch (e) { return /請先登入/.test(String(e.stderr || e.message)); }
+  });
+  const mappedToken = fx.mintAccessToken(pendingSocial, { extra: { app_user_id: 'USR-VICTIM' } });
+  await t('解除綁定 Google：對應刪除、Supabase 社群帳號刪除、手機＋密碼仍保留', async () => {
     const r = parse(await post(methods, { action: 'unlink', provider: 'google' }, victimJar));
-    return r.ok && r.data.social.find((s) => s.provider === 'google').linked === false
+    return r.ok && r.data.social.find((s) => s.provider === 'google').linked === false && r.data.phone === true
+      && sql(`select count(*) from social_logins where auth_user_id = '${pendingSocial}'`) === '0'
+      && fx.calls.some((c) => c[0] === 'deleteUser' && c[1] === pendingSocial)
       && sql(`select count(*) from audit_events where event_type = 'auth.oauth.unlinked' and actor_user_id = 'USR-VICTIM'`) === '1';
   });
+  await t('解除綁定後，那個社群帳號的舊 token 立即失效', async () => {
+    const r = await get(methods, {}, `cr_at=${mappedToken}`);
+    return r.statusCode === 401 && JSON.parse(r.body).error.code === 'SESSION_INVALID';
+  });
   await t('沒綁定的方式不能解除', async () => {
-    const r = parse(await post(methods, { action: 'unlink', provider: 'facebook' }, victimJar));
+    const r = parse(await post(methods, { action: 'unlink', provider: 'google' }, victimJar));
     return r.status === 400;
   });
+  await t('刪除帳號時清除對應：只有平台管理者可以執行', () => {
+    try { sql("select set_config('app.user_id', 'USR-ATTACK', false); select app.purge_social_logins('USR-VICTIM')"); return false; }
+    catch (e) {
+      return /只有平台管理者/.test(String(e.stderr || e.message))
+        && sql("select count(*) from social_logins where user_id = 'USR-VICTIM'") === '1';
+    }
+  });
+  await t('平台管理者清除後回傳要刪除的社群帳號', () =>
+    sql("select set_config('app.user_id', 'USR-ROOT', false); select array_length(app.purge_social_logins('USR-VICTIM'), 1)").split('\n').pop() === '1'
+    && sql("select count(*) from social_logins where user_id = 'USR-VICTIM'") === '0');
   await t('沒登入不能查登入方式', async () => (await get(methods, {})).statusCode === 401);
 
   console.log('--- 停用的帳號 ---');

@@ -232,6 +232,15 @@ const httpProvider = {
     return String(result.data.url);
   },
 
+  /** 以管理權限讀取某個 Supabase 帳號的登入方式（帳號不存在回傳空陣列）。 */
+  async listUserIdentities(authUserId) {
+    const result = await call(`/auth/v1/admin/users/${encodeURIComponent(authUserId)}`,
+      { method: 'GET', key: env('SUPABASE_SERVICE_ROLE_KEY') });
+    if (result.status === 404) return [];
+    if (result.status !== 200) throw providerError(result, 'AUTH_PROVIDER_ERROR', '無法讀取登入方式');
+    return identitiesFrom(result.data);
+  },
+
   /** 這個使用者目前的登入方式（Supabase 的 identities）。 */
   async listIdentities(accessToken) {
     const result = await call('/auth/v1/user', { method: 'GET', key: env('SUPABASE_ANON_KEY'), bearer: accessToken });
@@ -318,7 +327,12 @@ async function verifyAccessToken(token) {
     throw authError('SESSION_EXPIRED', '登入工作階段已過期，請重新登入');
   }
   if (claims.role && claims.role !== 'authenticated') throw authError('SESSION_INVALID', '登入工作階段無效，請重新登入');
-  return { userId: claims.sub, iat: Number(claims.iat) || 0, exp: Number(claims.exp) };
+  // 社群登入綁到既有帳號時，Supabase 的 Custom Access Token Hook 會加上 app_user_id（見 0014）。
+  // token 由 Supabase 簽章，所以可以信任；每次請求另外由 assertSessionActive 確認對應還在。
+  if (claims.app_user_id !== undefined && (typeof claims.app_user_id !== 'string' || !claims.app_user_id)) {
+    throw authError('SESSION_INVALID', '登入工作階段無效，請重新登入');
+  }
+  return { userId: claims.app_user_id || claims.sub, authUserId: claims.sub, iat: Number(claims.iat) || 0, exp: Number(claims.exp) };
 }
 
 module.exports = {
@@ -331,6 +345,7 @@ module.exports = {
   exchangeCode: (...a) => provider.exchangeCode(...a),
   linkIdentityUrl: (...a) => provider.linkIdentityUrl(...a),
   listIdentities: (...a) => provider.listIdentities(...a),
+  listUserIdentities: (...a) => provider.listUserIdentities(...a),
   unlinkIdentity: (...a) => provider.unlinkIdentity(...a),
   OAUTH_PROVIDERS, assertOAuthProvider, pkcePair, authorizeUrl,
   verifyAccessToken, setProvider, getProvider, authError

@@ -10,6 +10,10 @@
   綁定發起登入的瀏覽器：verifier 只在簽章過的 `cr_oauth` cookie，別人塞過來的授權碼換不到 session。
   第一次登入還沒綁定手機時不發登入 cookie，只發簽章過的 `cr_bind`（15 分鐘），所有 API 都用不了；
   綁定既有帳號必須輸入那支手機的密碼（有失敗次數限制）。同一個社群帳號只能綁一個使用者。
+- 綁定記在 `social_logins`（只經受控函式寫入），Supabase 的 Custom Access Token Hook 在 token 加上
+  `app_user_id`；token 由 Supabase 簽章，所以不能偽造。每次請求另外確認對應還在，解除綁定後舊 token
+  立即失效。後台重設密碼不會撤銷社群登入的 refresh token（社群帳號本身沒有外洩）；要停止某個社群
+  登入，請解除綁定或停用帳號。
 - access token 與 refresh token 只放在 **HttpOnly cookie**（`cr_at` 只送到 `/api`，`cr_rt` 只送到
   `/api/v2/session`），瀏覽器的 JavaScript 讀不到。
 - 每個請求驗證 JWT（JWKS 或 HS256），以 token 的 `sub` 作為使用者。停用帳號、改密碼、刪除帳號

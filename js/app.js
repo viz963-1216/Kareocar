@@ -6441,7 +6441,7 @@ async function saveStaff(){
 }
 // Google、Facebook 登入（#58）：按鈕連到自己的 API，token 只在 HttpOnly cookie
 const OAUTH_LABELS={google:'Google',facebook:'Facebook'};
-const LOGIN_ERROR_MESSAGES={cancelled:'已取消社群登入',expired:'登入逾時，請再試一次',identity_in_use:'這個社群帳號已經綁定在其他帳號上',account_disabled:'此帳號已停用，請聯絡平台管理者',retry:'請再試一次',failed:'社群登入失敗，請再試一次或改用手機登入'};
+const LOGIN_ERROR_MESSAGES={provider_taken:'這個帳號已經綁定另一個同類型的社群帳號，請先解除再綁定',cancelled:'已取消社群登入',expired:'登入逾時，請再試一次',identity_in_use:'這個社群帳號已經綁定在其他帳號上',account_disabled:'此帳號已停用，請聯絡平台管理者',retry:'請再試一次',failed:'社群登入失敗，請再試一次或改用手機登入'};
 function startSocialLogin_(provider){location.assign(`${APP_CONFIG.oauthStartUrl}?provider=${encodeURIComponent(provider)}`);}
 async function getJson_(url){
   const response=await apiFetch(url,{method:'GET',headers:{Accept:'application/json'},cache:'no-store'});
@@ -6480,12 +6480,8 @@ async function submitOAuthBind_(mode){
   try{
     // 登入狀態由轉回後的 /api/v2/session 確認（markBackendSession 在這個範圍拿不到，也不需要）
     const result=await backendJsonPost(APP_CONFIG.oauthBindUrl,body);
-    // 綁定既有帳號：已用手機密碼登入，再回 Google／Facebook 確認一次就完成綁定。
-    // 這一步沒完成的話帳號不會綁上，所以轉過去之前先講清楚
-    if(result?.data?.redirectUrl){
-      showToast('密碼正確。接下來會再到 Google／Facebook 確認一次：請選同一個帳號並按「繼續」，才會完成綁定');
-      const url=result.data.redirectUrl;setTimeout(()=>location.assign(url),2500);return;
-    }
+    // 綁定既有帳號：伺服器記下對應並以手機密碼登入，不必再到 Google／Facebook 確認一次
+    if(result?.data?.mode==='existing'){showToast('已綁定，下次可以直接用社群帳號登入');setTimeout(()=>location.replace('/'),1200);return;}
     location.replace('/');
   }catch(error){showToast(error?.message||'綁定失敗');}
   finally{setButtonBusy(btn,false);}

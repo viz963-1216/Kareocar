@@ -6,10 +6,9 @@
  * GET  /api/v2/oauth-bind  → { provider, email, name }，綁定畫面預先帶入
  * POST /api/v2/oauth-bind
  *   { mode: 'existing', phone, password }
- *       這支手機已經有帳號：密碼正確才綁定（和密碼登入一樣有失敗次數限制）。
- *       Supabase 的社群身分只能掛在一個使用者上，所以先刪掉剛才社群登入時 Supabase 自動
- *       建立、還沒綁定的那個帳號，再由既有帳號重新走一次授權把社群身分綁上去：
- *       回傳 redirectUrl，前端前往後會自動回到 oauth-callback 完成。這時已經用手機密碼登入。
+ *       這支手機已經有帳號：密碼正確才綁定（和密碼登入一樣有失敗次數限制）。把剛才社群登入時
+ *       Supabase 建立的帳號記到 social_logins，對應到這位使用者（見 0014），並以手機密碼登入。
+ *       不必再到 Google／Facebook 確認一次；之後用社群帳號登入時，token 會帶這位使用者。
  *   { mode: 'new', name, email, phone, password }
  *       第一次使用：建立需求者，手機與密碼也設到同一個帳號上，之後兩種方式都能登入。
  *
@@ -55,25 +54,22 @@ async function bindExisting(event, pending, body) {
   const claims = await supabaseAuth.verifyAccessToken(tokens.accessToken);
   if (claims.userId === pending.authUserId) throw auth.authError('VALIDATION_ERROR', '這個社群帳號已經綁定');
 
-  // 待綁定的那個 Supabase 帳號不能已經是系統使用者（cr_bind 只發給沒有 users 列的帳號）
-  const orphan = (await withoutUser((client) =>
-    client.query('select 1 from app.session_state($1)', [pending.authUserId]))).rows[0];
-  if (orphan) throw auth.authError('VALIDATION_ERROR', '綁定資料已失效，請重新登入');
-
-  await withUser(claims.userId, async (client) => {
+  const status = await withUser(claims.userId, async (client) => {
     await session.assertSessionActive(client, claims);
     await auth.clearLoginRate(client, phone);
+    const r = (await client.query('select app.link_social_login($1, $2, $3) as s',
+      [pending.authUserId, pending.provider, pending.email])).rows[0].s;
+    if (r === 'provider_taken') {
+      throw auth.authError('VALIDATION_ERROR', '這個帳號已經綁定另一個同類型的社群帳號，請先到「我的帳戶」解除');
+    }
+    if (r === 'in_use') throw auth.authError('IDENTITY_IN_USE', '這個社群帳號已經綁定在其他帳號上');
     await audit(client, 'auth.oauth.bind_existing', claims.userId, { provider: pending.provider });
+    if (r === 'linked') await audit(client, 'auth.oauth.linked', claims.userId, { provider: pending.provider });
+    return r;
   });
 
-  await supabaseAuth.deleteUser(pending.authUserId);
-  const { verifier, challenge } = supabaseAuth.pkcePair();
-  const redirectUrl = await supabaseAuth.linkIdentityUrl(tokens.accessToken, {
-    provider: pending.provider, redirectTo: oauth.callbackUrl(event), codeChallenge: challenge
-  });
-  return withCookies(json(200, { ok: true, data: { mode: 'existing', redirectUrl } }), [
+  return withCookies(json(200, { ok: true, data: { mode: 'existing', status } }), [
     ...session.sessionCookies(event, tokens),
-    oauth.oauthCookie(event, { verifier, provider: pending.provider, mode: 'link', expectUserId: claims.userId }),
     oauth.clearBindCookie(event)
   ]);
 }
