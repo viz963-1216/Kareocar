@@ -1884,3 +1884,14 @@ body.driver-mode .route-row.active{border-color:#9AC5F5;background:var(--cr-blue
 .oauth-bind-tabs{display:flex;gap:8px;margin:10px 0 14px}
 .login-method-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid #eef2f6}.login-method-row:last-child{border-bottom:0}
     .login-legal{margin-top:14px;text-align:center;font-size:13px;color:var(--muted)}.login-legal a{color:var(--primary);text-decoration:none;margin:0 4px}.login-legal a:hover{text-decoration:underline}
+    /* 收合區塊（帳號設定、申請成為機構） */
+    .card-details>summary{display:flex;align-items:center;justify-content:space-between;cursor:pointer;list-style:none;gap:12px}
+    .card-details>summary::-webkit-details-marker{display:none}
+    .card-details>summary h3{margin:0;font-size:16px}
+    .card-details>summary::after{content:'';width:8px;height:8px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(45deg);transition:transform .15s;flex:none;margin-right:4px}
+    .card-details[open]>summary{margin-bottom:14px}
+    .card-details[open]>summary::after{transform:rotate(-135deg)}
+    .account-card-main{min-width:0}.account-card-main .profile-photo-actions{margin-top:10px}
+    .mobile-context-trigger.single-context{cursor:default}.mobile-context-trigger.single-context .context-chevron{display:none}
+    .list-item-head>.pill{white-space:nowrap;flex:none}
+    .card>.card-head:last-child{margin-bottom:0}

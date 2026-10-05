@@ -1158,12 +1158,13 @@ function bookingBenefitText(booking){
   if(b?.status==='assessment_required')return '補助：請先完成補助試算';
   if(b?.status==='not_eligible')return '補助：預估不符合資格';
   if(b?.status==='insufficient_data')return '補助：試算資料不足';
-  return '補助：尚無已核准的規則';
+  return '';
 }
 function bookingCommercialSummary(booking){
   const q=booking?.serverComputed?.quote||currentBookingCommercialSnapshot(booking)?.quote;
-  const quoteText=q?.estimatedFare!=null?`預估 NT$${Number(q.estimatedFare).toLocaleString('zh-TW')}`:q?.status==='pricing_pending'?'車資由雙方議定':'報價待正式定價規則';
-  return `${quoteText}・${bookingBenefitText(booking)}`;
+  // 平台不訂車資，沒有估價時就是雙方議定
+  const quoteText=q?.estimatedFare!=null?`預估 NT$${Number(q.estimatedFare).toLocaleString('zh-TW')}`:'車資由雙方議定';
+  return [quoteText,bookingBenefitText(booking)].filter(Boolean).join('・');
 }
 function bookingRevisionSnapshot(booking){
   return {
@@ -4791,7 +4792,7 @@ Analytics = {
 
 const NAVS=Object.freeze([
   {id:'requester-home',icon:'⌂',label:'我的首頁',permission:'requester.dashboard.read'},
-  {id:'requester-new',icon:'＋',label:'我要預約',permission:'booking.create_own'},
+  {id:'requester-new',icon:'＋',label:'預約接送',permission:'booking.create_own'},
   {id:'requester-bookings',icon:'≡',label:'我的預約',permission:'booking.read_own'},
   {id:'driver-home',icon:'⌂',label:'工作台',permission:'driver.dashboard.read'},
   {id:'driver-trips',icon:'≡',label:'我的行程',permission:'trip.read_own'},
@@ -4979,8 +4980,10 @@ async function runUndoSnackbar(){
   const action=$('undoSnackbarAction'),bar=$('undoSnackbar'),handler=showUndoSnackbar.handler;if(!handler)return;action.disabled=true;action.textContent='復原中…';
   try{await handler();bar?.classList.remove('show');showUndoSnackbar.handler=null;}catch(error){action.disabled=false;action.textContent='復原';showToast(error?.message||'復原失敗');}
 }
-function mobileIdentityLabel(){const o=currentOrg(),r=Identity.currentRole();return `${o?.name||'平台'}・${ROLE_LABELS[r]||r||(Identity.isSuperAdmin()?'超級管理者':'目前身分')}`;}
-function renderMobileIdentityContext(){const btn=$('mobileIdentityContextText');if(btn)btn.textContent=mobileIdentityLabel();}
+// 需求者組織是系統內部的歸屬，畫面上只顯示使用者自己的名字
+function mobileIdentityLabel(){const o=currentOrg(),r=Identity.currentRole(),roleText=ROLE_LABELS[r]||r||(Identity.isSuperAdmin()?'平台管理者':'');const who=!o||o.type==='requester_hub'?(Identity.currentUser()?.name||''):o.name;return [who,roleText].filter(Boolean).join('・');}
+// 只有一個身分時沒有東西可以切換，就不要做成按鈕
+function renderMobileIdentityContext(){const text=$('mobileIdentityContextText'),btn=$('mobileIdentityContextBtn');if(text)text.textContent=mobileIdentityLabel();if(btn){let multi=false;try{multi=(Identity.availableOrganizations()||[]).length>1;}catch(_){}btn.disabled=!multi;btn.classList.toggle('single-context',!multi);}}
 function openMobileIdentityContext(){
   const list=$('identityContextList');if(!list)return;const currentId=orgId(),options=Identity.availableOrganizations();
   list.innerHTML=options.map(({membership,organization,viewOnly})=>{const label=viewOnly?'查看模式':(ROLE_LABELS[membership?.role]||membership?.role||'');const active=organization.id===currentId;return `<button class="identity-context-option ${active?'active':''}" type="button" data-identity-org="${escapeHTML(organization.id)}"><span><strong>${escapeHTML(organization.name)}</strong><small>${escapeHTML(label||'目前組織')}</small></span><span class="check">${active?'✓':'›'}</span></button>`;}).join('')||'<div class="empty">目前沒有可切換的組織</div>';
@@ -5248,12 +5251,17 @@ function navGroupMeta(nav){
   if(['driver-kpi','benefits'].includes(id))return ['analytics','數據與補助'];
   return ['system','系統與帳戶'];
 }
+// 需求者只做試算，不是管理補助
+const NAV_LABEL_BY_ROLE=Object.freeze({requester:{benefits:'補助試算'}});
 function renderNav(){
-  const navs=visibleNavs();
+  const overrides=NAV_LABEL_BY_ROLE[role()]||{};
+  const navs=visibleNavs().map(n=>overrides[n.id]?{...n,label:overrides[n.id]}:n);
   const groups=[];
-  navs.forEach(nav=>{const [key,label]=navGroupMeta(nav);let g=groups.find(x=>x.key===key);if(!g){g={key,label,items:[]};groups.push(g);}g.items.push(nav);});
-  const desktopMarkup=groups.map(g=>`<div class="nav-group" data-nav-group="${g.key}"><div class="nav-group-title">${g.label}</div>${g.items.map(({id,icon,label})=>`<button class="nav-btn ${id===currentView?'active':''}" data-view="${id}" type="button"><span class="nav-icon-wrap" aria-hidden="true">${navIcon(id,icon)}</span><span>${label}</span></button>`).join('')}</div>`).join('');
-  const useMore=navs.length>4;
+  // 項目少（需求者、司機）時不分組，分組標題只是多餘的字
+  const flat=navs.length<=5;
+  navs.forEach(nav=>{const [key,label]=flat?['all','']:navGroupMeta(nav);let g=groups.find(x=>x.key===key);if(!g){g={key,label,items:[]};groups.push(g);}g.items.push(nav);});
+  const desktopMarkup=groups.map(g=>`<div class="nav-group" data-nav-group="${g.key}">${g.label?`<div class="nav-group-title">${g.label}</div>`:''}${g.items.map(({id,icon,label})=>`<button class="nav-btn ${id===currentView?'active':''}" data-view="${id}" type="button"><span class="nav-icon-wrap" aria-hidden="true">${navIcon(id,icon)}</span><span>${label}</span></button>`).join('')}</div>`).join('');
+  const useMore=navs.length>5;
   const mobilePriority=MOBILE_PRIMARY_NAV_BY_ROLE[role()]||[];
   const prioritized=[
     ...mobilePriority.map(id=>navs.find(n=>n.id===id)).filter(Boolean),
@@ -5319,7 +5327,7 @@ function render(){
     if(!fallback){ $('topTitle').textContent='無可用功能'; $('contentRoot').innerHTML='<div class="empty">此帳號目前沒有可使用的功能，請聯絡管理員。</div>'; return; }
     currentView=fallback.id;
   }
-  const activeNav=NAVS.find(n=>n.id===currentView); $('topTitle').textContent=activeNav?.label||'工作台';
+  const activeNav=NAVS.find(n=>n.id===currentView); $('topTitle').textContent=(NAV_LABEL_BY_ROLE[role()]||{})[currentView]||activeNav?.label||'工作台';
   const renderer=VIEW_RENDERERS[currentView],root=$('contentRoot');
   root.setAttribute('aria-busy','true');
   root.innerHTML='<div class="ui-loading" aria-label="頁面載入中"><div class="ui-skeleton"></div><div class="ui-skeleton"></div><div class="ui-skeleton"></div></div>';
@@ -5362,7 +5370,7 @@ function careRecipientDirectoryRows(){
 }
 function careRecipientFixedNeedsText(recipient){
   const n=CareRecipient.defaultServiceNeeds(recipient),parts=[n.aidNeed,n.companions?`預設陪同 ${n.companions} 人`:null,n.specialNeed,n.requiresAccessibleVehicle?'需無障礙車':null,n.requiresEscort?'需陪同協助':null];
-  return [...new Set(parts.filter(Boolean))].join('・')||'尚未設定固定需求';
+  return [...new Set(parts.filter(Boolean))].join('・')||'無';
 }
 function careRecipientsView(){
   const userId=Identity.currentUser()?.id||'',rows=careRecipientDirectoryRows(),active=rows.filter(r=>r.status==='active'),archived=rows.filter(r=>r.status==='archived'),managed=rows.filter(r=>CareRecipient.canManage(r.id,{actorUserId:userId}));
@@ -5424,7 +5432,7 @@ function bookingLegOrganizationAssignmentControl(b){
   const options=Organization.serviceOrganizations().map(o=>`<option value="${escapeHTML(o.id)}" ${o.id===current?'selected':''}>${escapeHTML(o.name)}</option>`).join('');
   return `<select class="inline-select booking-leg-org-select" data-booking="${escapeHTML(b.id)}" data-leg="${escapeHTML(leg.id)}" aria-label="指定下一行程段承接組織"><option value="">指定 ${escapeHTML(leg.label||'下一行程段')} 承接組織</option>${options}</select>`;
 }
-function bookingServiceOrgName(booking){ return Organization.get(booking?.organizationId)?.name||(booking?.claimStatus==='open'?'公開需求池・等待接案':booking?.claimStatus==='expired'?'公開期限已到':'尚未指定承接單位'); }
+function bookingServiceOrgName(booking){ return Organization.get(booking?.organizationId)?.name||(booking?.claimStatus==='open'?'等待機構承接':booking?.claimStatus==='expired'?'沒有機構承接':'尚未有機構承接'); }
 const REQUESTER_BOOKING_DRAFT_PREFIX='careRideRequesterBookingDraftV2';
 function requesterDraftKey(){ const userId=Identity.currentUser()?.id||''; return userId?`${REQUESTER_BOOKING_DRAFT_PREFIX}:${userId}`:''; }
 function loadRequesterDraft(){
@@ -5484,17 +5492,12 @@ function requesterHasUnsavedDraftOnPage(){const d=collectRequesterDraftFromDom()
 function requesterHome(){
   const u=Identity.currentUser(),rows=requesterBookingsRows(),pending=rows.filter(b=>['pending','partially_scheduled'].includes(b.status)).length,scheduled=rows.filter(b=>b.status==='scheduled').length,next=[...rows].filter(b=>{const dt=Booking.dateTime(b);return ['pending','partially_scheduled','scheduled'].includes(b.status)&&!!dt&&dt>=new Date();}).sort((a,b)=>(Booking.dateTime(a)?.getTime()??Number.MAX_SAFE_INTEGER)-(Booking.dateTime(b)?.getTime()??Number.MAX_SAFE_INTEGER))[0];
   const recent=rows.slice(0,3);
-  return `<section class="card requester-welcome"><div><h2>${escapeHTML(u?.name||'您好')}，今天需要接送嗎？</h2><p>預約長照接送、查看下一趟安排，或先試算可能適用的補助。</p></div><button class="btn" id="requesterQuickBookBtn" type="button">＋ 我要預約接送</button></section>
+  return `<section class="card requester-welcome"><div><h2>${escapeHTML(u?.name||'')}，您好</h2></div><button class="btn" id="requesterQuickBookBtn" type="button">＋ 預約接送</button></section>
   ${requesterDraftHomeCard()}
   ${requesterNotificationsCard()}
-  <div class="requester-quick-grid">
-    <button class="requester-quick" id="requesterQuickBookCard" type="button"><span class="quick-icon">＋</span><strong>預約接送</strong><span>建立單程或來回需求</span></button>
-    <button class="requester-quick" data-ui-view="requester-bookings" type="button"><span class="quick-icon">≡</span><strong>我的預約</strong><span>查看進度與歷史紀錄</span></button>
-    <button class="requester-quick" data-ui-view="benefits" type="button"><span class="quick-icon">$</span><strong>補助試算</strong><span>快速查看可能適用額度</span></button>
-  </div>
   <div class="requester-status-strip"><div><span>等待處理</span><strong>${pending}</strong></div><div><span>已安排</span><strong>${scheduled}</strong></div><div><span>全部預約</span><strong>${rows.length}</strong></div></div>
-  ${next?`<section class="card requester-next"><div class="card-head"><div><h3>下一筆接送</h3><p>${escapeHTML(next.pickupDate)} ${escapeHTML(next.pickupTime)}・${escapeHTML(bookingServiceOrgName(next))}</p></div>${bookingStatusPill(next.status)}</div><div class="route-line"><strong>${escapeHTML(Booking.dispatchView(next)?.pickupAddress||next.pickupAddress)}</strong><br>↓<br><strong>${escapeHTML(Booking.dispatchView(next)?.destination||next.destination)}</strong></div><div class="item-actions"><button class="btn outline" data-ui-view="requester-bookings" type="button">查看預約詳情</button></div></section>`:`<section class="card requester-empty-state"><div class="empty-icon">🚐</div><h3>目前沒有待執行接送</h3><p>需要看診、復健、洗腎或日照接送時，可以直接建立預約需求。</p><button class="btn primary" id="requesterEmptyBookBtn" type="button">建立第一筆預約</button></section>`}
-  <section class="card"><div class="card-head"><div><h3>最近預約</h3><p>只顯示最近 3 筆，需要完整紀錄可前往「我的預約」</p></div><button class="btn outline sm" id="requesterAllBookingsBtn" type="button">查看全部</button></div>${recent.map(b=>`<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(b.pickupDate)} ${escapeHTML(b.pickupTime)}｜${escapeHTML(b.name)}</h4><p>${escapeHTML(bookingServiceOrgName(b))}<br>${bookingLegSummary(b)}</p></div>${bookingStatusPill(b.status)}</div></div>`).join('')||'<div class="ui-state"><div class="ui-state-icon">＋</div><h3>還沒有預約紀錄</h3><p>建立第一筆接送需求後，進度與歷史會顯示在這裡。</p></div>'}</section>`;
+  ${next?`<section class="card requester-next"><div class="card-head"><div><h3>下一筆接送</h3><p>${escapeHTML(next.pickupDate)} ${escapeHTML(next.pickupTime)}・${escapeHTML(bookingServiceOrgName(next))}</p></div>${bookingStatusPill(next.status)}</div><div class="route-line"><strong>${escapeHTML(Booking.dispatchView(next)?.pickupAddress||next.pickupAddress)}</strong><br>↓<br><strong>${escapeHTML(Booking.dispatchView(next)?.destination||next.destination)}</strong></div><div class="item-actions"><button class="btn outline" data-ui-view="requester-bookings" type="button">查看預約</button></div></section>`:''}
+  <section class="card"><div class="card-head"><h3>最近預約</h3>${recent.length?'<button class="btn outline sm" id="requesterAllBookingsBtn" type="button">查看全部</button>':''}</div>${recent.map(b=>`<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(b.pickupDate)} ${escapeHTML(b.pickupTime)}｜${escapeHTML(b.name)}</h4><p>${escapeHTML(bookingServiceOrgName(b))}<br>${bookingLegSummary(b)}</p></div>${bookingStatusPill(b.status)}</div></div>`).join('')||'<div class="empty">還沒有預約</div>'}</section>`;
 }
 
 function requesterNew(){
@@ -5502,45 +5505,43 @@ function requesterNew(){
   const editing=editingRequesterBookingId?Booking.get(editingRequesterBookingId):null;
   if(editing&&(!Booking.canEditOwn(editing.id,u?.id).ok||editing.requestedByUserId!==u?.id))editingRequesterBookingId='';
   const b=editingRequesterBookingId?Booking.get(editingRequesterBookingId):null,draft=b?null:loadRequesterDraft();
-  const fixed=selfRecipient?careRecipientFixedNeedsText(selfRecipient):'尚未建立；第一次送出預約時會自動建立你的接送主檔';
+  const fixed=selfRecipient?careRecipientFixedNeedsText(selfRecipient):'無';
   const defaultPickup=b?.pickupAddress??(draft&&Object.prototype.hasOwnProperty.call(draft,'pickupAddress')?draft.pickupAddress:(selfRecipient?CareRecipient.defaultPickupAddress(selfRecipient):''));
   const tripType=b?.tripType||draft?.tripType||'單程',date=b?.pickupDate||draft?.pickupDate||tomorrow,time=b?.pickupTime||draft?.pickupTime||'09:00',returnDate=b?.returnDate||draft?.returnDate||date,returnTime=b?.returnTime||draft?.returnTime||'13:00';
-  const aid=b?.aidNeed??draft?.aidNeed??'',companions=b?.companions===undefined||b?.companions===null?(draft?.companions??''):String(b.companions),title=b?'修改預約':'我要預約接送',submitLabel=b?'儲存預約修改':'送出接送需求';
+  const aid=b?.aidNeed??draft?.aidNeed??'',companions=b?.companions===undefined||b?.companions===null?(draft?.companions??''):String(b.companions),title=b?'修改預約':'預約接送',submitLabel=b?'儲存修改':'送出預約';
   const step=Math.max(1,Math.min(4,Number(b?requesterWizardStep:(requesterWizardStep>1?requesterWizardStep:(draft?.step||1)))||1));
   requesterWizardStep=step;
-  const indicator=(n,label,sub)=>`<button type="button" class="wizard-step-indicator ${step===n?'active':step>n?'done':''}" data-wizard-go="${n}" type="button" ${n>step+1?'disabled aria-disabled="true"':''}><strong><span class="num">${step>n?'✓':n}</span><span>${label}</span></strong><small>${sub}</small></button>`;
+  const indicator=(n,label)=>`<button type="button" class="wizard-step-indicator ${step===n?'active':step>n?'done':''}" data-wizard-go="${n}" ${n>step+1?'disabled aria-disabled="true"':''}><strong><span class="num">${step>n?'✓':n}</span><span>${label}</span></strong></button>`;
   const reviewRoute=`${defaultPickup||'尚未填上車地址'} → ${(b?.destination??draft?.destination)||'尚未填目的地'}`;
-  return `<div class="page-head"><div><h2>${title}</h2><p>${b?'修改後系統會保留原紀錄；若已進入排車，請聯絡承接單位協助調整。':'只要 4 個步驟，依序確認乘車人、地點、時間與需求。'}</p></div>${b?'<div class="page-actions"><button type="button" class="btn outline" id="cancelRequesterEditBtn">放棄修改</button></div>':''}</div>
+  return `<div class="page-head"><div><h2>${title}</h2></div>${b?'<div class="page-actions"><button type="button" class="btn outline" id="cancelRequesterEditBtn">放棄修改</button></div>':''}</div>
   ${requesterDraftInlineNotice()}
   <div class="booking-wizard" aria-label="預約接送四步驟">
-    <div class="wizard-progress" aria-label="預約進度">${indicator(1,'接送對象','確認乘車人')}${indicator(2,'行程','上下車地點')}${indicator(3,'時間與需求','日期、共乘與特殊需求')}${indicator(4,'確認','檢查後送出')}</div>
+    <div class="wizard-progress" aria-label="預約進度">${indicator(1,'乘車人')}${indicator(2,'地點')}${indicator(3,'時間與需求')}${indicator(4,'確認')}</div>
     <section class="wizard-panel ${step===1?'active':''}" data-wizard-panel="1">
-      <section class="card"><div class="card-head"><div><h3>接送對象</h3><p>本系統目前需求者預約固定為本人</p></div><span class="pill blue"><span class="status-symbol" aria-hidden="true">●</span>本人</span></div><div class="meta">姓名：${escapeHTML(u?.name||'')}<br>聯絡手機：${formatPhone(u?.phone||'')||'尚未設定'}<br>固定需求：${escapeHTML(fixed)}</div>${!selfRecipient?'<div class="wizard-help" style="margin-top:12px">第一次完成預約時，系統會自動建立你的本人接送主檔；不需要先到其他頁面設定。</div>':''}<div class="wizard-actions"><span class="small muted">第 1 / 4 步</span><div class="right"><button class="btn primary wizard-next-btn" data-next="2" type="button">下一步：填寫行程</button></div></div></section>
+      <section class="card"><div class="card-head"><div><h3>乘車人</h3></div><span class="pill blue">本人</span></div><div class="meta">${escapeHTML(u?.name||'')}・${formatPhone(u?.phone||'')||'未設定手機'}${selfRecipient?`<br>固定需求：${escapeHTML(fixed)}`:''}</div><div class="wizard-actions"><span></span><div class="right"><button class="btn primary wizard-next-btn" data-next="2" type="button">下一步</button></div></div></section>
     </section>
     <section class="wizard-panel ${step===2?'active':''}" data-wizard-panel="2">
-      <section class="card"><div class="card-head"><div><h3>從哪裡到哪裡</h3><p>請填完整門牌；公開需求池只會顯示行政區</p></div><span class="pill blue">2 / 4</span></div><div class="form-grid">
+      <section class="card"><div class="card-head"><div><h3>上下車地點</h3></div></div><div class="form-grid">
         <div class="form-field"><label for="rqPickup">上車地址</label><input id="rqPickup" value="${escapeHTML(defaultPickup)}" placeholder="請填完整地址與門牌" /></div>
         <div class="form-field"><label for="rqPickupAccessNote">上車注意事項 <span class="field-optional">選填</span></label><input id="rqPickupAccessNote" value="${escapeHTML(b?.pickupAccessNote??draft?.pickupAccessNote??'')}" placeholder="例如：巷口上車、地下室 B1" /></div>
         <div class="form-field"><label for="rqDestination">目的地</label><input id="rqDestination" value="${escapeHTML(b?.destination??draft?.destination??'')}" placeholder="例如：臺大醫院／完整地址" /></div>
         <div class="form-field"><label for="rqDestinationAccessNote">目的地注意事項 <span class="field-optional">選填</span></label><input id="rqDestinationAccessNote" value="${escapeHTML(b?.destinationAccessNote??draft?.destinationAccessNote??'')}" placeholder="例如：急診入口、接送區" /></div>
-      </div><div class="wizard-actions"><button class="btn outline wizard-prev-btn" data-prev="1" type="button">上一步</button><div class="right"><button class="btn primary wizard-next-btn" data-next="3" type="button">下一步：時間與需求</button></div></div></section>
+      </div><div class="wizard-actions"><button class="btn outline wizard-prev-btn" data-prev="1" type="button">上一步</button><div class="right"><button class="btn primary wizard-next-btn" data-next="3" type="button">下一步</button></div></div></section>
     </section>
     <section class="wizard-panel ${step===3?'active':''}" data-wizard-panel="3">
-      <section class="card"><div class="card-head"><div><h3>時間與本次需求</h3><p>只填這一次不同的需求，固定需求會從本人接送主檔帶入</p></div><span class="pill blue">3 / 4</span></div><div class="form-grid">
-        <div class="form-2"><div class="form-field"><label for="rqDate">去程日期</label><input id="rqDate" type="date" min="${dateKey()}" value="${escapeHTML(date)}" /></div><div class="form-field"><label for="rqTime">去程接送時間</label><input id="rqTime" type="time" value="${escapeHTML(time)}" /></div></div>
+      <section class="card"><div class="card-head"><div><h3>時間與需求</h3></div></div><div class="form-grid">
+        <div class="form-2"><div class="form-field"><label for="rqDate">去程日期</label><input id="rqDate" type="date" min="${dateKey()}" value="${escapeHTML(date)}" /></div><div class="form-field"><label for="rqTime">去程時間</label><input id="rqTime" type="time" value="${escapeHTML(time)}" /></div></div>
         <div class="form-field"><label for="rqTripType">行程類型</label><select id="rqTripType"><option value="單程" ${tripType==='單程'?'selected':''}>單程</option><option value="來回" ${tripType==='來回'?'selected':''}>來回</option></select></div>
-        <div class="form-2 ${tripType==='來回'?'':'hidden'}" id="rqReturnFields"><div class="form-field"><label for="rqReturnDate">回程日期</label><input id="rqReturnDate" type="date" min="${dateKey()}" value="${escapeHTML(returnDate)}" /></div><div class="form-field"><label for="rqReturnTime">回程接送時間</label><input id="rqReturnTime" type="time" value="${escapeHTML(returnTime)}" /></div></div>
-        <div class="form-2"><div class="form-field"><label for="rqAidNeed">本次輪椅／輔具需求</label><select id="rqAidNeed"><option value="" ${aid===''?'selected':''}>沿用固定需求／無</option><option value="手動輪椅" ${aid==='手動輪椅'?'selected':''}>手動輪椅</option><option value="電動輪椅" ${aid==='電動輪椅'?'selected':''}>電動輪椅</option><option value="助行器" ${aid==='助行器'?'selected':''}>助行器</option><option value="其他輔具" ${aid==='其他輔具'?'selected':''}>其他輔具</option></select></div><div class="form-field"><label for="rqCompanions">本次陪同人數</label><select id="rqCompanions"><option value="" ${companions===''?'selected':''}>沿用固定需求</option>${[0,1,2,3,4,5,6].map(n=>`<option value="${n}" ${companions===String(n)?'selected':''}>${n} 人${n===0?'（本次無陪同）':''}</option>`).join('')}</select></div></div>
-        <div class="form-field"><label for="rqSpecialNeed">本次特殊需求</label><input id="rqSpecialNeed" value="${escapeHTML(b?.specialNeed??draft?.specialNeed??'')}" placeholder="例如：需要協助上下車、不可久候" /></div>
-        <div class="form-field"><label for="rqPoolingConsent">是否同意共乘</label><select id="rqPoolingConsent"><option value="no" ${(b?.poolingConsent??draft?.poolingConsent??'no')==='no'?'selected':''}>不同意共乘</option><option value="yes" ${(b?.poolingConsent??draft?.poolingConsent??'no')==='yes'?'selected':''}>同意由服務單位依地方規則安排共乘</option></select></div>
-        <div class="form-field"><label for="rqNote">備註 <span class="field-optional">選填</span></label><textarea id="rqNote" placeholder="其他想告訴承接服務端的事情">${escapeHTML(b?.note??draft?.note??'')}</textarea></div>
-        <div class="wizard-help"><strong>共乘不會自動成立：</strong>系統仍會檢查時間、繞路、座位、陪同者、輪椅容量與所在地規則。</div>
-      </div><div class="wizard-actions"><button class="btn outline wizard-prev-btn" data-prev="2" type="button">上一步</button><div class="right"><button class="btn primary wizard-next-btn" data-next="4" type="button">下一步：確認資料</button></div></div></section>
+        <div class="form-2 ${tripType==='來回'?'':'hidden'}" id="rqReturnFields"><div class="form-field"><label for="rqReturnDate">回程日期</label><input id="rqReturnDate" type="date" min="${dateKey()}" value="${escapeHTML(returnDate)}" /></div><div class="form-field"><label for="rqReturnTime">回程時間</label><input id="rqReturnTime" type="time" value="${escapeHTML(returnTime)}" /></div></div>
+        <div class="form-2"><div class="form-field"><label for="rqAidNeed">輪椅／輔具</label><select id="rqAidNeed"><option value="" ${aid===''?'selected':''}>${selfRecipient?'同平常':'無'}</option><option value="手動輪椅" ${aid==='手動輪椅'?'selected':''}>手動輪椅</option><option value="電動輪椅" ${aid==='電動輪椅'?'selected':''}>電動輪椅</option><option value="助行器" ${aid==='助行器'?'selected':''}>助行器</option><option value="其他輔具" ${aid==='其他輔具'?'selected':''}>其他輔具</option></select></div><div class="form-field"><label for="rqCompanions">陪同人數</label><select id="rqCompanions"><option value="" ${companions===''?'selected':''}>${selfRecipient?'同平常':'無'}</option>${(selfRecipient?[0,1,2,3,4,5,6]:[1,2,3,4,5,6]).map(n=>`<option value="${n}" ${companions===String(n)?'selected':''}>${n?`${n} 人`:'這次沒有'}</option>`).join('')}</select></div></div>
+        <div class="form-field"><label for="rqSpecialNeed">特殊需求 <span class="field-optional">選填</span></label><input id="rqSpecialNeed" value="${escapeHTML(b?.specialNeed??draft?.specialNeed??'')}" placeholder="例如：需要協助上下車、不可久候" /></div>
+        <div class="form-field"><label for="rqPoolingConsent">共乘</label><select id="rqPoolingConsent"><option value="no" ${(b?.poolingConsent??draft?.poolingConsent??'no')==='no'?'selected':''}>不共乘</option><option value="yes" ${(b?.poolingConsent??draft?.poolingConsent??'no')==='yes'?'selected':''}>可以共乘</option></select></div>
+        <div class="form-field"><label for="rqNote">備註 <span class="field-optional">選填</span></label><textarea id="rqNote" placeholder="其他要告訴司機的事">${escapeHTML(b?.note??draft?.note??'')}</textarea></div>
+      </div><div class="wizard-actions"><button class="btn outline wizard-prev-btn" data-prev="2" type="button">上一步</button><div class="right"><button class="btn primary wizard-next-btn" data-next="4" type="button">下一步</button></div></div></section>
     </section>
     <section class="wizard-panel ${step===4?'active':''}" data-wizard-panel="4">
-      <section class="card"><div class="card-head"><div><h3>確認並送出</h3><p>請再次確認接送對象、行程與需求</p></div><span class="pill green">4 / 4</span></div>
-        ${b?`<div class="smart-modal-hint" style="margin-bottom:12px"><strong>目前費用與補助資訊：</strong>${escapeHTML(Booking.commercialSummary(b))}<br>儲存後會依目前規則重新計算，原本的紀錄仍會保留。</div>`:''}
-        <div class="wizard-review" id="requesterWizardReview"><div class="wizard-review-row"><span>接送對象</span><strong>${escapeHTML(u?.name||'')}（本人）</strong></div><div class="wizard-review-row"><span>行程</span><strong id="wizardReviewRoute">${escapeHTML(reviewRoute)}</strong></div><div class="wizard-review-row"><span>時間</span><strong id="wizardReviewTime">${escapeHTML(date)} ${escapeHTML(time)}・${escapeHTML(tripType)}</strong></div><div class="wizard-review-row"><span>固定需求</span><strong>${escapeHTML(fixed)}</strong></div><div class="wizard-review-row"><span>報價／補助</span><strong>${b?escapeHTML(Booking.commercialSummary(b)):'送出時會依目前可用規則估算；若沒有正式資料，會顯示尚無估算結果'}</strong></div></div>
+      <section class="card"><div class="card-head"><div><h3>確認並送出</h3></div></div>
+                <div class="wizard-review" id="requesterWizardReview"><div class="wizard-review-row"><span>乘車人</span><strong>${escapeHTML(u?.name||'')}</strong></div><div class="wizard-review-row"><span>地點</span><strong id="wizardReviewRoute">${escapeHTML(reviewRoute)}</strong></div><div class="wizard-review-row"><span>時間</span><strong id="wizardReviewTime">${escapeHTML(date)} ${escapeHTML(time)}・${escapeHTML(tripType)}</strong></div>${selfRecipient?`<div class="wizard-review-row"><span>固定需求</span><strong>${escapeHTML(fixed)}</strong></div>`:''}${b?`<div class="wizard-review-row"><span>費用／補助</span><strong>${escapeHTML(Booking.commercialSummary(b))}</strong></div>`:''}</div>
         <div class="wizard-actions"><button class="btn outline wizard-prev-btn" data-prev="3" type="button">上一步</button><div class="right"><button class="btn primary" id="submitRequesterBookingBtn" type="button">${submitLabel}</button></div></div>
       </section>
     </section>
@@ -5548,8 +5549,8 @@ function requesterNew(){
 }
 function requesterBookings(){
   const rows=requesterBookingsRows(),userId=Identity.currentUser()?.id;
-  return `<div class="page-head"><div><h2>我的預約</h2><p>查看你建立的接送需求、目前進度，以及現在可修改或取消的項目。</p></div><div class="page-actions"><button type="button" class="btn primary" id="requesterNewBookingBtn">＋ 新增預約</button></div></div>
-  <div class="list">${rows.map(b=>{const canCancel=Identity.can('booking.cancel_own')&&Booking.canCancelOwn(b.id,userId).ok,canEdit=Identity.can('booking.edit_own')&&Booking.canEditOwn(b.id,userId).ok;return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(b.pickupDate)} ${escapeHTML(b.pickupTime)}｜${escapeHTML(b.name)}</h4><p>服務組織：${escapeHTML(bookingServiceOrgName(b))}<br>${bookingLegSummary(b)}<br>${escapeHTML(Booking.needsText(b))}<br>共乘：${Dispatch.bookingPoolingConsented(b)?'已同意由服務單位依規則安排':'不同意共乘'}<br><span class="muted small">${escapeHTML(Booking.commercialSummary(b))}・修訂版 ${Math.max(0,Number(b.revisionNo)||0)}・版本 ${Math.max(1,Number(b.version)||1)}</span></p></div>${bookingStatusPill(b.status)}</div><div class="item-actions">${canEdit?`<button type="button" class="btn primary sm requester-edit-booking-btn" data-booking="${b.id}">修改預約</button>`:''}${canCancel?`<button type="button" class="btn danger sm requester-cancel-booking-btn" data-booking="${b.id}">取消預約</button>`:''}<button type="button" class="btn outline sm booking-history-btn" data-booking="${b.id}">異動歷史</button>${['partially_scheduled','scheduled'].includes(b.status)&&!canCancel?'<span class="pill green">已進入排車／執行／共乘時請聯絡承接公司</span>':''}</div></div>`;}).join('')||'<div class="ui-state"><div class="ui-state-icon">🚐</div><h3>目前沒有預約</h3><p>有看診、復健、洗腎或日照接送需求時，可以建立第一筆預約。</p><button class="btn primary" id="requesterEmptyNewBookingBtn" type="button">＋ 建立預約</button></div>'}</div>`;
+  return `<div class="page-head"><div><h2>我的預約</h2></div><div class="page-actions"><button type="button" class="btn primary" id="requesterNewBookingBtn">＋ 預約接送</button></div></div>
+  <div class="list">${rows.map(b=>{const canCancel=Identity.can('booking.cancel_own')&&Booking.canCancelOwn(b.id,userId).ok,canEdit=Identity.can('booking.edit_own')&&Booking.canEditOwn(b.id,userId).ok;return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(b.pickupDate)} ${escapeHTML(b.pickupTime)}｜${escapeHTML(b.name)}</h4><p>承接單位：${escapeHTML(bookingServiceOrgName(b))}<br>${bookingLegSummary(b)}<br>${escapeHTML(Booking.needsText(b))}・${Dispatch.bookingPoolingConsented(b)?'可共乘':'不共乘'}<br><span class="muted small">${escapeHTML(Booking.commercialSummary(b))}</span></p></div>${bookingStatusPill(b.status)}</div><div class="item-actions">${canEdit?`<button type="button" class="btn primary sm requester-edit-booking-btn" data-booking="${b.id}">修改預約</button>`:''}${canCancel?`<button type="button" class="btn danger sm requester-cancel-booking-btn" data-booking="${b.id}">取消預約</button>`:''}<button type="button" class="btn outline sm booking-history-btn" data-booking="${b.id}">異動紀錄</button>${['partially_scheduled','scheduled'].includes(b.status)&&!canCancel?'<span class="muted small">要更改請聯絡承接單位</span>':''}</div></div>`;}).join('')||'<div class="empty">還沒有預約</div>'}</div>`;
 }
 function demandMarket(){
   const userId=Identity.currentUser()?.id,rows=Booking.openDemand(demandMarketDate||null,userId),membershipOrgId=Identity.membershipOrganizationId(),canClaim=Identity.can('booking.market.claim')&&!!membershipOrgId;
@@ -5566,9 +5567,10 @@ function demandMarket(){
 function accountAvatar(user,fallback='☺'){
   return user?.profilePhotoDataUrl?`<div class="avatar profile-avatar"><img src="${escapeHTML(user.profilePhotoDataUrl)}" alt="個人照片" /></div>`:`<div class="avatar">${fallback}</div>`;
 }
-function profilePhotoSection(user,fallback='☺'){
-  const preview=user?.profilePhotoDataUrl?`<img src="${escapeHTML(user.profilePhotoDataUrl)}" alt="個人照片預覽" />`:fallback;
-  return `<section class="card"><div class="card-head"><div><h3>個人照片</h3><p>照片由本人手動上傳，社群登入不會自動抓取社群大頭照。</p></div></div><div class="profile-photo-editor"><div class="profile-photo-preview">${preview}</div><div><div class="profile-photo-actions"><label class="btn outline sm" for="profilePhotoInput">選擇照片</label><input class="profile-photo-input" id="profilePhotoInput" type="file" accept="image/*" />${user?.profilePhotoDataUrl?'<button class="btn danger sm" id="removeProfilePhotoBtn" type="button">移除照片</button>':''}</div><p class="small muted" style="margin:8px 0 0">會縮小至 320×320 內並儲存在目前瀏覽器快取；帳號與權限仍以伺服器資料為準。</p></div></div></section>`;
+function profilePhotoSection(){ return ''; }
+// 帳號摘要：照片、姓名、手機、角色；照片只存在這台裝置的瀏覽器
+function accountSummaryCard_(user,fallback='☺',roleLabel=''){
+  return `<section class="card"><div class="account-card">${accountAvatar(user,fallback)}<div class="account-card-main"><h3>${escapeHTML(user?.name||'')}</h3><p>${formatPhone(user?.phone||'')}${user?.email?`・${escapeHTML(user.email)}`:''}${roleLabel?`・${escapeHTML(roleLabel)}`:''}</p><div class="profile-photo-actions"><label class="btn outline sm" for="profilePhotoInput">${user?.profilePhotoDataUrl?'更換照片':'上傳照片'}</label><input class="profile-photo-input" id="profilePhotoInput" type="file" accept="image/*" />${user?.profilePhotoDataUrl?'<button class="btn outline sm" id="removeProfilePhotoBtn" type="button">移除照片</button>':''}</div></div></div></section>`;
 }
 function resizeProfilePhoto(file){
   return new Promise((resolve,reject)=>{
@@ -5592,7 +5594,7 @@ function identityMembershipCard(){
   if(Identity.isSuperAdmin())return '';
   const rows=Identity.membershipsForUser(Identity.currentUser()?.id||'').filter(m=>Identity.membershipStatus(m)!=='revoked');
   if(rows.length<=1)return '';
-  return `<section class="card"><div class="card-head"><div><h3>我的身分</h3><p>同一個使用者可同時是需求者與公司工作者</p></div><span class="pill purple">${rows.length} 個</span></div><div class="list">${rows.map(m=>{const o=Organization.get(m.organizationId),active=Identity.isActiveMembership(m),current=m.id===Identity.currentMembership()?.id;return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(o?.name||'未知組織')}</h4><p>${ROLE_LABELS[m.role]||m.role}・${MEMBERSHIP_STATUS_LABELS[Identity.membershipStatus(m)]||Identity.membershipStatus(m)}</p></div>${current?'<span class="pill green">目前身分</span>':active?`<button type="button" class="btn outline sm identity-switch-btn" data-org="${m.organizationId}">切換</button>`:'<span class="pill gray">不可使用</span>'}</div></div>`;}).join('')}</div></section>`;
+  return `<section class="card"><div class="card-head"><div><h3>我的身分</h3></div></div><div class="list">${rows.map(m=>{const o=Organization.get(m.organizationId),active=Identity.isActiveMembership(m),current=m.id===Identity.currentMembership()?.id;return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(o?.name||'未知組織')}</h4><p>${ROLE_LABELS[m.role]||m.role}・${MEMBERSHIP_STATUS_LABELS[Identity.membershipStatus(m)]||Identity.membershipStatus(m)}</p></div>${current?'<span class="pill green">目前身分</span>':active?`<button type="button" class="btn outline sm identity-switch-btn" data-org="${m.organizationId}">切換</button>`:'<span class="pill gray">不可使用</span>'}</div></div>`;}).join('')}</div></section>`;
 }
 function accountSectionErrorCard_(title,error){
   const message=runtimeErrorMessage_(error);
@@ -5642,9 +5644,9 @@ function careRecipientHealthCard(){
 }
 function appVersionNote(){ return `<div class="app-version-note" aria-label="應用程式版本">安心接送・版本 ${escapeHTML(APP_CONFIG.version)}</div>`; }
 function requesterAccount(){
-  const u=Identity.currentUser(),m=Identity.currentMembership(),selfRecipient=CareRecipient.selfForUser(u?.id||'');
-  const selfCard=selfRecipient?`<section class="card"><div class="card-head"><div><h3>我的接送資料</h3><p>這是你本人的固定接送需求，不是「服務對象管理」功能。</p></div><button type="button" class="btn outline sm" id="editRequesterSelfProfileBtn" data-recipient="${selfRecipient.id}">編輯</button></div><div class="meta">常用上車地址：${escapeHTML(CareRecipient.primaryAddress(selfRecipient)||'未填')}<br>固定需求：${escapeHTML(careRecipientFixedNeedsText(selfRecipient))}</div></section>`:`<section class="card"><div class="card-head"><h3>我的接送資料</h3></div><div class="smart-modal-hint">尚未建立你的接送主檔。第一次送出預約時，系統會依你的帳號身分自動建立本人服務對象主檔。</div></section>`;
-  return `<div class="page-head"><div><h2>我的帳戶</h2><p>需求者本人帳號身分與固定接送資料</p></div></div><section class="card"><div class="account-card">${accountAvatar(u,'☺')}<div><h3>${escapeHTML(u?.name||'')}</h3><p>${formatPhone(u?.phone||'')}${u?.email?`・${escapeHTML(u.email)}`:''}</p></div></div></section>${profilePhotoSection(u,'☺')}${identityMembershipCard()}${selfCard}<section class="card"><div class="card-head"><h3>需求者身分</h3></div><div class="meta">角色：${ROLE_LABELS[m?.role]||m?.role}<br>你只能建立與查看自己的接送需求，不會看到「服務對象」或「需求接案」功能。服務端接案後，你也不會因此加入該公司的組織身分。</div></section>${systemReportAccountCard()}${appVersionNote()}<button type="button" class="btn danger block account-logout-btn">登出目前帳號</button>`;
+  const u=Identity.currentUser(),selfRecipient=CareRecipient.selfForUser(u?.id||'');
+  const selfCard=selfRecipient?`<section class="card"><div class="card-head"><h3>我的接送資料</h3><button type="button" class="btn outline sm" id="editRequesterSelfProfileBtn" data-recipient="${selfRecipient.id}">編輯</button></div><div class="meta">常用上車地址：${escapeHTML(CareRecipient.primaryAddress(selfRecipient)||'未填')}<br>固定需求：${escapeHTML(careRecipientFixedNeedsText(selfRecipient))}</div></section>`:'';
+  return `<div class="page-head"><div><h2>我的帳戶</h2></div></div>${accountSummaryCard_(u,'☺','需求者')}${accountSettingsCard_(u)}${identityMembershipCard()}${selfCard}`;
 }
 // 送出前先請伺服器檢查兩個地址找不找得到，找不到就標在對應的輸入框。
 // 寫入時伺服器會再算一次，這裡只是讓需求者立即知道。
@@ -5677,7 +5679,7 @@ async function submitRequesterBooking(){
   const result=editing?Booking.amendOwn(editing.id,Identity.currentUser()?.id,input,'需求者於 App 修改預約'):Booking.createForRequester(input,Identity.currentUser()?.id);
   if(!result.ok){routeFieldError(result.error,[['日期','rqDate'],['時間','rqTime'],['上車','rqPickup'],['地址','rqPickup'],['目的地','rqDestination'],['回程日期','rqReturnDate'],['回程時間','rqReturnTime'],['共乘','rqPoolingConsent']]);return;}
   if(!editing)clearRequesterDraft();
-  editingRequesterBookingId='';currentView='requester-bookings';renderNav();render();showToast(editing?(result.reconfirmationRequired?'預約已修改；因接送條件變更，系統會重新安排承接單位':'預約已修改，原本的紀錄仍會保留'):'接送需求已送出，可在「我的預約」查看進度。');
+  editingRequesterBookingId='';currentView='requester-bookings';renderNav();render();showToast(editing?(result.reconfirmationRequired?'預約已修改，需要重新等待機構承接':'預約已修改'):'預約已送出');
 }
 
 function driverDutyActions(d){
@@ -5709,64 +5711,57 @@ function driverTrips(){
   return `<div class="page-head"><div><h2>我的行程</h2><p>${operationDate}・每一趟行程都會顯示本趟指定車輛</p></div><div class="page-actions"><input class="inline-date" type="date" id="driverOperationDateInput" value="${operationDate}" aria-label="司機行程日期"></div></div>${renderOfflineExecutionBanner()}<div class="list">${rows.map(t=>{const completedDropoffs=(t.steps||[]).filter(s=>s.type==='dropoff'&&(s.completedAt||s.passengerDroppedOffAt)),proofs=Trip.activeServiceProofs(t),correction=Trip.correctionAvailability(t,actorUserId);return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(t.code)}｜${escapeHTML(t.passengerSummary)}</h4><p>${formatTime(t.steps[0].scheduledAt)} 開始・車輛：${escapeHTML(Organization.vehicle(t.vehicleId)?.plate||'未派車')}<br>${escapeHTML(t.pickupAddress)} → ${escapeHTML(t.dropoffAddress)}<br>${escapeHTML(t.needs)}<br><span class="muted small">乘客狀態：${escapeHTML(Trip.passengerSummaryRuntime(t)||'—')}・修訂版 ${t.revision}・有效服務證明 ${proofs.length}/${completedDropoffs.length}</span></p></div>${statusPill(t.status)}</div><div class="item-actions"><button type="button" class="btn outline sm map-trip-btn" data-trip="${t.id}">導航／地圖</button><button type="button" class="btn outline sm trip-history-btn" data-trip="${t.id}">執行歷史</button>${completedDropoffs.length&&Identity.can('trip.execute')?`<button type="button" class="btn primary sm proof-service-btn" data-trip="${t.id}">服務證明</button>`:''}${correction.ok?`<button type="button" class="btn warning sm completed-trip-correction-btn" data-trip="${t.id}" data-revision="${t.revision}" data-step="${correction.stepId}">撤銷最後完成（${correction.remainingMinutes} 分內）</button>`:''}</div></div>`;}).join('')||'<div class="empty">此營運日尚無行程</div>'}</div>`;
 }
 function driverKpi(){ const k=Analytics.driverDaily(currentDriver()?.id,kpiDate); return `<div class="page-head"><div><h2>我的關鍵績效</h2><p>分析統計是唯讀層，不會改動行程資料</p></div><div class="page-actions"><input class="inline-date" type="date" id="kpiDateInput" value="${kpiDate}"></div></div><section class="card">${renderKpiCards(k)}</section>`; }
-function systemReportAccountCard(){ return Identity.can('system_report.create')?`<section class="card"><div class="card-head"><div><h3>系統問題回報</h3><p>應用程式／後台操作問題會送給平台開發方</p></div></div><button class="btn outline block" id="openSystemReportBtn" type="button">回報系統問題</button></section>`:''; }
-function driverAccount(){ const u=Identity.currentUser(),d=currentDriver(),next=Trip.nextForDriver(d?.id,driverOperationalDate()),v=Organization.vehicle(next?.vehicleId); return `<div class="page-head"><div><h2>我的帳戶</h2><p>帳號身分與組織已分離；車輛依每趟行程派定</p></div></div><section class="card"><div class="account-card">${accountAvatar(u,'👨🏻‍✈️')}<div><h3>${escapeHTML(u?.name||'')}</h3><p>${formatPhone(u?.phone||'')}・下一趟 ${escapeHTML(v?.plate||'尚未派車')}</p></div></div></section>${profilePhotoSection(u,'👨🏻‍✈️')}${identityMembershipCard()}<section class="card"><div class="card-head"><h3>所屬組織</h3></div><div class="meta">${escapeHTML(currentOrg()?.name||'')}<br>角色：${ROLE_LABELS[role()]}<br>司機資料僅保存營運欄位，姓名／手機直接引用帳號資料。</div></section>${systemReportAccountCard()}${appVersionNote()}<button type="button" class="btn danger block account-logout-btn">登出目前帳號</button>`; }
-function superAdminAccountSettingsCard(u){
-  return `<section class="card"><div class="card-head"><div><h3>平台超級管理者帳號</h3><p>帳號資料由伺服器更新；密碼只寫入伺服器端雜湊憑證，不會進入應用狀態資料或 GitHub。</p></div></div><div class="form-grid"><div class="form-field"><label for="superAdminNameInput">顯示名稱</label><input id="superAdminNameInput" value="${escapeHTML(u?.name||'')}" autocomplete="name" /></div><div class="form-field"><label for="superAdminPhoneInput">登入手機</label><input id="superAdminPhoneInput" value="${escapeHTML(u?.phone||'')}" inputmode="tel" autocomplete="username" /></div><div class="form-field"><label for="superAdminPasswordInput">新密碼</label><input id="superAdminPasswordInput" type="password" autocomplete="new-password" placeholder="至少 8 碼；留白則不變更" /></div><div class="form-field"><label for="superAdminCurrentPasswordInput">目前密碼</label><input id="superAdminCurrentPasswordInput" type="password" autocomplete="current-password" placeholder="變更手機或密碼時必填" /></div></div><button type="button" class="btn primary" id="saveSuperAdminAccountBtn">更新超級管理者帳號</button></section>`;
+function systemReportAccountCard(){ return Identity.can('system_report.create')?`<section class="card"><div class="card-head"><h3>系統有問題？</h3><button class="btn outline sm" id="openSystemReportBtn" type="button">回報問題</button></div></section>`:''; }
+function driverAccount(){ const u=Identity.currentUser(); return `<div class="page-head"><div><h2>我的帳戶</h2></div></div>${accountSummaryCard_(u,'👨🏻‍✈️',`${currentOrg()?.name||''} 司機`)}${accountSettingsCard_(u)}${identityMembershipCard()}`; }
+function accountSettingsCard_(u){
+  return `<details class="card card-details" id="accountSettingsCard"><summary><h3>修改姓名、手機或密碼</h3></summary><div class="form-grid"><div class="form-field"><label for="accountNameInput">姓名</label><input id="accountNameInput" value="${escapeHTML(u?.name||'')}" autocomplete="name" /></div><div class="form-field"><label for="accountPhoneInput">登入手機</label><input id="accountPhoneInput" value="${escapeHTML(u?.phone||'')}" inputmode="tel" autocomplete="username" /></div><div class="form-field"><label for="accountPasswordInput">新密碼 <span class="field-optional">不改就留白</span></label><input id="accountPasswordInput" type="password" autocomplete="new-password" placeholder="至少 8 碼" /></div><div class="form-field"><label for="accountCurrentPasswordInput">目前密碼 <span class="field-optional">改手機或密碼時必填</span></label><input id="accountCurrentPasswordInput" type="password" autocomplete="current-password" /></div></div><div class="modal-actions"><button type="button" class="btn primary" id="saveAccountBtn">儲存</button></div></details>`;
 }
-async function updateCurrentSuperAdminAccount(){
-  const current=Identity.currentUser();if(!Identity.isSuperAdmin()||!current){showToast('只有平台超級管理者可以更新此帳號');return;}
-  const name=String($('superAdminNameInput')?.value||'').trim(),phone=digitsOnly($('superAdminPhoneInput')?.value||''),password=String($('superAdminPasswordInput')?.value||''),currentPassword=String($('superAdminCurrentPasswordInput')?.value||''),btn=$('saveSuperAdminAccountBtn');
-  if(!name){showToast('請輸入顯示名稱');return;}if(!/^09\d{8}$/.test(phone)){showToast('請輸入有效的 10 碼手機號碼');return;}if(password&&password.length<8){showToast('新密碼至少需要 8 碼');return;}
+async function updateCurrentAccount(){
+  const current=Identity.currentUser();if(!current)return;
+  const name=String($('accountNameInput')?.value||'').trim(),phone=digitsOnly($('accountPhoneInput')?.value||''),password=String($('accountPasswordInput')?.value||''),currentPassword=String($('accountCurrentPasswordInput')?.value||''),btn=$('saveAccountBtn');
+  if(!name){showToast('請輸入姓名');return;}if(!/^09\d{8}$/.test(phone)){showToast('請輸入有效的 10 碼手機號碼');return;}if(password&&password.length<8){showToast('新密碼至少需要 8 碼');return;}
   // 伺服器要求：變更密碼或登入手機時必須通過目前密碼驗證，避免單靠被竊取的 session 就能接管帳號。
   const phoneChanged=digitsOnly(current.phone||'')!==phone;
-  if((password||phoneChanged)&&!currentPassword){showToast('變更密碼或手機號碼前，請輸入目前的密碼');$('superAdminCurrentPasswordInput')?.focus();return;}
+  if((password||phoneChanged)&&!currentPassword){showToast('變更密碼或手機號碼前，請輸入目前的密碼');$('accountCurrentPasswordInput')?.focus();return;}
   setButtonBusy(btn,true,'更新中…');
   try{
     {const cloud=await CloudIdentity.updateAccount({name,phone,newPassword:password,currentPassword});store.mutate(db=>{const target=db.users.find(u=>u.id===current.id);if(target){target.name=cloud.user?.displayName||name;target.phone=cloud.user?.phone||phone;target.password='';delete target.passwordUpdatedAt;target.updatedAt=nowISO();}},{remote:false,reason:'backend_session'});}
-    LoginSecurity.clear(phone);$('superAdminPasswordInput').value='';$('superAdminCurrentPasswordInput').value='';render();showToast(password?'帳號與伺服器密碼已更新':'平台超級管理者帳號已更新');
+    LoginSecurity.clear(phone);render();showToast(password?'已更新，密碼已變更':'已更新');
   }catch(error){showToast(error?.message||'帳號更新失敗');}
   finally{setButtonBusy(btn,false);}
 }
 function genericAccount(){
   const u=Identity.currentUser(),m=Identity.currentMembership();
-
   if(!u){
-    return `<div class="page-head"><div><h2>我的帳戶</h2><p>登入狀態需要重新整理</p></div></div>
-      <section class="card"><div class="ui-state error"><div class="ui-state-icon">!</div><h3>找不到目前使用者資料</h3><p>Google 資料同步後，目前 Session 對應的使用者已不存在或尚未載入。請登出後重新登入。</p><button class="btn danger account-logout-btn" type="button">登出並重新登入</button></div></section>`;
+    return `<div class="page-head"><div><h2>我的帳戶</h2></div></div>
+      <section class="card"><div class="ui-state error"><div class="ui-state-icon">!</div><h3>找不到帳號資料</h3><p>請重新登入。</p><button class="btn danger account-logout-btn" type="button">重新登入</button></div></section>`;
   }
-
   if(Identity.isSuperAdmin()){
-    let currentOrgName='尚無有效組織';
-    try{currentOrgName=currentOrg()?.name||currentOrgName;}catch(error){console.warn('[Account] current organization unavailable',error);}
-
-    return `<div class="page-head"><div><h2>我的帳戶</h2><p>平台超級管理者</p></div></div>
-      ${safeAccountSection_('帳號摘要',()=>`<section class="card"><div class="account-card">${accountAvatar(u,'◇')}<div><h3>${escapeHTML(u?.name||'')}</h3><p>${formatPhone(u?.phone||'')}${u?.email?`・${escapeHTML(u.email)}`:''}</p></div></div></section>`)}
-      ${safeAccountSection_('個人照片',()=>profilePhotoSection(u,'◇'))}
-      ${safeAccountSection_('平台超級管理者帳號',()=>superAdminAccountSettingsCard(u))}
-      ${safeAccountSection_('帳號身分健康檢查',()=>identityHealthCard())}
-      ${safeAccountSection_('服務對象資料治理',()=>careRecipientHealthCard())}
-      <section class="card"><div class="card-head"><h3>平台身分</h3></div><div class="meta">角色：超級管理者<br>組織身分：無<br>目前查看：${escapeHTML(currentOrgName)}<br>可跨組織查看平台營運狀況，但不隸屬任何公司。</div></section>
-      ${appVersionNote()}
-      <button type="button" class="btn danger block account-logout-btn">登出目前帳號</button>`;
+    return `<div class="page-head"><div><h2>我的帳戶</h2></div></div>
+      ${safeAccountSection_('帳號摘要',()=>accountSummaryCard_(u,'◇','平台管理者'))}
+      ${safeAccountSection_('帳號設定',()=>accountSettingsCard_(u))}
+      ${safeAccountSection_('帳號資料檢查',()=>identityHealthCard())}
+      ${safeAccountSection_('服務對象資料檢查',()=>careRecipientHealthCard())}`;
   }
-
-  return `<div class="page-head"><div><h2>我的帳戶</h2><p>${ROLE_LABELS[m?.role]||m?.role||''}</p></div></div>
-    <section class="card"><div class="account-card">${accountAvatar(u,'☺')}<div><h3>${escapeHTML(u?.name||'')}</h3><p>${formatPhone(u?.phone||'')}${u?.email?`・${escapeHTML(u.email)}`:''}</p></div></div></section>
-    ${profilePhotoSection(u,'☺')}
-    ${identityMembershipCard()}
-    <section class="card"><div class="card-head"><h3>目前身分</h3></div><div class="meta">組織：${escapeHTML(currentOrg()?.name||'-')}<br>角色：${ROLE_LABELS[m?.role]||m?.role||'-'}<br>組織身分：${MEMBERSHIP_STATUS_LABELS[Identity.membershipStatus(m)]||Identity.membershipStatus(m)||'-'}</div></section>
-    ${systemReportAccountCard()}${appVersionNote()}
-    <button type="button" class="btn danger block account-logout-btn">登出目前帳號</button>`;
+  const roleLabel=`${currentOrg()?.name||''} ${ROLE_LABELS[m?.role]||m?.role||''}`.trim();
+  return `<div class="page-head"><div><h2>我的帳戶</h2></div></div>
+    ${accountSummaryCard_(u,'☺',roleLabel)}
+    ${accountSettingsCard_(u)}
+    ${identityMembershipCard()}`;
 }
-function accountView(){ return (role()==='driver'?driverAccount():role()==='requester'?requesterAccount():genericAccount())+loginMethodsCard_()+(Identity.isSuperAdmin()?'':orgApplicationCard()+deletionRequestCard()); }
+function accountView(){
+  const u=Identity.currentUser(),body=role()==='driver'?driverAccount():role()==='requester'?requesterAccount():genericAccount();
+  if(!u)return body;
+  return body+loginMethodsCard_()+systemReportAccountCard()+(Identity.isSuperAdmin()?'':orgApplicationCard()+deletionRequestCard())
+    +`${appVersionNote()}<button type="button" class="btn outline block account-logout-btn">登出</button>`;
+}
 // 刪除帳號與個資申請（#26）：由平台管理者處理；核准後預約與行程匿名化、帳號停用
 const DELETION_STATUS_LABELS=Object.freeze({pending:'處理中',cancelled:'已撤回',rejected:'已駁回',completed:'已完成'});
 function deletionRequestCard(){
   const uid=Identity.currentUser()?.id,rows=(store.state.deletionRequests||[]).filter(d=>d.userId===uid),pending=rows.find(d=>d.status==='pending'),last=rows[0];
-  return `<section class="card" id="deletionRequestCard" style="margin-top:16px"><div class="card-head"><div><h3>刪除帳號與個資</h3><p>申請後由平台管理員處理。核准後你的預約與行程紀錄會匿名化（保留統計用的日期、行政區、距離、金額），帳號停用且無法復原。還有未結束的預約時需要先取消。</p></div></div>
+  return `<section class="card" id="deletionRequestCard"><div class="card-head"><div><h3>刪除帳號</h3><p>刪除後無法復原。還有未完成的預約要先取消。</p></div></div>
   ${last?`<p>最近一次申請：${escapeHTML(DELETION_STATUS_LABELS[last.status]||last.status)}${last.reviewNote?`（${escapeHTML(last.reviewNote)}）`:''}</p>`:''}
-  <div class="item-actions">${pending?`<button type="button" class="btn outline sm" id="cancelDeletionRequestBtn" data-request="${escapeHTML(pending.id)}">撤回申請</button>`:`<button type="button" class="btn danger sm" id="requestDeletionBtn">申請刪除帳號與個資</button>`}</div></section>`;
+  <div class="item-actions">${pending?`<button type="button" class="btn outline sm" id="cancelDeletionRequestBtn" data-request="${escapeHTML(pending.id)}">撤回申請</button>`:`<button type="button" class="btn danger sm" id="requestDeletionBtn">申請刪除帳號</button>`}</div></section>`;
 }
 async function accountDeletionRequest_(payload,message){try{await backendJsonPost(APP_CONFIG.accountDeletionUrl,payload);await AppStateDatabase.loadAll({silent:true});render();showToast(message);}catch(error){showToast(error.message||'刪除申請處理失敗');}}
 function bindDeletionRequestCard(){
@@ -5800,17 +5795,18 @@ function orgApplicationCard(){
   const owned=myOwnedOrganizations();
   const pending=owned.find(o=>orgReviewStatus(o)==='pending');
   const list=owned.length?`<div class="list">${owned.map(o=>`<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(o.name)}</h4><p>${o.reviewNote?`原因：${escapeHTML(o.reviewNote)}`:'負責人身分'}</p></div>${orgReviewPill(o)}</div></div>`).join('')}</div>`:'';
-  if(pending)return `<section class="card"><div class="card-head"><div><h3>機構申請</h3><p>你的申請正在審核中，核准後即可瀏覽需求池與接案。</p></div></div>${list}</section>`;
-  return `<section class="card"><div class="card-head"><div><h3>申請成為服務機構</h3><p>交通／車隊公司或長照／日照機構可以申請加入平台。平台管理員人工審核（立案證明、營業登記）通過後，才能瀏覽需求池與接案。</p></div></div>${list}
+  if(pending)return `<section class="card"><div class="card-head"><h3>機構申請審核中</h3></div>${list}</section>`;
+  if(role()!=='requester'&&!owned.length)return '';
+  return `<details class="card card-details"><summary><h3>申請成為接送機構</h3></summary><p class="muted small">交通公司、車隊或長照機構適用。平台審核通過後才能接案。</p>${list}
     <div class="form-grid">
       <div class="form-field"><label for="orgApplyName">機構名稱</label><input id="orgApplyName" maxlength="120" autocomplete="organization" /></div>
       <div class="form-field"><label for="orgApplyType">機構類型</label><select id="orgApplyType"><option value="transport_provider">交通／車隊公司</option><option value="care_facility">長照／日照機構</option></select></div>
       <div class="form-field"><label for="orgApplyTaxId">統一編號 <span class="field-optional">選填</span></label><input id="orgApplyTaxId" inputmode="numeric" maxlength="8" /></div>
       <div class="form-field"><label for="orgApplyPhone">聯絡電話</label><input id="orgApplyPhone" inputmode="tel" maxlength="30" /></div>
       <div class="form-field"><label for="orgApplyContact">聯絡人</label><input id="orgApplyContact" maxlength="80" /></div>
-      <div class="form-field"><label for="orgApplyDocs">立案／登記文件說明</label><textarea id="orgApplyDocs" maxlength="1000" placeholder="例如：交通部公路總局營業登記字號、長照機構設立許可文號"></textarea></div>
+      <div class="form-field"><label for="orgApplyDocs">立案或登記文號</label><textarea id="orgApplyDocs" maxlength="1000" placeholder="例如：交通部公路總局營業登記字號、長照機構設立許可文號"></textarea></div>
     </div>
-    <div class="modal-actions"><button type="button" class="btn primary" id="orgApplySubmitBtn">送出申請</button></div></section>`;
+    <div class="modal-actions"><button type="button" class="btn primary" id="orgApplySubmitBtn">送出申請</button></div></details>`;
 }
 async function submitOrganizationApplication(event){
   const btn=event?.currentTarget||$('orgApplySubmitBtn');
@@ -6257,16 +6253,15 @@ const BenefitLatestInfo={
 function benefitSimpleResultHtml(result){
   if(!result)return '<div class="empty">選好服務對象、長照等級與身分類別後，按「更新最新資訊並試算」。</div>';
   if(!result.ok)return `<div class="benefit-quick-result bad"><h3>目前無法完成試算</h3><p>${escapeHTML(result.error||'資料不足')}</p></div>`;
-  if(!result.eligible)return `<div class="benefit-quick-result warn"><h3>目前可能不符合交通接送補助資格</h3><p>${escapeHTML(result.reason||'資格資料不足')}</p><p class="small">這是預估結果，正式資格仍以照管中心核定為準。</p></div>`;
+  if(!result.eligible)return `<div class="benefit-quick-result warn"><h3>目前可能不符合交通接送補助資格</h3><p>${escapeHTML(result.reason||'資格資料不足')}</p></div>`;
   const categoryLabel={general:'一般戶',middle_low_income:'中低收入戶',low_income:'低收入戶'}[result.identityCategory]||'一般戶';
   return `<div class="benefit-quick-result">
-    <h3>交通接送補助快速試算</h3>
+    <h3>每月補助額度</h3>
     <div class="amount">${benefitMoney(result.monthlyLimit)}</div>
-    <p><strong>每月交通接送給付額度</strong>・第 ${result.zone} 區</p>
+    <p>第 ${result.zone} 區</p>
     <p>${escapeHTML(categoryLabel)}部分負擔約 <strong>${result.copayRate}%</strong>；若整月額度全數使用，預估個人負擔約 <strong>${benefitMoney(result.estimatedUserShare)}</strong>，政府給付部分約 <strong>${benefitMoney(result.estimatedGovernmentShare)}</strong>。</p>
     <p class="small">居住地址：${escapeHTML(result.address||'—')}<br>長照需要等級：${escapeHTML(String(result.cmsLevel))}・資料更新：${escapeHTML(result.source?.fetchedAt?formatDateTime(result.source.fetchedAt):(result.source?.checkedAt||'官方快照'))}</p>
-    <p class="small"><strong>注意：</strong>實際每趟費用、剩餘額度、照顧計畫與地方主管機關核定仍可能影響最後金額。</p>
-  </div>`;
+      </div>`;
 }
 
 function benefitDashboard(){
@@ -6277,16 +6272,11 @@ function benefitDashboard(){
   if(!benefitQuickUiState.cmsLevel&&latestAssessment?.facts?.cmsLevel)benefitQuickUiState.cmsLevel=String(latestAssessment.facts.cmsLevel);
   const info=BenefitLatestInfo.info();
   setTimeout(()=>BenefitLatestInfo.ensureFresh(),0);
-  const sourceText=info.fetchedAt?`${info.sourceMode}・${formatDateTime(info.fetchedAt)}`:`${info.sourceMode}・${info.checkedAt||'尚未更新'}`;
+  const sourceText=`更新於 ${info.fetchedAt?formatDateTime(info.fetchedAt):(info.checkedAt||'—')}`;
   const history=(store.state.benefitLatestEstimateRuns||[]).filter(x=>Benefit.canReadAssessment({recipientId:x.recipientId,organizationId:null},actorUserId,orgId())).slice(0,5);
-  return `<div class="page-head"><div><h2>長照補助試算</h2><p>不用看規則代碼：系統會自動更新官方公開資訊，再用服務對象資料做交通接送補助預估。</p></div></div>
-  <section class="card benefit-simple-hero"><h2>一鍵更新＋試算</h2><p>選擇服務對象後，只需要確認長照需要等級與身分類別。試算結果是預估，不會取代政府正式核定。</p></section>
+  return `<div class="page-head"><div><h2>長照交通補助試算</h2><p>結果僅供參考，以政府核定為準。</p></div></div>
   <section class="card">
-    <div class="benefit-source-status">
-      <div class="main"><strong>最新長照資訊</strong><span>${escapeHTML(sourceText)}<br>${escapeHTML(info.note||'')}</span></div>
-      <span class="pill ${info.status==='fresh_official'?'green':'yellow'}">${info.status==='fresh_official'?'已更新':'快照'}</span>
-    </div>
-    <div class="benefit-quick-form" style="margin-top:13px">
+    ${recipients.length?`<div class="benefit-quick-form">
       <div class="form-field"><label for="benefitQuickRecipient">服務對象</label><select id="benefitQuickRecipient">${recipients.map(r=>`<option value="${r.id}" ${r.id===benefitQuickUiState.recipientId?'selected':''}>${escapeHTML(CareRecipient.displayName(r)||r.id)}</option>`).join('')}</select></div>
       <div class="form-field"><label for="benefitQuickCms">長照需要等級</label><input id="benefitQuickCms" type="number" min="1" max="8" value="${escapeHTML(benefitQuickUiState.cmsLevel||'')}" placeholder="2～8" /></div>
       <div class="form-field"><label for="benefitQuickIdentity">身分類別</label><select id="benefitQuickIdentity">
@@ -6295,11 +6285,11 @@ function benefitDashboard(){
         <option value="low_income" ${benefitQuickUiState.identityCategory==='low_income'?'selected':''}>低收入戶</option>
       </select></div>
     </div>
-    <button class="btn primary block" id="benefitQuickRunBtn" type="button" style="margin-top:12px">${benefitQuickUiState.refreshing?'更新中…':'更新最新資訊並試算'}</button>
-    <div style="margin-top:12px">${benefitSimpleResultHtml(benefitQuickUiState.result)}</div>
+    <button class="btn primary block" id="benefitQuickRunBtn" type="button" style="margin-top:12px">${benefitQuickUiState.refreshing?'試算中…':'試算'}</button>
+    <div style="margin-top:12px">${benefitSimpleResultHtml(benefitQuickUiState.result)}</div>`:`<div class="empty">${role()==='requester'?'預約過一次接送後，就能用你的資料試算。':'還沒有服務對象。'}</div>`}
   </section>
   <section class="card">
-    <div class="card-head"><div><h3>目前官方公開規則摘要</h3><p>系統抓取失敗時，會退回最近一次成功資料，不會亂猜金額。</p></div></div>
+    <div class="card-head"><h3>每月補助額度</h3><span class="small muted">${escapeHTML(sourceText)}</span></div>
     <div class="benefit-simple-grid">
       <div class="benefit-simple-stat"><span>第 1 區</span><strong>${benefitMoney(info.monthlyAmountByZone?.[1])}</strong></div>
       <div class="benefit-simple-stat"><span>第 2 區</span><strong>${benefitMoney(info.monthlyAmountByZone?.[2])}</strong></div>
@@ -6308,10 +6298,10 @@ function benefitDashboard(){
       <div class="benefit-simple-stat"><span>資格基礎</span><strong>CMS ${escapeHTML(String(info.cmsMin||2))}+</strong></div>
       <div class="benefit-simple-stat"><span>服務類型</span><strong style="font-size:18px">交通接送</strong></div>
     </div>
-    <div class="small muted" style="margin-top:12px">來源：${BENEFIT_LATEST_OFFICIAL_SOURCES.map(s=>`<a href="${escapeHTML(s.url)}" target="_blank" rel="noopener">${escapeHTML(s.title)}</a>`).join('・')}</div>
+    <div class="small muted" style="margin-top:12px">資料來源：${BENEFIT_LATEST_OFFICIAL_SOURCES.map(s=>`<a href="${escapeHTML(s.url)}" target="_blank" rel="noopener">${escapeHTML(s.title)}</a>`).join('・')}</div>
   </section>
-  ${history.length?`<section class="card"><div class="card-head"><div><h3>最近試算</h3><p>只顯示最近 5 筆，避免畫面太複雜。</p></div></div><div class="list">${history.map(x=>`<div class="list-item"><strong>${escapeHTML(CareRecipient.displayName(CareRecipient.get(x.recipientId))||'服務對象')}｜第 ${x.zone||'—'} 區</strong><p>${escapeHTML(String(x.cmsLevel||'—'))} 級・每月額度 ${benefitMoney(x.monthlyLimit)}・部分負擔 ${x.copayRate??'—'}%・${formatDateTime(x.createdAt)}</p></div>`).join('')}</div></section>`:''}
-  ${canManage?`<details class="benefit-advanced"><summary>進階管理（規則、核定、帳本、匯入、測試）</summary><div class="benefit-advanced-body">${benefitAdvancedDashboard()}</div></details>`:''}`;
+  ${history.length?`<section class="card"><div class="card-head"><h3>最近試算</h3></div><div class="list">${history.map(x=>`<div class="list-item"><strong>${escapeHTML(CareRecipient.displayName(CareRecipient.get(x.recipientId))||'服務對象')}｜第 ${x.zone||'—'} 區</strong><p>${escapeHTML(String(x.cmsLevel||'—'))} 級・每月額度 ${benefitMoney(x.monthlyLimit)}・部分負擔 ${x.copayRate??'—'}%・${formatDateTime(x.createdAt)}</p></div>`).join('')}</div></section>`:''}
+  ${canManage?`<details class="benefit-advanced"><summary>進階管理</summary><div class="benefit-advanced-body">${benefitAdvancedDashboard()}</div></details>`:''}`;
 }
 
 // 自動抓取的草稿：顯示來源與和目前核准版本的差異（#24）
@@ -6487,7 +6477,7 @@ async function submitOAuthBind_(mode){
   finally{setButtonBusy(btn,false);}
 }
 function loginMethodsCard_(){
-  return `<section class="card" id="loginMethodsCard"><div class="card-head"><div><h3>登入方式</h3><p>手機＋密碼會一直保留；也可以綁定 Google、Facebook 登入。</p></div></div><div class="meta" id="loginMethodsBody">載入中…</div></section>`;
+  return `<section class="card" id="loginMethodsCard"><div class="card-head"><div><h3>登入方式</h3></div></div><div class="meta" id="loginMethodsBody">載入中…</div></section>`;
 }
 async function loadLoginMethods_(){
   const body=$('loginMethodsBody');if(!body)return;
@@ -6911,7 +6901,7 @@ function bindViewEvents(){
   $('kpiDateInput')?.addEventListener('change',e=>{kpiDate=e.target.value||preferredOperationalDate();render();});
   document.querySelector('.account-logout-btn')?.addEventListener('click',logout);
   if($('loginMethodsBody'))loadLoginMethods_();
-  $('saveSuperAdminAccountBtn')?.addEventListener('click',updateCurrentSuperAdminAccount);
+  $('saveAccountBtn')?.addEventListener('click',updateCurrentAccount);
   $('profilePhotoInput')?.addEventListener('change',e=>saveProfilePhoto(e.target.files?.[0]));
   $('removeProfilePhotoBtn')?.addEventListener('click',removeProfilePhoto);
   document.querySelectorAll('.care-recipient-merge-btn').forEach(btn=>btn.addEventListener('click',()=>{
