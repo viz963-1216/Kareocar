@@ -87,7 +87,7 @@
 </div></div>
 <div class="modal" id="registerRequesterModal"><div class="modal-panel small">
   <div class="modal-head"><h3>新增需求者身分</h3><button class="icon-btn" data-close="registerRequesterModal" type="button" aria-label="關閉視窗">×</button></div>
-  <p class="small muted">新增需求者帳號會先寫入正式資料庫的「使用者」與「成員資格」，成功後才建立本機登入狀態；若電子信箱或手機已存在，系統會阻擋重複建帳。</p>
+  
   <div class="form-grid">
     <div class="form-field"><label for="registerNameInput">姓名</label><input id="registerNameInput" autocomplete="name" placeholder="例如：王小明" /></div>
     <div class="form-field"><label for="registerEmailInput">電子信箱</label><input id="registerEmailInput" type="email" autocomplete="email" placeholder="請輸入電子信箱" /></div>
@@ -113,7 +113,7 @@
 
 <div class="modal" id="addOrganizationModal"><div class="modal-panel small">
   <div class="modal-head"><h3>新增組織</h3><button class="icon-btn" data-close="addOrganizationModal" type="button" aria-label="關閉視窗">×</button></div>
-  <p class="small muted">由平台超級管理者建立新的公司／機構。建立後可選擇該組織並指定唯一一位負責人。</p>
+  
   <div class="form-grid">
     <div class="form-field"><label for="organizationNameInput">組織名稱</label><input id="organizationNameInput" placeholder="例如：安心交通有限公司" /></div>
     <div class="form-field"><label for="organizationTypeInput">組織類型</label><select id="organizationTypeInput"><option value="transport_provider">交通／車隊公司</option><option value="care_facility">長照／日照機構</option><option value="other">其他合作組織</option></select></div>
@@ -132,7 +132,7 @@
     <div class="form-field"><label for="editOrganizationTaxIdInput">統一編號</label><input id="editOrganizationTaxIdInput" inputmode="numeric" placeholder="8 位數統一編號" /></div>
     <div class="form-field"><label for="editOrganizationContactPhoneInput">聯絡電話</label><input id="editOrganizationContactPhoneInput" inputmode="tel" placeholder="例如：02-23456789 或 0912345678" /></div>
     <div class="form-field"><label for="editOrganizationOwnerInput">負責人</label><select id="editOrganizationOwnerInput"></select></div>
-    <div class="smart-modal-hint">更換負責人後，新負責人的組織身分 會變成「負責人」；原負責人會優先恢復成為負責人前的角色（司機／調度員）。</div>
+    
   </div>
   <div class="modal-actions"><button type="button" class="btn secondary" data-close="editOrganizationModal">取消</button><button class="btn primary" id="saveOrganizationDetailsBtn" type="button">儲存組織資料</button></div>
 </div></div>
@@ -158,7 +158,7 @@
 <div class="modal" id="revokeMembershipModal"><div class="modal-panel small">
   <div class="modal-head"><h3>撤銷公司工作帳號</h3><button class="icon-btn" data-close="revokeMembershipModal" type="button" aria-label="關閉視窗">×</button></div>
   <p id="revokeMembershipText">撤銷後，此人在目前公司的組織身分 會失效。</p>
-  <div class="smart-modal-hint">公司停權與撤銷工作帳號視為同一狀態。這不會刪除使用者，也不會刪除需求者身分；若之後要恢復或加入其他公司，需由 平台超級管理者處理。</div>
+  
   <div class="danger-confirm-fields" id="revokeMembershipConfirmFields">
     <div class="form-field"><label for="revokeMembershipReasonInput">撤銷原因</label><textarea id="revokeMembershipReasonInput" placeholder="請說明撤銷原因，供後續稽核"></textarea></div>
     <div class="danger-requirement" id="revokeMembershipTokenHint">請輸入成員姓名以確認。</div>
@@ -169,7 +169,7 @@
 
 <div class="modal" id="systemReportModal"><div class="modal-panel small">
   <div class="modal-head"><h3>回報系統問題</h3><button class="icon-btn" data-close="systemReportModal" type="button" aria-label="關閉視窗">×</button></div>
-  <p class="small muted">此處回報 應用程式／後台系統問題，會送到平台超級管理者；行程現場異常仍使用司機端「異常回報」。</p>
+  
   <div class="form-grid">
     <div class="form-field"><label for="systemReportCategory">問題類型</label><select id="systemReportCategory"><option>登入／帳號</option><option>預約／派車</option><option>司機端</option><option>資料同步</option><option>介面／操作</option><option>其他</option></select></div>
     <div class="form-field"><label for="systemReportTitle">問題標題</label><input id="systemReportTitle" placeholder="簡短描述發生什麼問題" /></div>
@@ -233,7 +233,7 @@
 
 <div class="modal" id="tripHistoryModal"><div class="modal-panel">
   <div class="modal-head"><div><h3>行程事件歷史</h3><p class="small muted" id="tripHistoryContext">僅追加 執行歷史</p></div><button class="icon-btn" data-close="tripHistoryModal" type="button" aria-label="關閉視窗">×</button></div>
-  <div class="smart-modal-hint">原始 行程事件 永不刪除。若司機誤觸返回上一步，系統會新增 修正事件 指向被撤銷的事件；原本完成時間仍保留供稽核。</div>
+  
   <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin-top:10px">
     <input class="search" id="tripHistorySearch" placeholder="搜尋事件、操作者、停靠點、內容…" autocomplete="off" />
     <select class="inline-select" id="tripHistoryPageSize" aria-label="每頁事件數"><option value="20">20 / 頁</option><option value="40" selected>40 / 頁</option><option value="80">80 / 頁</option></select>
@@ -253,17 +253,17 @@
 </div></div>
 
 <div class="modal" id="formalTripCorrectionModal"><div class="modal-panel small">
-  <div class="modal-head"><div><h3>正式 行程 修正</h3><p class="small muted">僅調度員／負責人可對已完成行程執行，必須留下原因。</p></div><button class="icon-btn" data-close="formalTripCorrectionModal" type="button" aria-label="關閉視窗">×</button></div>
+  <div class="modal-head"><div><h3>正式 行程 修正</h3></div><button class="icon-btn" data-close="formalTripCorrectionModal" type="button" aria-label="關閉視窗">×</button></div>
   <p class="small muted" id="formalTripCorrectionText"></p>
   <div class="form-grid">
     <div class="form-field"><label for="formalTripCorrectionReason">修正原因</label><textarea id="formalTripCorrectionReason" placeholder="例如：司機誤將送達完成，經調度確認需重新執行最後一個送達站"></textarea></div>
-    <div class="smart-modal-hint">修正 不會刪除原始 停靠點、服務證明 或 行程事件。系統會把舊完成事件標記為被修正，舊 服務證明 取代，行程 回到進行中並要求重新完成最後一站與建立新的有效 服務證明。</div>
+    
   </div>
   <div class="modal-actions"><button type="button" class="btn secondary" data-close="formalTripCorrectionModal">取消</button><button class="btn warning" id="confirmFormalTripCorrectionBtn" type="button">確認正式修正</button></div>
 </div></div>
 
 <div class="modal" id="proofServiceModal"><div class="modal-panel">
-  <div class="modal-head"><div><h3>服務證明</h3><p class="small muted">每筆證明 僅追加；若內容有誤請新增補充證明，不覆蓋既有紀錄。</p></div><button class="icon-btn" data-close="proofServiceModal" type="button" aria-label="關閉視窗">×</button></div>
+  <div class="modal-head"><div><h3>服務證明</h3></div><button class="icon-btn" data-close="proofServiceModal" type="button" aria-label="關閉視窗">×</button></div>
   <input id="proofTripId" type="hidden" /><input id="proofTripRevision" type="hidden" />
   <div class="form-2">
     <div class="form-field form-full"><label for="proofStepSelect">已完成送達 停靠點</label><select id="proofStepSelect"></select></div>
@@ -281,7 +281,7 @@
 <div class="modal" id="contactModal"><div class="modal-panel small"><div class="modal-head"><h3>聯絡乘客</h3><button class="icon-btn" data-close="contactModal" type="button" aria-label="關閉視窗">×</button></div><div class="form-grid" id="contactOptions"></div></div></div>
 <div class="modal" id="issueModal"><div class="modal-panel">
   <div class="modal-head"><h3>異常回報</h3><button class="icon-btn" data-close="issueModal" type="button" aria-label="關閉視窗">×</button></div>
-  <p class="small muted">選擇最接近的現場狀況；若沒有符合項目，可在下方自行輸入。</p>
+  
   <div class="issue-category-title">乘客／案家</div>
   <div class="issue-grid">
     <button class="btn warning issue-option" data-type="乘客尚未準備">乘客尚未準備</button>
@@ -315,7 +315,7 @@
   <div class="form-field"><label for="newDriver">指派司機</label><select id="newDriver"></select></div><div class="form-field"><label for="newVehicle">指派車輛</label><select id="newVehicle"></select></div><div class="form-field form-full"><div class="smart-modal-hint" id="driverRecommendHint">尚未計算建議司機與車輛</div></div>
   <div class="form-field form-full"><label for="newNeed">特殊需求</label><input id="newNeed" placeholder="例如：手動輪椅、需陪同" /></div>
 </div><div class="modal-actions"><button type="button" class="btn secondary" data-close="createTripModal">取消</button><button type="button" class="btn primary" id="saveTripBtn">建立行程</button></div></div></div>
-<div class="modal" id="assignModal"><div class="modal-panel small"><div class="modal-head"><h3>指派／改派司機與車輛</h3><button class="icon-btn" data-close="assignModal" type="button" aria-label="關閉視窗">×</button></div><p class="small muted" id="assignTripText"></p><div class="form-grid"><div class="form-field"><label for="assignDriver">選擇司機</label><select id="assignDriver"></select></div><div class="form-field"><label for="assignVehicle">選擇車輛</label><select id="assignVehicle"></select></div><div class="smart-modal-hint">公司車採共享車池：司機與車輛不永久綁定，每一趟行程各自指定。系統會阻擋同時段重複派同一位司機或同一台車。</div></div><div class="modal-actions"><button type="button" class="btn secondary" data-close="assignModal">取消</button><button type="button" class="btn primary" id="saveAssignBtn">儲存指派</button></div></div></div>
+<div class="modal" id="assignModal"><div class="modal-panel small"><div class="modal-head"><h3>指派／改派司機與車輛</h3><button class="icon-btn" data-close="assignModal" type="button" aria-label="關閉視窗">×</button></div><p class="small muted" id="assignTripText"></p><div class="form-grid"><div class="form-field"><label for="assignDriver">選擇司機</label><select id="assignDriver"></select></div><div class="form-field"><label for="assignVehicle">選擇車輛</label><select id="assignVehicle"></select></div></div><div class="modal-actions"><button type="button" class="btn secondary" data-close="assignModal">取消</button><button type="button" class="btn primary" id="saveAssignBtn">儲存指派</button></div></div></div>
 <div class="modal" id="handoverTripModal"><div class="modal-panel small">
   <div class="modal-head"><h3>中斷行程資源交接</h3><button class="icon-btn" data-close="handoverTripModal" type="button" aria-label="關閉視窗">×</button></div>
   <p class="small muted" id="handoverTripText"></p>
@@ -323,7 +323,7 @@
     <div class="form-field"><label for="handoverDriver">接手司機</label><select id="handoverDriver"></select></div>
     <div class="form-field"><label for="handoverVehicle">接手車輛</label><select id="handoverVehicle"></select></div>
     <div class="form-field"><label for="handoverNote">交接說明</label><textarea id="handoverNote" placeholder="例如：原車輛故障，新車抵達後由新司機接手"></textarea></div>
-    <div class="smart-modal-hint">只有「已中斷」行程 可以交接。系統會保留原司機／原車輛執行區段，重新驗證新資源，再建立新的 指派區段；交接後仍需按「恢復行程」才可繼續執行 停靠點。</div>
+    
   </div>
   <div class="modal-actions"><button type="button" class="btn secondary" data-close="handoverTripModal">取消</button><button class="btn primary" id="saveHandoverBtn" type="button">完成資源交接</button></div>
 </div></div>
@@ -347,7 +347,7 @@
     <div class="form-field"><label for="vehicleAccessibleInput">無障礙設備</label><select id="vehicleAccessibleInput"><option value="true">有</option><option value="false">無</option></select></div>
     <div class="form-field"><label for="vehicleStatusInput">狀態</label><select id="vehicleStatusInput"><option value="available">可派車</option><option value="maintenance">維修／保養中</option><option value="retired">已退役</option></select></div>
   </div>
-  <div class="smart-modal-hint">僅公司負責人可新增或修改。只有「可派車」能被指派到新行程；「維修／保養中」是暫時不可用，「已退役」是永久退出營運且不可恢復。</div>
+  <div class="smart-modal-hint">「維修中」暫時不能派車；「已退役」永久不能派車。</div>
   <div class="modal-actions"><button type="button" class="btn secondary" data-close="addVehicleModal">取消</button><button type="button" class="btn primary" id="saveVehicleBtn">新增車輛</button></div>
 </div></div>
 
@@ -366,7 +366,7 @@
 </div></div>
 
 <div class="modal" id="careRecipientEditModal"><div class="modal-panel">
-  <div class="modal-head"><div><h3 id="careRecipientEditTitle">新增服務對象</h3><p class="small muted">長期固定資料只放在主檔；單次接送需求仍由 預約保存。</p></div><button class="icon-btn" data-close="careRecipientEditModal" type="button" aria-label="關閉視窗">×</button></div>
+  <div class="modal-head"><div><h3 id="careRecipientEditTitle">新增服務對象</h3></div><button class="icon-btn" data-close="careRecipientEditModal" type="button" aria-label="關閉視窗">×</button></div>
   <input id="careRecipientEditId" type="hidden" />
   <div class="form-2">
     <div class="form-field"><label for="crNameInput">姓名</label><input id="crNameInput" placeholder="例如：王美華" /></div>
@@ -390,7 +390,7 @@
 </div></div>
 
 <div class="modal" id="careRecipientDetailModal"><div class="modal-panel">
-  <div class="modal-head"><div><h3>服務對象主檔</h3><p class="small muted">完整資料提供平台治理者與曾承接服務的組織管理者；需求者本人只在「我的帳戶」維護自己的固定接送資料。</p></div><button class="icon-btn" data-close="careRecipientDetailModal" type="button" aria-label="關閉視窗">×</button></div>
+  <div class="modal-head"><div><h3>服務對象主檔</h3></div><button class="icon-btn" data-close="careRecipientDetailModal" type="button" aria-label="關閉視窗">×</button></div>
   <div id="careRecipientDetailContent"></div>
   <div class="modal-actions"><button type="button" class="btn secondary" data-close="careRecipientDetailModal">關閉</button></div>
 </div></div>
@@ -399,7 +399,7 @@
   <div class="modal-head"><h3>新增服務對象關係人</h3><button class="icon-btn" data-close="careRecipientRelationModal" type="button" aria-label="關閉視窗">×</button></div>
   <input id="crRelationRecipientId" type="hidden" />
   <div class="form-grid">
-    <div class="smart-modal-hint">關係人必須先有平台使用者帳號。這裡只建立使用者與服務對象的關係，不會新增或修改帳號身分。</div>
+    
     <div class="form-field"><label for="crRelationPhoneInput">關係人登入手機</label><input id="crRelationPhoneInput" inputmode="tel" placeholder="請輸入手機號碼" /></div>
     <div class="form-field"><label for="crRelationshipInput">關係</label><select id="crRelationshipInput"><option value="self">本人</option><option value="spouse">配偶</option><option value="child">子女</option><option value="parent">父母</option><option value="sibling">手足</option><option value="family" selected>家屬</option><option value="caregiver">照顧者</option><option value="other">其他</option></select></div>
     <label style="display:flex;align-items:center;gap:9px;font-weight:800"><input id="crRelationCanBookInput" type="checkbox" checked style="width:auto" /> 可替此服務對象預約</label>
@@ -428,7 +428,7 @@
 
 
 <div class="modal" id="benefitRulesetModal"><div class="modal-panel">
-  <div class="modal-head"><div><h3 id="benefitRulesetModalTitle">新增補助規則集</h3><p class="small muted">草稿可修改；發布後不可直接改內容，只能建立新版本或退役。</p></div><button class="icon-btn" data-close="benefitRulesetModal" type="button" aria-label="關閉視窗">×</button></div>
+  <div class="modal-head"><div><h3 id="benefitRulesetModalTitle">新增補助規則集</h3></div><button class="icon-btn" data-close="benefitRulesetModal" type="button" aria-label="關閉視窗">×</button></div>
   <input id="benefitRulesetId" type="hidden" />
   <div class="form-2">
     <div class="form-field"><label for="benefitRuleCode">方案代碼</label><input id="benefitRuleCode" placeholder="請輸入方案代碼" /></div>
@@ -457,7 +457,7 @@
 </div></div>
 
 <div class="modal" id="benefitAssessmentModal"><div class="modal-panel small">
-  <div class="modal-head"><div><h3>建立補助資格試算</h3><p class="small muted">每次試算都新增一筆不可變的資格試算，不覆蓋舊紀錄。</p></div><button class="icon-btn" data-close="benefitAssessmentModal" type="button" aria-label="關閉視窗">×</button></div>
+  <div class="modal-head"><div><h3>建立補助資格試算</h3></div><button class="icon-btn" data-close="benefitAssessmentModal" type="button" aria-label="關閉視窗">×</button></div>
   <div class="form-grid">
     <div class="form-field"><label for="benefitAssessmentRecipient">服務對象</label><select id="benefitAssessmentRecipient"></select></div>
     <div class="form-field"><label for="benefitAssessmentProgramCode">方案</label><select id="benefitAssessmentProgramCode"></select></div>
@@ -475,7 +475,7 @@
 
 
 <div class="modal" id="benefitAuthorizationModal"><div class="modal-panel small">
-  <div class="modal-head"><div><h3>補助正式核定</h3><p class="small muted">正式核定與系統試算分離；核定資料不會反向修改既有資格試算。</p></div><button class="icon-btn" data-close="benefitAuthorizationModal" type="button" aria-label="關閉視窗">×</button></div>
+  <div class="modal-head"><div><h3>補助正式核定</h3></div><button class="icon-btn" data-close="benefitAuthorizationModal" type="button" aria-label="關閉視窗">×</button></div>
   <div class="form-grid">
     <div class="form-field"><label for="benefitAuthorizationRecipient">服務對象</label><select id="benefitAuthorizationRecipient"></select></div>
     <div class="form-field"><label>補助方案</label><input id="benefitAuthorizationProgram" type="hidden" value="transportation_primary" /><input value="主要交通接送" disabled /></div>
@@ -486,33 +486,33 @@
     <div class="form-field"><label for="benefitAuthorizationReference">核定文號／識別碼</label><input id="benefitAuthorizationReference" required placeholder="正式核定必填" /></div>
     <div class="form-field"><label for="benefitAuthorizationSource">資料來源</label><select id="benefitAuthorizationSource"><option value="manual">人工核對</option><option value="government_api">政府資料介面</option><option value="imported">匯入資料</option></select></div>
   </div>
-  <div class="smart-modal-hint">系統只保存你明確輸入的核定資料，不會把資格預估自動當成政府正式核定。</div>
+  
   <div class="modal-actions"><button type="button" class="btn secondary" data-close="benefitAuthorizationModal">取消</button><button class="btn primary" id="saveBenefitAuthorizationBtn" type="button">儲存正式核定</button></div>
 </div></div>
 
 <div class="modal" id="benefitAdjustmentModal"><div class="modal-panel small">
-  <div class="modal-head"><div><h3>補助額度調整</h3><p class="small muted">所有調整只新增帳本，不覆寫歷史。</p></div><button class="icon-btn" data-close="benefitAdjustmentModal" type="button" aria-label="關閉視窗">×</button></div>
+  <div class="modal-head"><div><h3>補助額度調整</h3></div><button class="icon-btn" data-close="benefitAdjustmentModal" type="button" aria-label="關閉視窗">×</button></div>
   <input id="benefitAdjustmentAuthorizationId" type="hidden" />
   <div class="form-grid">
     <div class="form-field"><label for="benefitAdjustmentAmount">調整額度</label><input id="benefitAdjustmentAmount" type="number" step="1" placeholder="例如 500 或 -300" /></div>
     <div class="form-field"><label for="benefitAdjustmentReason">原因</label><textarea id="benefitAdjustmentReason" placeholder="至少 4 個字，例如：主管機關追加核定額度"></textarea></div>
   </div>
-  <div class="smart-modal-hint">正數增加可用總額；負數減少可用總額。系統會阻擋調整後總額低於已保留＋已結算金額。</div>
+  
   <div class="modal-actions"><button type="button" class="btn secondary" data-close="benefitAdjustmentModal">取消</button><button class="btn warning" id="saveBenefitAdjustmentBtn" type="button">建立調整紀錄</button></div>
 </div></div>
 
 <div class="modal" id="benefitImportModal"><div class="modal-panel">
-  <div class="modal-head"><div><h3>補助規則集匯入｜第三階段</h3><p class="small muted">匯入只建立草稿，不會自動發布。支援結構化資料或表格資料。</p></div><button class="icon-btn" data-close="benefitImportModal" type="button" aria-label="關閉視窗">×</button></div>
+  <div class="modal-head"><div><h3>補助規則集匯入｜第三階段</h3></div><button class="icon-btn" data-close="benefitImportModal" type="button" aria-label="關閉視窗">×</button></div>
   <div class="form-grid">
     <div class="form-field"><label for="benefitImportFormat">格式</label><select id="benefitImportFormat"><option value="json">結構化資料</option><option value="csv">表格資料</option></select></div>
     <div class="form-field"><label for="benefitImportPayload">資料內容</label><textarea id="benefitImportPayload" style="min-height:220px" placeholder="請貼上結構化規則資料"></textarea></div>
-    <div class="smart-modal-hint">安全規則：匯入資料必須通過正規化與驗證；正式來源的來源機關／來源標題／來源網址／確認日期仍需在發布前完整填寫。匯入不代表政府正式資料。</div>
+    
   </div>
   <div class="modal-actions"><button type="button" class="btn secondary" data-close="benefitImportModal">取消</button><button class="btn primary" id="runBenefitImportBtn" type="button">匯入為草稿</button></div>
 </div></div>
 
 <div class="modal" id="benefitDiffModal"><div class="modal-panel">
-  <div class="modal-head"><div><h3>規則集版本差異</h3><p class="small muted">比較兩個版本，不修改任何資料。</p></div><button class="icon-btn" data-close="benefitDiffModal" type="button" aria-label="關閉視窗">×</button></div>
+  <div class="modal-head"><div><h3>規則集版本差異</h3></div><button class="icon-btn" data-close="benefitDiffModal" type="button" aria-label="關閉視窗">×</button></div>
   <div class="form-2"><div class="form-field"><label for="benefitDiffFrom">舊版本</label><select id="benefitDiffFrom"></select></div><div class="form-field"><label for="benefitDiffTo">新版本</label><select id="benefitDiffTo"></select></div></div>
   <div id="benefitDiffResult" class="list" style="margin-top:12px"></div>
   <div class="modal-actions"><button type="button" class="btn secondary" data-close="benefitDiffModal">關閉</button><button class="btn outline" id="runBenefitDiffBtn" type="button">重新比較</button></div>
@@ -528,7 +528,7 @@
   <div class="undo-snackbar-message" id="undoSnackbarMessage">操作已完成</div>
   <button class="undo-snackbar-action" id="undoSnackbarAction" type="button">復原</button>
 </div>
-<div class="modal" id="identityContextModal"><div class="modal-panel small"><div class="modal-head"><div><h3>目前身分</h3><p class="small muted">確認現在操作的組織與角色，避免在錯誤身分下操作。</p></div><button class="icon-btn" data-close="identityContextModal" type="button" aria-label="關閉視窗">×</button></div><div class="identity-context-list" id="identityContextList"></div></div></div>
+<div class="modal" id="identityContextModal"><div class="modal-panel small"><div class="modal-head"><div><h3>目前身分</h3></div><button class="icon-btn" data-close="identityContextModal" type="button" aria-label="關閉視窗">×</button></div><div class="identity-context-list" id="identityContextList"></div></div></div>
 
 
 <script src="js/monitoring.js"></script>

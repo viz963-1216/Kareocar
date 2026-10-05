@@ -1895,3 +1895,7 @@ body.driver-mode .route-row.active{border-color:#9AC5F5;background:var(--cr-blue
     .mobile-context-trigger.single-context{cursor:default}.mobile-context-trigger.single-context .context-chevron{display:none}
     .list-item-head>.pill{white-space:nowrap;flex:none}
     .card>.card-head:last-child{margin-bottom:0}
+    .table-actions{display:flex;flex-wrap:wrap;gap:6px}
+    .smart-modal-hint:empty,p.small.muted:empty{display:none}
+    .duty-actions{display:flex;gap:8px}
+    @media (max-width:760px){.duty-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));width:100%}.duty-actions .btn{width:100%}}
