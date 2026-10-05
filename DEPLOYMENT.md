@@ -172,8 +172,8 @@ Data Scrubber。
          填了版本之後，沒有同意的使用者不能建立預約
       3. Google 品牌頁填首頁、隱私權政策、服務條款網址；Meta 基本設定填隱私權政策、服務條款與資料刪除說明網址
          （`/legal/privacy.html#data-deletion`）
-- [ ] **社群登入 Hook**（#58）：正式專案套用 migration 0014 後，在 Authentication → Hooks 啟用
-      Customize Access Token，函式 `public.custom_access_token_hook`（Staging 同樣要開）
+- [x] **社群登入 Hook**（#58）：正式專案套用 migration 0014 後，在 Authentication → Hooks 啟用
+      Customize Access Token，函式 `public.custom_access_token_hook`（Staging 同樣要開）。兩個專案都已啟用
 - [ ] **Facebook 登入發布**：Meta 商家驗證與應用程式審查、隱私權政策與資料刪除說明網址，切換成「上線」
       （目前只有應用程式角色能用）
 - [ ] **Google 登入發布**：隱私權政策網址填進 Google 品牌頁，按「發布應用程式」（目前只有測試使用者能用）
@@ -195,7 +195,7 @@ Data Scrubber。
 
 ### 正式資料庫
 
-- [ ] 目前的正式 Supabase 是早期以 SQL Editor 手動建立的，沒有 migration 紀錄，執行器會拒絕
+- [x] （已完成：清空後以 migration 重建，目前 0001–0014）目前的正式 Supabase 是早期以 SQL Editor 手動建立的，沒有 migration 紀錄，執行器會拒絕
       （exit 3）。**這是正式資料庫寫入，需另外取得同意。** 步驟：
       1. 確認 Database → Backups 有最近的每日備份
       2. SQL Editor 執行 `tools/reset-legacy-production.sql`：一個交易內刪掉 public（擴充套件的物件除外）
@@ -203,8 +203,11 @@ Data Scrubber。
          CI 的 `supabase/tests/reset-legacy.test.sh` 以模擬的舊庫驗證過整個流程
       3. 選擇性：Authentication → Users 刪掉舊的測試帳號（沒有對應的 users 資料，留著登入後狀態不完整）
       4. 以人工觸發套用全部 migration（見「資料庫 migration」）
-- [ ] 套用後在 SQL Editor 給 `care_ride_app` 設密碼，更新 Netlify production 的 `DATABASE_URL`
-- [ ] 建立平台超級管理者帳號
+- [ ] 套用後在 SQL Editor 給 `care_ride_app` 設密碼，更新 Netlify production 的 `DATABASE_URL`。
+      Netlify 的 `DATABASE_URL` 已有 3 個 context 的值，但正式值是重建前設的，沒有紀錄顯示重建後設過新密碼。
+      **恢復 Netlify 正式部署前**：重新給正式專案的 `care_ride_app` 設一組新密碼，同步更新 Production 的值
+      （使用者名稱應為 `care_ride_app.vcbhtlwkzavqvxthicis`），部署後以 `/api/health` 回 200 確認
+- [x] 建立平台超級管理者帳號（`tools/create-super-admin.sh`，2026-10-05）
 
 ### 營運設定
 
