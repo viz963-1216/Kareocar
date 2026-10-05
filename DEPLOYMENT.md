@@ -166,6 +166,8 @@ Data Scrubber。
 
 - [ ] **律師文件**：個資告知、服務條款完成；在平台設定填入版本與網址。個資告知要包含透過 Google、
       Facebook 登入取得的資料（Email、姓名），以及 Facebook 要求的資料刪除說明
+- [ ] **社群登入 Hook**（#58）：正式專案套用 migration 0014 後，在 Authentication → Hooks 啟用
+      Customize Access Token，函式 `public.custom_access_token_hook`（Staging 同樣要開）
 - [ ] **Facebook 登入發布**：Meta 商家驗證與應用程式審查、隱私權政策與資料刪除說明網址，切換成「上線」
       （目前只有應用程式角色能用）
 - [ ] **Google 登入發布**：隱私權政策網址填進 Google 品牌頁，按「發布應用程式」（目前只有測試使用者能用）
