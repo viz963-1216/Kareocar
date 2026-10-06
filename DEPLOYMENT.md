@@ -108,8 +108,10 @@
   - 2026-10-05 已建立：應用程式「安心接送」（編號 955307740981434），使用案例「使用 Facebook 登入」，
     權限 `email`、`public_profile`；有效的 OAuth 重新導向 URI 為正式與 Staging 的 Supabase 回呼網址
     （Strict 模式、強制 HTTPS）。
-  - **目前是「開發」模式**：只有應用程式角色（管理員、開發者、測試人員）能用 Facebook 登入。發布前
-    Meta 要求**商家驗證**與**應用程式審查**，並填隱私權政策、資料刪除說明網址、應用程式圖示與類別。
+  - **目前是「開發」模式**：只有應用程式角色（管理員、開發者、測試人員）能用 Facebook 登入。切換成
+    「上線」前要填隱私權政策、資料刪除說明網址、應用程式圖示與類別。本系統只用 `email` 與
+    `public_profile`，這兩項權限 Meta 自動給予，**不需要商家驗證**；個人名義的應用程式也能上線。
+    要用其他進階權限才需要商家驗證與應用程式審查。
 
 ### GitHub
 
@@ -174,8 +176,8 @@ Data Scrubber。
          （`/legal/privacy.html#data-deletion`）
 - [x] **社群登入 Hook**（#58）：正式專案套用 migration 0014 後，在 Authentication → Hooks 啟用
       Customize Access Token，函式 `public.custom_access_token_hook`（Staging 同樣要開）。兩個專案都已啟用
-- [ ] **Facebook 登入發布**：Meta 商家驗證與應用程式審查、隱私權政策與資料刪除說明網址，切換成「上線」
-      （目前只有應用程式角色能用）
+- [ ] **Facebook 登入發布**：填隱私權政策與資料刪除說明網址、圖示與類別，切換成「上線」（只用 email、
+      public_profile，不需要商家驗證）。目前只有應用程式角色能用；試營運期間畫面先隱藏 Facebook 按鈕
 - [ ] **Google 登入發布**：隱私權政策網址填進 Google 品牌頁，按「發布應用程式」（目前只有測試使用者能用）
 - [ ] **登入方式**（#58）：不接簡訊廠商。程式已完成（後台重設密碼、Google／Facebook 登入與綁定
       手機）；依上方「Supabase」設定 Google Cloud、Meta 與 Supabase 的登入提供者，並在 Staging 實際
