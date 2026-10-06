@@ -5,6 +5,29 @@
 // 放在最外層：本檔的程式分在多個區塊裡，宣告在區塊內的話其他區塊看不到。
 const LIFECYCLE = window.CareRideLifecycle;
 
+// 放在最外層，理由同上：從預約建立行程（Trip）與套用排車建議都在其他區塊裡呼叫
+// 排車（建立行程並把預約排進去）一律送 v2-schedule-trips，一筆交易完成。
+// 前端只負責算出行程（停靠點、時間、乘客），預約排車後的樣子與事件由伺服器產生，成功後重新載入。
+// 需要網路：伺服器要確認司機、車輛、預約都還可以用。
+async function scheduleTripsOnServer_({trips,dispatchPlanId=null}){
+  if(typeof navigator!=='undefined'&&navigator.onLine===false)return {ok:false,error:'排車需要網路連線，請連上網路後再試'};
+  // 先把佇列裡還沒送出的資料送完（例如剛確認的排車建議），伺服器才看得到最新狀態
+  for(let i=0;i<5;i++){
+    const flushed=await store.flushAuthoritative();
+    if(flushed&&flushed.ok===false&&!flushed.skipped)return {ok:false,error:flushed.error||'資料還沒同步完成，請稍後再試'};
+    if(!flushed||flushed.skipped||!(flushed.count>=100))break;
+  }
+  const expectedVersions={};
+  trips.forEach(t=>(t.bookingLegRefs||[]).forEach(r=>{const b=Booking.get(r.bookingId);if(b)expectedVersions[r.bookingId]=Math.max(1,Number(b.version)||1);}));
+  try{
+    const result=await window.backendJsonPost(APP_CONFIG.scheduleTripsUrl,{trips,dispatchPlanId,expectedVersions});
+    await AppStateDatabase.loadAll({silent:true});
+    return {ok:true,data:result?.data||result};
+  }catch(error){
+    return {ok:false,error:error?.message||'排車失敗，請重新整理後再試'};
+  }
+}
+
 const APP_CONFIG = Object.freeze({
   appName: '安心接送',
   version: '12.26.1',
@@ -1520,27 +1543,6 @@ function scheduleBookingLegInDb(db,bookingId,legId,context={}){
   db.bookings[index]=r.booking;
   appendBookingEventInDb(db,{bookingId,eventType:'leg_scheduled',action:'schedule',fromState:r.from,toState:r.to,actorUserId:context.userId||null,organizationId:r.leg.scheduledOrganizationId||null,tripId:context.tripId,source:context.source||'booking',bookingVersion:r.booking.version,metadata:{legId:r.leg.id,direction:r.leg.direction,label:r.leg.label,allLegsScheduled:r.to===BOOKING_STATE.SCHEDULED}});
   return {ok:true,from:r.from,to:r.to,booking:r.booking,leg:r.leg};
-}
-// 排車（建立行程並把預約排進去）一律送 v2-schedule-trips，一筆交易完成。
-// 前端只負責算出行程（停靠點、時間、乘客），預約排車後的樣子與事件由伺服器產生，成功後重新載入。
-// 需要網路：伺服器要確認司機、車輛、預約都還可以用。
-async function scheduleTripsOnServer_({trips,dispatchPlanId=null}){
-  if(typeof navigator!=='undefined'&&navigator.onLine===false)return {ok:false,error:'排車需要網路連線，請連上網路後再試'};
-  // 先把佇列裡還沒送出的資料送完（例如剛確認的排車建議），伺服器才看得到最新狀態
-  for(let i=0;i<5;i++){
-    const flushed=await store.flushAuthoritative();
-    if(flushed&&flushed.ok===false&&!flushed.skipped)return {ok:false,error:flushed.error||'資料還沒同步完成，請稍後再試'};
-    if(!flushed||flushed.skipped||!(flushed.count>=100))break;
-  }
-  const expectedVersions={};
-  trips.forEach(t=>(t.bookingLegRefs||[]).forEach(r=>{const b=Booking.get(r.bookingId);if(b)expectedVersions[r.bookingId]=Math.max(1,Number(b.version)||1);}));
-  try{
-    const result=await window.backendJsonPost(APP_CONFIG.scheduleTripsUrl,{trips,dispatchPlanId,expectedVersions});
-    await AppStateDatabase.loadAll({silent:true});
-    return {ok:true,data:result?.data||result};
-  }catch(error){
-    return {ok:false,error:error?.message||'排車失敗，請重新整理後再試'};
-  }
 }
 Booking = {
   STATE:BOOKING_STATE,
