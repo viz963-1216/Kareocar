@@ -83,4 +83,4 @@ GitHub → Actions → **Restore drill**，每月 1 日自動執行，也可以�
 | 日期 | 方式 | 備份時間 | 耗時 | 結果 | 備註 |
 |---|---|---|---|---|---|
 | 2026-10-04 | Restore drill（定時備份） | 2026-10-04 09:24 UTC（[backup run](https://github.com/viz963-1216/Kareocar/actions/runs/37191988856)） | 還原 1 秒；整個 workflow 47 秒 | 通過：33 張表、15 筆全部相符，migration 紀錄 12 筆 | [drill run](https://github.com/viz963-1216/Kareocar/actions/runs/37192091197)。第一次手動執行；正式庫剛重建，只有 migration 寫入的資料，auth 0 列 |
-| | Supabase 每日備份還原 | | | | 上線前、正式庫還沒有真實資料時做一次，量測停機時間 |
+| 2026-10-06 | Supabase 每日備份還原（Database → Backups → Restore，正式專案） | 2026-10-05 17:33:54 UTC 的每日備份 | 完成於 15:00（台灣）；資料庫重新啟動時間 07:00:57 UTC | 通過：還原前後 migration 14 筆、users 1、auth.users 1、超級管理者建立時間相同、app_state 0 筆；社群登入 Hook 函式存在；專案狀態 Healthy | 上線前、正式庫只有超級管理者時執行。選的是建立超級管理者（10/05 06:28 UTC）之後的備份，否則還原後要重建超級管理者。Authentication 的設定（Hook、登入方式）不在資料庫裡，還原不受影響 |
