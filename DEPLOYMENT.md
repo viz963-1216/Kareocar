@@ -188,9 +188,10 @@ Data Scrubber。
 - [ ] **Google Cloud 免費試用到期（2026-11-28）前升級**：試用結束不升級的話地圖 API 會停止，建立預約會
       失敗。升級後在 Google 地圖平台 → 配額，把 Geocoding（v3 requests per day）與 Routes 設每日上限
       （例如各 300 次；每筆預約約 3 次呼叫），試用期間配額不能修改。每月約 1 萬次免費額度，以 Google 價格頁為準
-- [ ] **備份與還原演練**（#28）：不加購 PITR，改用 Supabase 每日備份＋每 6 小時的加密備份
+- [x] **備份與還原演練**（#28）：不加購 PITR，改用 Supabase 每日備份＋每 6 小時的加密備份
       （見 [docs/RESTORE_RUNBOOK.md](docs/RESTORE_RUNBOOK.md)）。設定 `BACKUP_ENCRYPTION_PASSPHRASE`、
       手動跑一次 Database backup 與 Restore drill，並在上線前做一次 Supabase 每日備份的還原演練
+      （2026-10-04 定時備份演練、2026-10-06 每日備份還原演練都已通過，紀錄見 RESTORE_RUNBOOK）
 - [ ] **Netlify 方案**：正式上線前確認團隊方案與額度（目前降為免費方案時合併不會部署）
 
 ### 正式資料庫
