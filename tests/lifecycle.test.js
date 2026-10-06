@@ -93,4 +93,45 @@ ok('在瀏覽器環境（沒有 module）掛到 window.CareRideLifecycle', () =>
   assert.equal(JSON.stringify(sandbox.self.CareRideLifecycle.bookingTargets('open', 'claim')), '["claimed"]');
 });
 
+const legOf = (id, direction, sequence, extra = {}) => ({ id: `B1_${direction}`, sequence, direction, label: direction === 'return' ? '回程' : '去程',
+  status: 'pending', requestedPickupAt: '2099-01-01T01:00:00.000Z', tripId: null, ...extra });
+const claimedBooking = (legs) => ({ id: 'B1', state: 'claimed', organizationId: 'ORG-A', version: 3, legs });
+const AT = '2099-01-01T00:00:00.000Z';
+
+ok('排車：單程排完是已排車，不改傳入的預約', () => {
+  const b = claimedBooking([legOf('B1', 'outbound', 1)]);
+  const r = L.scheduleBookingLeg(b, { tripId: 'T1', organizationId: 'ORG-A', at: AT });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.to, 'scheduled');
+  assert.equal(r.booking.version, 4);
+  assert.equal(r.booking.tripId, 'T1');
+  assert.equal(r.booking.legs[0].status, 'scheduled');
+  assert.equal(b.legs[0].status, 'pending');
+  assert.equal(b.state, 'claimed');
+});
+ok('排車：來回只排一段是部分排車，再排另一段變已排車', () => {
+  const b = claimedBooking([legOf('B1', 'outbound', 1), legOf('B1', 'return', 2)]);
+  const first = L.scheduleBookingLeg(b, { tripId: 'T1', organizationId: 'ORG-A', at: AT });
+  assert.equal(first.to, 'partially_scheduled');
+  assert.equal(first.leg.direction, 'outbound');
+  const second = L.scheduleBookingLeg(first.booking, { legId: 'B1_return', tripId: 'T2', organizationId: 'ORG-A', at: AT });
+  assert.equal(second.to, 'scheduled');
+  assert.equal(second.booking.tripId, 'T1');
+});
+ok('排車：已排的段、別家機構、公開中的預約、缺時間都不行', () => {
+  const b = claimedBooking([legOf('B1', 'outbound', 1, { status: 'scheduled', tripId: 'T0' })]);
+  assert.equal(L.scheduleBookingLeg(b, { legId: 'B1_outbound', tripId: 'T1', organizationId: 'ORG-A', at: AT }).ok, false);
+  const c = claimedBooking([legOf('B1', 'outbound', 1)]);
+  assert.equal(L.scheduleBookingLeg(c, { tripId: 'T1', organizationId: 'ORG-B', at: AT }).ok, false);
+  assert.equal(L.scheduleBookingLeg({ ...c, state: 'open', organizationId: null }, { tripId: 'T1', at: AT }).ok, false);
+  const d = claimedBooking([legOf('B1', 'outbound', 1, { requestedPickupAt: null })]);
+  assert.equal(L.scheduleBookingLeg(d, { tripId: 'T1', organizationId: 'ORG-A', at: AT }).ok, false);
+  assert.equal(L.scheduleBookingLeg(c, { legId: 'NOPE', tripId: 'T1', organizationId: 'ORG-A', at: AT }).ok, false);
+});
+ok('排車：平台指定給其他機構的段，以指定的機構為準', () => {
+  const b = claimedBooking([legOf('B1', 'outbound', 1, { assignedOrganizationId: 'ORG-B' })]);
+  assert.equal(L.legResponsibleOrganization(b, b.legs[0]), 'ORG-B');
+  assert.equal(L.scheduleBookingLeg(b, { tripId: 'T1', organizationId: 'ORG-A', at: AT }).ok, false);
+});
+
 console.log(`lifecycle: ${pass} passed`);

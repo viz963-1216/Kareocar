@@ -115,6 +115,9 @@ jobs:
       - name: 預約與行程寫入、存取撤銷整合測試（狀態規則、退回／不受理／取消後原機構讀不到、跨機構司機／車輛／預約、需求者只看到承接單位名稱）
         run: bash supabase/tests/run-booking-access.sh
 
+      - name: 排車 command 整合測試（預約與行程一筆交易、部分失敗全部不寫入、版本衝突、來回、共乘與排車建議）
+        run: bash supabase/tests/run-schedule-trips.sh
+
       - name: 通知整合測試（承接、排車、指派、改派、完成各自通知正確收件人；收件人只讀得到自己的）
         run: bash supabase/tests/run-notifications.sh
 

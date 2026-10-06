@@ -65,6 +65,67 @@
     return table;
   }
 
+  // ---------------------------------------------------------------- 預約的去程／回程（leg）排車
+  const BOOKING_LEG_STATUS = Object.freeze({ PENDING: 'pending', SCHEDULED: 'scheduled', CANCELLED: 'cancelled' });
+  const legsOf = (booking) => (booking && Array.isArray(booking.legs) ? booking.legs : []);
+
+  /** 下一個還沒排車的 leg（依 sequence）。 */
+  function nextPendingLeg(booking) {
+    return legsOf(booking).filter((l) => l.status === BOOKING_LEG_STATUS.PENDING)
+      .sort((a, b) => (Number(a.sequence) || 0) - (Number(b.sequence) || 0))[0] || null;
+  }
+  /** 這個 leg 由哪個機構負責：平台指定的機構、已排車的機構，否則是預約的承接機構。 */
+  function legResponsibleOrganization(booking, leg) {
+    return (leg && (leg.assignedOrganizationId || leg.scheduledOrganizationId)) || (booking && booking.organizationId) || null;
+  }
+
+  /**
+   * 把預約的一個 leg 排進行程。不改傳入的物件，回傳新的預約。
+   *
+   * 前端（建立行程前預先檢查）與伺服器（v2-schedule-trips 實際寫入）用同一個函式，
+   * 所以兩邊對「能不能排、排完預約變成什麼樣子」的判斷一定一致。
+   *
+   * @param {object} booking
+   * @param {{ legId?: string, tripId: string, organizationId?: string, at: string }} p
+   * @returns {{ ok: true, booking, leg, from, to } | { ok: false, error: string }}
+   */
+  function scheduleBookingLeg(booking, { legId, tripId, organizationId, at }) {
+    if (!booking) return { ok: false, error: '找不到預約' };
+    const from = String(booking.state || '').trim() || 'open';
+    if (!['claimed', 'partially_scheduled'].includes(from)) return { ok: false, error: `預約目前為 ${from}，不能排車` };
+    if (!booking.organizationId) return { ok: false, error: '預約尚未有承接機構' };
+    if (!tripId) return { ok: false, error: '排車缺少行程' };
+    const next = JSON.parse(JSON.stringify(booking));
+    const leg = (legId && legsOf(next).find((l) => l.id === legId)) || (!legId && nextPendingLeg(next)) || null;
+    if (!leg) return { ok: false, error: '沒有待排車的去程或回程' };
+    const responsible = legResponsibleOrganization(next, leg);
+    if (!responsible) return { ok: false, error: `${leg.label || '這一段'}還沒有承接機構` };
+    if (organizationId && responsible !== organizationId) return { ok: false, error: `${leg.label || '這一段'}的承接機構與行程的機構不同` };
+    if (leg.status !== BOOKING_LEG_STATUS.PENDING) return { ok: false, error: `${leg.label || '這一段'}已經排車或不能再排車` };
+    if (!leg.requestedPickupAt || Number.isNaN(new Date(leg.requestedPickupAt).getTime())) {
+      return { ok: false, error: `${leg.label || '這一段'}缺少有效的接送時間` };
+    }
+
+    leg.status = BOOKING_LEG_STATUS.SCHEDULED;
+    leg.tripId = tripId;
+    leg.scheduledOrganizationId = organizationId || responsible;
+    leg.scheduledAt = at;
+    const all = legsOf(next).length > 0 && legsOf(next).every((l) => l.status === BOOKING_LEG_STATUS.SCHEDULED);
+    const to = all ? 'scheduled' : 'partially_scheduled';
+    if (!bookingTargets(from, 'schedule').includes(to)) return { ok: false, error: `預約目前為 ${from}，不能改成 ${to}` };
+    next.state = to;
+    next.updatedAt = at;
+    next.stateChangedAt = at;
+    next.version = Math.max(1, Number(next.version) || 1) + 1;
+    if (all) next.scheduledAt = at;
+    // 舊版欄位（畫面與通知還在用）
+    const firstScheduled = legsOf(next).find((l) => l.status === BOOKING_LEG_STATUS.SCHEDULED && l.tripId);
+    next.status = to;
+    next.claimStatus = 'claimed';
+    next.tripId = (firstScheduled && firstScheduled.tripId) || (all ? next.tripId : null) || null;
+    return { ok: true, booking: next, leg, from, to };
+  }
+
   const TRIP_STATUSES = Object.freeze(['scheduled', 'in_progress', 'interrupted', 'completed', 'cancelled', 'aborted']);
   // 一般流程（已開始的行程不能取消，要用中斷；結束的行程不能再改狀態）
   const TRIP_STATUS_TRANSITIONS = Object.freeze({
@@ -91,6 +152,7 @@
   return Object.freeze({
     BOOKING_STATES, BOOKING_EDGES, BOOKING_REVOKE_STATES,
     bookingTargets, bookingWriteTransitions,
+    BOOKING_LEG_STATUS, nextPendingLeg, legResponsibleOrganization, scheduleBookingLeg,
     TRIP_STATUSES, TRIP_STATUS_TRANSITIONS, TRIP_CORRECTION_TRANSITIONS,
     canTripTransition
   });
