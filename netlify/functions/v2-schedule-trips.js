@@ -6,7 +6,7 @@
  * body: {
  *   trips: [行程紀錄…],                 // 前端算好的停靠點、時間、乘客；每趟的 bookingLegRefs 列出排進來的預約 leg
  *   dispatchPlanId?: string,            // 套用自動排車建議時：方案必須是 confirmed，成功後標成 applied
- *   expectedVersions?: { 預約ID: 版本 } // 前端看到的預約版本；不一樣就拒絕，請調度重新整理
+ *   expectedVersions?: { 預約ID: 版本 } // 前端看到的預約版本（資料列的 version）；不一樣就拒絕，請調度重新整理
  * }
  *
  * 以前排車是前端改完整份資料後，預約、行程、事件分三個端點、三筆交易送出；行程那一步失敗時，
@@ -106,13 +106,14 @@ exports.handler = async (event) => {
       const bookings = new Map();
       for (const id of bookingIds) {
         const row = (await client.query(
-          `select data, organization_id from app_state where collection = 'bookings' and id = $1 and not deleted for update`,
+          `select data, organization_id, version from app_state where collection = 'bookings' and id = $1 and not deleted for update`,
           [id])).rows[0];
         if (!row) fail('NOT_FOUND', `找不到預約 ${id}，或你沒有權限排這筆預約`);
         if (!(await isOps(row.organization_id))) fail('FORBIDDEN', `沒有權限排預約 ${id}`);
+        // 前端拿到的版本是資料列的 version（v2-state-load 用它覆蓋），每次寫入由觸發器 +1
         if (id in expectedVersions) {
           const seen = Number(expectedVersions[id]);
-          const actual = Math.max(1, Number(row.data && row.data.version) || 1);
+          const actual = Number(row.version);
           if (seen !== actual) fail('BOOKING_CONFLICT', '預約已被其他人更新，請重新整理後再排車');
         }
         bookings.set(id, { before: row.data || {}, current: row.data || {}, organizationId: row.organization_id, events: [] });
@@ -189,7 +190,7 @@ exports.handler = async (event) => {
             id, 'booking_scheduled', JSON.stringify({ tripId: b.current.tripId || null }),
             'schedule_trips_endpoint', `scheduled:${id}:${b.current.tripId || ''}`]);
         }
-        savedBookings.push({ id, state: b.current.state, version: b.current.version });
+        savedBookings.push({ id, state: b.current.state });
       }
 
       if (planRow) {

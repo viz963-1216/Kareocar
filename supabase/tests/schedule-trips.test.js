@@ -56,7 +56,7 @@ async function call(handler, userId, body) {
 }
 const outcome = (r) => `${r.status} ${r.error ? `${r.error.code} ${r.error.message}` : 'ok'}`;
 const row = async (collection, id) => (await admin.query(
-  'select organization_id, data from app_state where collection = $1 and id = $2', [collection, id])).rows[0];
+  'select organization_id, data, version from app_state where collection = $1 and id = $2', [collection, id])).rows[0];
 const count = async (collection, where, params) => Number((await admin.query(
   `select count(*)::int as n from app_state where collection = $1 and ${where}`, [collection, ...params])).rows[0].n);
 const notifications = async (bookingId) => Number((await admin.query(
@@ -115,13 +115,16 @@ const schedule = (userId, body) => call(scheduleFn.handler, userId, body);
 
   console.log('--- 從預約建立行程 ---');
   await claimedBooking('BKG-SCH-1');
-  const before1 = (await row('bookings', 'BKG-SCH-1')).data;
+  const row1 = await row('bookings', 'BKG-SCH-1');
+  const before1 = row1.data;
+  // 前端拿到的版本是資料列的 version（state-load 用它覆蓋）
   const ok1 = await schedule(U.dspA, { trips: [trip('TRP-SCH-1', [{ bookingId: 'BKG-SCH-1', legId: 'BKG-SCH-1_outbound' }])],
-    expectedVersions: { 'BKG-SCH-1': before1.version } });
-  const b1 = (await row('bookings', 'BKG-SCH-1')).data;
+    expectedVersions: { 'BKG-SCH-1': row1.version } });
+  const after1 = await row('bookings', 'BKG-SCH-1');
+  const b1 = after1.data;
   record('排車成功：預約變成已排車、這一段記下行程', ok1.status === 200 && b1.state === 'scheduled'
     && b1.legs[0].status === 'scheduled' && b1.legs[0].tripId === 'TRP-SCH-1' && b1.tripId === 'TRP-SCH-1', outcome(ok1));
-  record('預約版本 +1', b1.version === before1.version + 1, `${before1.version} → ${b1.version}`);
+  record('預約版本 +1', after1.version === row1.version + 1, `${row1.version} → ${after1.version}`);
   record('行程寫入且屬於機構 A', (await row('trips', 'TRP-SCH-1'))?.organization_id === ORG_A);
   record('伺服器產生預約事件 leg_scheduled', await count('bookingEvents', `booking_id = $2 and data->>'eventType' = 'leg_scheduled'`, ['BKG-SCH-1']) === 1);
   record('伺服器產生行程事件 trip_created', await count('tripEvents', `trip_id = $2 and data->>'eventType' = 'trip_created'`, ['TRP-SCH-1']) === 1);
@@ -133,20 +136,22 @@ const schedule = (userId, body) => call(scheduleFn.handler, userId, body);
   console.log('--- 一筆交易：任何一趟不合規則就全部不寫入 ---');
   await claimedBooking('BKG-SCH-2');
   await claimedBooking('BKG-SCH-3');
-  const before2 = (await row('bookings', 'BKG-SCH-2')).data;
+  const row2 = await row('bookings', 'BKG-SCH-2');
+  const before2 = row2.data;
   const bad = await schedule(U.dspA, { trips: [
     trip('TRP-SCH-2', [{ bookingId: 'BKG-SCH-2', legId: 'BKG-SCH-2_outbound' }]),
     trip('TRP-SCH-3', [{ bookingId: 'BKG-SCH-3', legId: 'BKG-SCH-3_outbound' }], { driverId: DRIVER_B })
   ] });
-  const after2 = (await row('bookings', 'BKG-SCH-2')).data;
+  const row2after = await row('bookings', 'BKG-SCH-2');
+  const after2 = row2after.data;
   record('第二趟用了別家司機：整批被拒', bad.status >= 400 && bad.status < 500, outcome(bad));
   record('第一趟的行程也沒有寫入', !(await row('trips', 'TRP-SCH-2')));
-  record('第一趟的預約維持已承接、版本不變', after2.state === 'claimed' && after2.version === before2.version && after2.legs[0].status === 'pending');
+  record('第一趟的預約維持已承接、版本不變', after2.state === 'claimed' && row2after.version === row2.version && after2.legs[0].status === 'pending');
   record('沒有留下任何事件', await count('bookingEvents', `booking_id = any($2)`, [['BKG-SCH-2', 'BKG-SCH-3']]) === 0
     && await count('tripEvents', `trip_id = any($2)`, [['TRP-SCH-2', 'TRP-SCH-3']]) === 0);
 
   const stale = await schedule(U.dspA, { trips: [trip('TRP-SCH-2', [{ bookingId: 'BKG-SCH-2', legId: 'BKG-SCH-2_outbound' }])],
-    expectedVersions: { 'BKG-SCH-2': before2.version - 1 } });
+    expectedVersions: { 'BKG-SCH-2': row2.version - 1 } });
   record('預約版本和畫面上的不同：拒絕，請重新整理', stale.status === 409 && stale.error.code === 'BOOKING_CONFLICT'
     && !(await row('trips', 'TRP-SCH-2')), outcome(stale));
 
