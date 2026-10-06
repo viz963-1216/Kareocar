@@ -11,15 +11,8 @@
  *   - 指派的司機、車輛、新關聯的預約都必須屬於行程的機構
  */
 
-// 與前端 TRIP_STATUS_TRANSITIONS 相同
-const TRIP_STATUS_TRANSITIONS = {
-  scheduled: ['in_progress', 'cancelled'],
-  in_progress: ['interrupted', 'completed'],
-  interrupted: ['in_progress', 'aborted'],
-  completed: [],
-  cancelled: [],
-  aborted: []
-};
+// 狀態轉換與前端共用同一份（js/lifecycle.js）
+const { TRIP_STATUS_TRANSITIONS } = require('../../js/lifecycle.js');
 const SCHEDULABLE_BOOKING_STATES = new Set(['claimed', 'partially_scheduled', 'scheduled']);
 
 const ruleError = (code, message) => Object.assign(new Error(message), { code });

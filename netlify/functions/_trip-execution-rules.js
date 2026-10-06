@@ -40,9 +40,13 @@ const TRIP_PATCH_KEYS = Object.freeze([
 ]);
 const TRIP_PATCH_REQUIRED = Object.freeze(['status', 'steps', 'passengers', 'serviceProofs', 'currentStepIndex', 'updatedAt']);
 
+const { TRIP_CORRECTION_TRANSITIONS } = require('../../js/lifecycle.js');
+// 返回上一步：停在進行中，或依修正轉換表（js/lifecycle.js，與前端共用）退回
+const UNDO_PAIRS = ['in_progress>in_progress',
+  ...Object.entries(TRIP_CORRECTION_TRANSITIONS).flatMap(([from, tos]) => tos.map((to) => `${from}>${to}`))];
 const STATUS_PAIRS = Object.freeze({
   complete_step: ['scheduled>in_progress', 'scheduled>completed', 'in_progress>in_progress', 'in_progress>completed'],
-  undo_step: ['in_progress>in_progress', 'in_progress>scheduled', 'completed>in_progress'],
+  undo_step: UNDO_PAIRS,
   proof_service: ['in_progress>in_progress', 'in_progress>completed', 'completed>completed']
 });
 
