@@ -117,6 +117,16 @@ const doLogin = async (p, pw, ip) => parse(await login.handler({ httpMethod: 'PO
       record:{ id:'DRV-NEW-1', userId:'USR-OWN2', organizationId:'ORG-TP-002', dutyStatus:'off_duty', active:true } }]));
     return r.ok === true && sql("select organization_id from drivers where id='DRV-NEW-1'") === 'ORG-TP-002';
   });
+  await t('司機開始執勤：前端送 status，資料庫記成執勤中（舊的 dutyStatus 不蓋過它）', async () => {
+    const r = parse(await send(owner, [{ collection:'drivers', id:'DRV-NEW-1',
+      record:{ id:'DRV-NEW-1', userId:'USR-OWN2', organizationId:'ORG-TP-002', status:'on_duty', dutyStatus:'off_duty', active:true } }]));
+    return r.ok === true && sql("select duty_status from drivers where id='DRV-NEW-1'") === 'on_duty';
+  });
+  await t('司機狀態只接受執勤中、休息、結束執勤、不可派車', async () => {
+    const r = parse(await send(owner, [{ collection:'drivers', id:'DRV-NEW-1',
+      record:{ id:'DRV-NEW-1', userId:'USR-OWN2', organizationId:'ORG-TP-002', status:'flying', active:true } }]));
+    return r.ok !== true && sql("select duty_status from drivers where id='DRV-NEW-1'") === 'on_duty';
+  });
   await t('負責人不能把司機塞進別家組織', async () => {
     const r = parse(await send(owner, [{ collection:'drivers', id:'DRV-EVIL',
       record:{ id:'DRV-EVIL', userId:'USR-OWN2', organizationId:'ORG-TP-001', dutyStatus:'off_duty' } }]));
