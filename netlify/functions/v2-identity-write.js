@@ -90,13 +90,17 @@ async function writeMembership(client, id, r) {
       values ($1,$2,$3,$4,$5,$6,$7) returning id`, params);
 }
 
+const DUTY_STATUSES = ['on_duty', 'break', 'off_duty', 'unavailable'];
+
 async function writeDriver(client, id, r) {
   const userId = text(r.userId);
   const orgId = toDbOrgId(r.organizationId);
   if (!userId || !orgId) throw auth.authError('VALIDATION_ERROR', '司機資料缺少使用者或組織');
 
-  const params = [id, userId, orgId, text(r.fleetId) || null,
-    text(r.dutyStatus) || 'off_duty', text(r.serviceArea) || null, bool(r.active)];
+  // 前端的欄位是 status（開始執勤／休息／結束執勤都改它）；dutyStatus 是載入時帶下來的舊值，只在沒有 status 時才用
+  const duty = text(r.status) || text(r.dutyStatus) || 'off_duty';
+  if (!DUTY_STATUSES.includes(duty)) throw auth.authError('VALIDATION_ERROR', `司機狀態不合法：${duty}`);
+  const params = [id, userId, orgId, text(r.fleetId) || null, duty, text(r.serviceArea) || null, bool(r.active)];
   return upsert(client,
     `update drivers set fleet_id=$4, duty_status=$5, service_area=$6, active=$7, updated_at=now()
       where id=$1 returning id`, params,
