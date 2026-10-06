@@ -115,6 +115,11 @@
   status = 200
 
 [[redirects]]
+  from = "/api/v2/schedule-trips"
+  to = "/.netlify/functions/v2-schedule-trips"
+  status = 200
+
+[[redirects]]
   from = "/api/v2/benefit-ruleset"
   to = "/.netlify/functions/v2-benefit-ruleset"
   status = 200
