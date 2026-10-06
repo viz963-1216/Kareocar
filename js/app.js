@@ -1,6 +1,10 @@
 (() => {
 'use strict';
 
+// 預約與行程的狀態轉換與伺服器共用同一份：js/lifecycle.js（index.html 在本檔之前載入）。
+// 放在最外層：本檔的程式分在多個區塊裡，宣告在區塊內的話其他區塊看不到。
+const LIFECYCLE = window.CareRideLifecycle;
+
 const APP_CONFIG = Object.freeze({
   appName: '安心接送',
   version: '12.26.1',
@@ -1042,15 +1046,6 @@ const BOOKING_STATE = Object.freeze({
   EXPIRED:'expired'
 });
 const BOOKING_STATE_VALUES = new Set(Object.values(BOOKING_STATE));
-const BOOKING_TRANSITIONS = Object.freeze({
-  [BOOKING_STATE.OPEN]:Object.freeze({claim:BOOKING_STATE.CLAIMED,cancel:BOOKING_STATE.CANCELLED,expire:BOOKING_STATE.EXPIRED}),
-  [BOOKING_STATE.CLAIMED]:Object.freeze({release:BOOKING_STATE.OPEN,reject:BOOKING_STATE.REJECTED,cancel:BOOKING_STATE.CANCELLED}),
-  [BOOKING_STATE.PARTIALLY_SCHEDULED]:Object.freeze({cancel:BOOKING_STATE.CANCELLED}),
-  [BOOKING_STATE.SCHEDULED]:Object.freeze({cancel:BOOKING_STATE.CANCELLED}),
-  [BOOKING_STATE.REJECTED]:Object.freeze({}),
-  [BOOKING_STATE.CANCELLED]:Object.freeze({}),
-  [BOOKING_STATE.EXPIRED]:Object.freeze({})
-});
 const BOOKING_EVENT_LABELS = Object.freeze({
   migrated:'歷史資料建立基準',created:'建立預約',claimed:'公開需求已接案',released:'承接單位退回公開池',leg_scheduled:'行程 Leg 已排車',leg_organization_assigned:'行程 Leg 承接組織已指定',scheduled:'已建立行程',rejected:'不受理',cancelled:'預約取消',source_updated:'來源資料更新',source_conflict:'來源資料衝突',amended:'預約內容已修改',commercial_snapshot_captured:'報價／補助快照已建立',duplicate_detected:'偵測到疑似重複預約',claim_invalidated_by_amendment:'重大修改解除原承接',expired:'公開接案期限已到'
 });
@@ -1421,8 +1416,9 @@ function syncBookingLegacyLifecycleFields(booking){
 }
 function bookingTransitionCheck(booking,action,context={}){
   if(!booking) return {ok:false,error:'找不到預約'};
-  const from=bookingStateOf(booking),to=BOOKING_TRANSITIONS[from]?.[action];
-  if(!to) return {ok:false,error:`預約目前為 ${from}，不能執行 ${action}`};
+  // 同一個動作可能有多個目標狀態（排車：部分或全部），要由呼叫端用 context.to 指定
+  const from=bookingStateOf(booking),targets=LIFECYCLE.bookingTargets(from,action),to=context.to||(targets.length===1?targets[0]:null);
+  if(!to||!targets.includes(to)) return {ok:false,error:`預約目前為 ${from}，不能執行 ${action}`};
   if(context.expectedVersion!==undefined&&context.expectedVersion!==null){
     const expected=Number(context.expectedVersion),actual=Math.max(1,Number(booking.version)||1);
     if(!Number.isInteger(expected)||expected<1) return {ok:false,error:'預約版本資訊無效，請重新整理'};
@@ -1437,11 +1433,6 @@ function bookingTransitionCheck(booking,action,context={}){
     if(scheduledBookingLegs(booking).length)return {ok:false,error:'已有 Leg 完成排車，不能再整張退回公開池；請由調度處理剩餘 Leg'};
     if(!booking.organizationId) return {ok:false,error:'此預約目前沒有承接組織，無法退回公開池'};
     if(context.organizationId&&booking.organizationId!==context.organizationId) return {ok:false,error:'只能由目前承接組織退回此需求'};
-  }
-  if(action==='schedule'){
-    if(!context.tripId) return {ok:false,error:'建立行程時缺少 tripId'};
-    if(!booking.organizationId) return {ok:false,error:'公開需求尚未接案，不能直接排車'};
-    if(context.organizationId&&booking.organizationId!==context.organizationId) return {ok:false,error:'預約承接組織與行程組織不一致'};
   }
   return {ok:true,from,to};
 }
@@ -1462,9 +1453,6 @@ function applyBookingTransitionRecord(booking,action,context={}){
     booking.lastReleasedByUserId=context.userId||null;
     booking.lastReleaseReasonCode=context.reasonCode||null;
     booking.lastReleaseReasonText=String(context.reasonText||'').trim();
-  }else if(action==='schedule'){
-    booking.tripId=context.tripId;
-    booking.scheduledAt=at;
   }else if(action==='reject'){
     booking.rejectedAt=at;
     booking.rejectedByUserId=context.userId||null;
@@ -2983,18 +2971,8 @@ const ISSUE_SLA_MINUTES=Object.freeze({emergency:5,critical:10,warning:30,info:6
 const TRIP_PASSENGER_STATUSES=Object.freeze(['waiting','onboard','dropped_off','cancelled','no_show','emergency_exit']);
 const TRIP_MUTATION_RECEIPT_LIMIT=80;
 const TRIP_LOCK_TTL_MS=4000;
-const TRIP_STATUS_TRANSITIONS=Object.freeze({
-  scheduled:Object.freeze(['in_progress','cancelled']),
-  in_progress:Object.freeze(['interrupted','completed']),
-  interrupted:Object.freeze(['in_progress','aborted']),
-  completed:Object.freeze([]),
-  cancelled:Object.freeze([]),
-  aborted:Object.freeze([])
-});
-const TRIP_CORRECTION_TRANSITIONS=Object.freeze({
-  in_progress:Object.freeze(['scheduled']),
-  completed:Object.freeze(['in_progress'])
-});
+const TRIP_STATUS_TRANSITIONS=LIFECYCLE.TRIP_STATUS_TRANSITIONS;
+const TRIP_CORRECTION_TRANSITIONS=LIFECYCLE.TRIP_CORRECTION_TRANSITIONS;
 const TRIP_STOP_STATUSES=Object.freeze(['pending','arrived','servicing','completed']);
 const ISSUE_STATUSES=Object.freeze(['open','acknowledged','handling','resolved']);
 const ISSUE_STATUS_TRANSITIONS=Object.freeze({
