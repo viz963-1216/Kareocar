@@ -186,7 +186,8 @@ exports.handler = async (event) => {
       for (const d of drivers) {
         push('drivers', {
           id: d.id, userId: d.user_id, organizationId: d.organization_id,
-          fleetId: d.fleet_id || null, dutyStatus: d.duty_status || 'off_duty',
+          // 前端讀 status；dutyStatus 保留給舊版
+          fleetId: d.fleet_id || null, status: d.duty_status || 'off_duty', dutyStatus: d.duty_status || 'off_duty',
           serviceArea: d.service_area || '', active: d.active !== false
         });
       }
