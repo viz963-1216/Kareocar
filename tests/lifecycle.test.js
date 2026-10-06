@@ -82,6 +82,9 @@ ok('瀏覽器在 app.js 之前載入 lifecycle.js，app.js 沒有自己的轉換
   const app = scripts.find((s) => s.src === 'js/app.js').code;
   assert.ok(!/BOOKING_TRANSITIONS\s*=/.test(app));
   assert.ok(/TRIP_STATUS_TRANSITIONS=LIFECYCLE\.TRIP_STATUS_TRANSITIONS/.test(app));
+  // app.js 分成多個區塊；LIFECYCLE 必須宣告在最外層，否則其他區塊會 ReferenceError，整個網站打不開
+  const outer = app.slice(0, app.indexOf('\n{'));
+  assert.ok(/\nconst LIFECYCLE = window\.CareRideLifecycle;/.test(outer), 'LIFECYCLE 要宣告在 app.js 最外層、第一個區塊之前');
 });
 ok('在瀏覽器環境（沒有 module）掛到 window.CareRideLifecycle', () => {
   const sandbox = { self: {} };

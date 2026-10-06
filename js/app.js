@@ -1,6 +1,10 @@
 (() => {
 'use strict';
 
+// 預約與行程的狀態轉換與伺服器共用同一份：js/lifecycle.js（index.html 在本檔之前載入）。
+// 放在最外層：本檔的程式分在多個區塊裡，宣告在區塊內的話其他區塊看不到。
+const LIFECYCLE = window.CareRideLifecycle;
+
 const APP_CONFIG = Object.freeze({
   appName: '安心接送',
   version: '12.26.1',
@@ -1043,8 +1047,6 @@ const BOOKING_STATE = Object.freeze({
   EXPIRED:'expired'
 });
 const BOOKING_STATE_VALUES = new Set(Object.values(BOOKING_STATE));
-// 狀態轉換與伺服器共用同一份：js/lifecycle.js（index.html 在本檔之前載入）
-const LIFECYCLE = window.CareRideLifecycle;
 const BOOKING_EVENT_LABELS = Object.freeze({
   migrated:'歷史資料建立基準',created:'建立預約',claimed:'公開需求已接案',released:'承接單位退回公開池',leg_scheduled:'行程 Leg 已排車',leg_organization_assigned:'行程 Leg 承接組織已指定',scheduled:'已建立行程',rejected:'不受理',cancelled:'預約取消',source_updated:'來源資料更新',source_conflict:'來源資料衝突',amended:'預約內容已修改',commercial_snapshot_captured:'報價／補助快照已建立',duplicate_detected:'偵測到疑似重複預約',claim_invalidated_by_amendment:'重大修改解除原承接',expired:'公開接案期限已到'
 });
