@@ -603,11 +603,12 @@ async function flowCancel(cdp, baseUrl, tokens) {
 async function flowSchedule(cdp, baseUrl, tokens) {
   const S = 'D 調度排車';
   const id = 'BKG-E2E-SCHED';
-  const date = dayOffset(1);
+  // 避開 C 情境留給同一位司機的行程（明天 10:00 進行中），否則司機在那個時段確實沒空
+  const date = dayOffset(2);
   const vehicleId = 'VEH-E2E-SCHED';
-  const booking = { ...openBooking(id), pickupDate: date, pickupTime: '10:00',
+  const booking = { ...openBooking(id), pickupDate: date, pickupTime: '14:00',
     legs: [{ id: `${id}_outbound`, schemaVersion: 1, sequence: 1, direction: 'outbound', label: '去程', status: 'pending',
-      requestedPickupAt: `${date}T10:00:00.000Z`, pickup: null, dropoff: null, tripId: null, scheduledOrganizationId: null, scheduledAt: null }] };
+      requestedPickupAt: `${date}T14:00:00.000Z`, pickup: null, dropoff: null, tripId: null, scheduledOrganizationId: null, scheduledAt: null }] };
   record(S, '（資料準備）需求者建立預約', (await apiMutate(tokens.req, [{ collection: 'bookings', id, record: booking }])) === 200);
   const claimed = await claimBooking.handler({ httpMethod: 'POST', headers: { host: '127.0.0.1', cookie: `cr_at=${tokens.dsp}` },
     body: J({ bookingId: id, organizationId: ORG }) });
