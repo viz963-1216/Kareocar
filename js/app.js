@@ -1,6 +1,33 @@
 (() => {
 'use strict';
 
+// 預約與行程的狀態轉換與伺服器共用同一份：js/lifecycle.js（index.html 在本檔之前載入）。
+// 放在最外層：本檔的程式分在多個區塊裡，宣告在區塊內的話其他區塊看不到。
+const LIFECYCLE = window.CareRideLifecycle;
+
+// 放在最外層，理由同上：從預約建立行程（Trip）與套用排車建議都在其他區塊裡呼叫
+// 排車（建立行程並把預約排進去）一律送 v2-schedule-trips，一筆交易完成。
+// 前端只負責算出行程（停靠點、時間、乘客），預約排車後的樣子與事件由伺服器產生，成功後重新載入。
+// 需要網路：伺服器要確認司機、車輛、預約都還可以用。
+async function scheduleTripsOnServer_({trips,dispatchPlanId=null}){
+  if(typeof navigator!=='undefined'&&navigator.onLine===false)return {ok:false,error:'排車需要網路連線，請連上網路後再試'};
+  // 先把佇列裡還沒送出的資料送完（例如剛確認的排車建議），伺服器才看得到最新狀態
+  for(let i=0;i<5;i++){
+    const flushed=await store.flushAuthoritative();
+    if(flushed&&flushed.ok===false&&!flushed.skipped)return {ok:false,error:flushed.error||'資料還沒同步完成，請稍後再試'};
+    if(!flushed||flushed.skipped||!(flushed.count>=100))break;
+  }
+  const expectedVersions={};
+  trips.forEach(t=>(t.bookingLegRefs||[]).forEach(r=>{const b=Booking.get(r.bookingId);if(b)expectedVersions[r.bookingId]=Math.max(1,Number(b.version)||1);}));
+  try{
+    const result=await window.backendJsonPost(APP_CONFIG.scheduleTripsUrl,{trips,dispatchPlanId,expectedVersions});
+    await AppStateDatabase.loadAll({silent:true});
+    return {ok:true,data:result?.data||result};
+  }catch(error){
+    return {ok:false,error:error?.message||'排車失敗，請重新整理後再試'};
+  }
+}
+
 const APP_CONFIG = Object.freeze({
   appName: '安心接送',
   version: '12.26.1',
@@ -21,6 +48,7 @@ const APP_CONFIG = Object.freeze({
   stateMutateUrl: '/api/v2/state-mutate',
   bookingWriteUrl: '/api/v2/booking-write',
   tripWriteUrl: '/api/v2/trip-write',
+  scheduleTripsUrl: '/api/v2/schedule-trips',
   benefitRulesetUrl: '/api/v2/benefit-ruleset',
   benefitAssessUrl: '/api/v2/benefit-assess',
   benefitAuthorizationUrl: '/api/v2/benefit-authorization',
@@ -1042,15 +1070,6 @@ const BOOKING_STATE = Object.freeze({
   EXPIRED:'expired'
 });
 const BOOKING_STATE_VALUES = new Set(Object.values(BOOKING_STATE));
-const BOOKING_TRANSITIONS = Object.freeze({
-  [BOOKING_STATE.OPEN]:Object.freeze({claim:BOOKING_STATE.CLAIMED,cancel:BOOKING_STATE.CANCELLED,expire:BOOKING_STATE.EXPIRED}),
-  [BOOKING_STATE.CLAIMED]:Object.freeze({release:BOOKING_STATE.OPEN,reject:BOOKING_STATE.REJECTED,cancel:BOOKING_STATE.CANCELLED}),
-  [BOOKING_STATE.PARTIALLY_SCHEDULED]:Object.freeze({cancel:BOOKING_STATE.CANCELLED}),
-  [BOOKING_STATE.SCHEDULED]:Object.freeze({cancel:BOOKING_STATE.CANCELLED}),
-  [BOOKING_STATE.REJECTED]:Object.freeze({}),
-  [BOOKING_STATE.CANCELLED]:Object.freeze({}),
-  [BOOKING_STATE.EXPIRED]:Object.freeze({})
-});
 const BOOKING_EVENT_LABELS = Object.freeze({
   migrated:'歷史資料建立基準',created:'建立預約',claimed:'公開需求已接案',released:'承接單位退回公開池',leg_scheduled:'行程 Leg 已排車',leg_organization_assigned:'行程 Leg 承接組織已指定',scheduled:'已建立行程',rejected:'不受理',cancelled:'預約取消',source_updated:'來源資料更新',source_conflict:'來源資料衝突',amended:'預約內容已修改',commercial_snapshot_captured:'報價／補助快照已建立',duplicate_detected:'偵測到疑似重複預約',claim_invalidated_by_amendment:'重大修改解除原承接',expired:'公開接案期限已到'
 });
@@ -1422,8 +1441,9 @@ function syncBookingLegacyLifecycleFields(booking){
 }
 function bookingTransitionCheck(booking,action,context={}){
   if(!booking) return {ok:false,error:'找不到預約'};
-  const from=bookingStateOf(booking),to=BOOKING_TRANSITIONS[from]?.[action];
-  if(!to) return {ok:false,error:`預約目前為 ${from}，不能執行 ${action}`};
+  // 同一個動作可能有多個目標狀態（排車：部分或全部），要由呼叫端用 context.to 指定
+  const from=bookingStateOf(booking),targets=LIFECYCLE.bookingTargets(from,action),to=context.to||(targets.length===1?targets[0]:null);
+  if(!to||!targets.includes(to)) return {ok:false,error:`預約目前為 ${from}，不能執行 ${action}`};
   if(context.expectedVersion!==undefined&&context.expectedVersion!==null){
     const expected=Number(context.expectedVersion),actual=Math.max(1,Number(booking.version)||1);
     if(!Number.isInteger(expected)||expected<1) return {ok:false,error:'預約版本資訊無效，請重新整理'};
@@ -1438,11 +1458,6 @@ function bookingTransitionCheck(booking,action,context={}){
     if(scheduledBookingLegs(booking).length)return {ok:false,error:'已有 Leg 完成排車，不能再整張退回公開池；請由調度處理剩餘 Leg'};
     if(!booking.organizationId) return {ok:false,error:'此預約目前沒有承接組織，無法退回公開池'};
     if(context.organizationId&&booking.organizationId!==context.organizationId) return {ok:false,error:'只能由目前承接組織退回此需求'};
-  }
-  if(action==='schedule'){
-    if(!context.tripId) return {ok:false,error:'建立行程時缺少 tripId'};
-    if(!booking.organizationId) return {ok:false,error:'公開需求尚未接案，不能直接排車'};
-    if(context.organizationId&&booking.organizationId!==context.organizationId) return {ok:false,error:'預約承接組織與行程組織不一致'};
   }
   return {ok:true,from,to};
 }
@@ -1463,9 +1478,6 @@ function applyBookingTransitionRecord(booking,action,context={}){
     booking.lastReleasedByUserId=context.userId||null;
     booking.lastReleaseReasonCode=context.reasonCode||null;
     booking.lastReleaseReasonText=String(context.reasonText||'').trim();
-  }else if(action==='schedule'){
-    booking.tripId=context.tripId;
-    booking.scheduledAt=at;
   }else if(action==='reject'){
     booking.rejectedAt=at;
     booking.rejectedByUserId=context.userId||null;
@@ -1516,33 +1528,22 @@ function bookingDispatchViewForLeg(booking,legId){
   const parts=leg.requestedPickupAt?localDateTimeParts(leg.requestedPickupAt):{date:booking.pickupDate||'',time:booking.pickupTime||''};
   return {...booking,activeLegId:leg.id,activeLegDirection:leg.direction,activeLegLabel:leg.label,activeLegOrganizationId:bookingLegResponsibleOrganization(booking,leg),pickupDate:parts.date,pickupTime:parts.time,pickupAddress:locationSnapshotAddress(leg.pickup,booking.pickupAddress),destination:locationSnapshotAddress(leg.dropoff,booking.destination),pickupAccessNote:leg.pickup?.accessNote||'',destinationAccessNote:leg.dropoff?.accessNote||''};
 }
+// 能不能排、排完預約變成什麼樣子，與伺服器（v2-schedule-trips）共用 js/lifecycle.js 的 scheduleBookingLeg
 function canScheduleBookingLegRecord(booking,legId,context={}){
   if(!booking)return {ok:false,error:'找不到預約'};
-  const state=bookingStateOf(booking);
-  if(![BOOKING_STATE.CLAIMED,BOOKING_STATE.PARTIALLY_SCHEDULED].includes(state))return {ok:false,error:`預約目前為 ${state}，不能新增行程 Leg`};
-  if(!booking.organizationId)return {ok:false,error:'預約尚未有主要承接組織'};
   const leg=bookingLegById(booking,legId)||nextBookingLeg(booking);
-  if(!leg)return {ok:false,error:'沒有待排車的去程／回程 Leg'};
-  const responsibleOrganizationId=bookingLegResponsibleOrganization(booking,leg);
-  if(!responsibleOrganizationId)return {ok:false,error:'此行程段尚未指定承接組織'};
-  if(context.organizationId&&responsibleOrganizationId!==context.organizationId)return {ok:false,error:'此行程段的承接組織與行程組織不一致'};
-  if(leg.status!==BOOKING_LEG_STATUS.PENDING)return {ok:false,error:`${leg.label||'此行程段'} 已經排車或不可再排車`};
-  if(!leg.requestedPickupAt||Number.isNaN(new Date(leg.requestedPickupAt).getTime()))return {ok:false,error:`${leg.label||'此行程段'} 缺少有效接送時間`};
-  if(!context.tripId)return {ok:false,error:'建立行程時缺少 tripId'};
-  return {ok:true,leg,state,responsibleOrganizationId};
+  const r=LIFECYCLE.scheduleBookingLeg(booking,{legId:leg?.id||legId||null,tripId:context.tripId,organizationId:context.organizationId,at:nowISO()});
+  if(!r.ok)return r;
+  return {ok:true,leg,state:r.from,responsibleOrganizationId:LIFECYCLE.legResponsibleOrganization(booking,leg)};
 }
 function scheduleBookingLegInDb(db,bookingId,legId,context={}){
-  const booking=(db.bookings||[]).find(b=>b.id===bookingId),check=canScheduleBookingLegRecord(booking,legId,context);
-  if(!check.ok)return check;
-  const at=context.at||nowISO(),from=check.state,leg=check.leg;
-  leg.status=BOOKING_LEG_STATUS.SCHEDULED;leg.tripId=context.tripId;leg.scheduledOrganizationId=context.organizationId||check.responsibleOrganizationId||booking.organizationId;leg.scheduledAt=at;
-  const allScheduled=(booking.legs||[]).length>0&&(booking.legs||[]).every(l=>l.status===BOOKING_LEG_STATUS.SCHEDULED);
-  booking.state=allScheduled?BOOKING_STATE.SCHEDULED:BOOKING_STATE.PARTIALLY_SCHEDULED;
-  booking.updatedAt=at;booking.stateChangedAt=at;booking.version=Math.max(1,Number(booking.version)||1)+1;
-  if(allScheduled)booking.scheduledAt=at;
-  syncBookingLegacyLifecycleFields(booking);
-  appendBookingEventInDb(db,{bookingId,eventType:'leg_scheduled',action:'schedule',fromState:from,toState:booking.state,actorUserId:context.userId||null,organizationId:context.organizationId||check.responsibleOrganizationId||booking.organizationId||null,tripId:context.tripId,source:context.source||'booking',bookingVersion:booking.version,metadata:{legId:leg.id,direction:leg.direction,label:leg.label,allLegsScheduled:allScheduled}});
-  return {ok:true,from,to:booking.state,booking,leg};
+  const index=(db.bookings||[]).findIndex(b=>b.id===bookingId),booking=index>=0?db.bookings[index]:null;
+  const leg=bookingLegById(booking,legId)||nextBookingLeg(booking),at=context.at||nowISO();
+  const r=LIFECYCLE.scheduleBookingLeg(booking,{legId:leg?.id||legId||null,tripId:context.tripId,organizationId:context.organizationId,at});
+  if(!r.ok)return r;
+  db.bookings[index]=r.booking;
+  appendBookingEventInDb(db,{bookingId,eventType:'leg_scheduled',action:'schedule',fromState:r.from,toState:r.to,actorUserId:context.userId||null,organizationId:r.leg.scheduledOrganizationId||null,tripId:context.tripId,source:context.source||'booking',bookingVersion:r.booking.version,metadata:{legId:r.leg.id,direction:r.leg.direction,label:r.leg.label,allLegsScheduled:r.to===BOOKING_STATE.SCHEDULED}});
+  return {ok:true,from:r.from,to:r.to,booking:r.booking,leg:r.leg};
 }
 Booking = {
   STATE:BOOKING_STATE,
@@ -2984,18 +2985,8 @@ const ISSUE_SLA_MINUTES=Object.freeze({emergency:5,critical:10,warning:30,info:6
 const TRIP_PASSENGER_STATUSES=Object.freeze(['waiting','onboard','dropped_off','cancelled','no_show','emergency_exit']);
 const TRIP_MUTATION_RECEIPT_LIMIT=80;
 const TRIP_LOCK_TTL_MS=4000;
-const TRIP_STATUS_TRANSITIONS=Object.freeze({
-  scheduled:Object.freeze(['in_progress','cancelled']),
-  in_progress:Object.freeze(['interrupted','completed']),
-  interrupted:Object.freeze(['in_progress','aborted']),
-  completed:Object.freeze([]),
-  cancelled:Object.freeze([]),
-  aborted:Object.freeze([])
-});
-const TRIP_CORRECTION_TRANSITIONS=Object.freeze({
-  in_progress:Object.freeze(['scheduled']),
-  completed:Object.freeze(['in_progress'])
-});
+const TRIP_STATUS_TRANSITIONS=LIFECYCLE.TRIP_STATUS_TRANSITIONS;
+const TRIP_CORRECTION_TRANSITIONS=LIFECYCLE.TRIP_CORRECTION_TRANSITIONS;
 const TRIP_STOP_STATUSES=Object.freeze(['pending','arrived','servicing','completed']);
 const ISSUE_STATUSES=Object.freeze(['open','acknowledged','handling','resolved']);
 const ISSUE_STATUS_TRANSITIONS=Object.freeze({
@@ -3787,7 +3778,7 @@ Trip = {
   canTransition(tripOrId,nextState,options={}){ const trip=typeof tripOrId==='string'?this.get(tripOrId):normalizeTripRuntime(tripOrId); return canTripTransition(trip,nextState,options); },
   stopRuntime(step){ return normalizeTripStopRuntime(step); },
   classifyTiming(step,timestamp){ const planned=step?.scheduledArrivalAt||step?.scheduledDepartureAt||step?.scheduledAt; const diff=new Date(timestamp)-new Date(planned); if(diff<-60000)return {label:`提早${PHASE_LABELS[step.type]}`,detail:`提早 ${durationText(diff)}`,diff}; if(diff>60000)return {label:`延遲${PHASE_LABELS[step.type]}`,detail:`晚 ${durationText(diff)}`,diff}; return {label:`準時${PHASE_LABELS[step.type]}`,detail:'於預定時間完成',diff}; },
-  createFromDispatch(plan,actorUserId){
+  async createFromDispatch(plan,actorUserId){
     const fail=(error,details={})=>{ const rows=[];rows.ok=false;rows.error=error;rows.details=details;return rows; };
     if(!plan?.id) return fail('缺少調度方案');
 
@@ -3858,13 +3849,9 @@ Trip = {
     if(!stagedPlan||stagedPlan.status!=='confirmed') return fail('調度方案狀態已變更，本次沒有建立任何 Trip');
     stagedPlan.status='applied';stagedPlan.appliedAt=nowISO();stagedPlan.appliedByUserId=actorUserId;stagedPlan.appliedTripIds=created.map(t=>t.id);stagedPlan.appliedCount=created.length;
 
-    store.mutate(db=>{
-      db.bookings=staged.bookings;
-      db.bookingEvents=staged.bookingEvents;
-      db.trips=staged.trips;
-      db.tripEvents=staged.tripEvents;
-      db.dispatchPlans=staged.dispatchPlans;
-    });
+    // staged 只用來檢查與算出行程；實際寫入由伺服器在一筆交易內完成
+    const sent=await scheduleTripsOnServer_({trips:created,dispatchPlanId:storedPlan.id});
+    if(!sent.ok) return fail(sent.error,{dispatchPlanId:storedPlan.id});
 
     created.forEach(trip=>{
       Audit.log('trip_created_from_dispatch',`由調度方案建立 ${trip.code}`,{tripId:trip.id,dispatchPlanId:storedPlan.id,organizationId:trip.organizationId});
@@ -3873,7 +3860,7 @@ Trip = {
     created.ok=true;created.error=null;
     return created;
   },
-  createManual(input,organizationId,actorUserId){
+  async createManual(input,organizationId,actorUserId){
     const creationMutationKey=String(input?.clientMutationKey||'').trim();
     if(creationMutationKey){store.refreshFromStorage?.();const existing=(store.state.trips||[]).find(t=>t.creationMutationKey===creationMutationKey);if(existing)return {ok:true,duplicate:true,trip:this.get(existing.id)};}
     const pickupAt=new Date(input.pickupAt),endAt=addMinutes(pickupAt,Math.max(8,Dispatch.estimateDriveMinutes(input.pickupAddress,input.destination,{departureAt:pickupAt})+(Dispatch.policy?.routingServiceBufferMin||4))),id=uid('trip'),contact=[{name:input.name,phone:input.phone}],code=`CR-${dateKey(pickupAt).slice(5).replace('-','')}-${String(store.state.trips.length+1).padStart(3,'0')}`;
@@ -3889,19 +3876,16 @@ Trip = {
     ]};
     trip.passengers=buildTripPassengers(id,input.bookingId?[Booking.get(input.bookingId)].filter(Boolean):[],trip.bookingLegRefs,{bookingId:input.bookingId||null,bookingLegId:input.bookingLegId||null,name:input.name,phone:input.phone,seatUnits:1,wheelchairUnits:/輪椅/.test(input.needs||'')?1:0});
     normalizeTripPassengers(trip);
-    let bookingTransition={ok:true},duplicateTrip=null;
-    store.mutate(db=>{
-      if(creationMutationKey){duplicateTrip=(db.trips||[]).find(t=>t.creationMutationKey===creationMutationKey)||null;if(duplicateTrip)return;}
-      if(input.bookingId){bookingTransition=Booking.scheduleLegForTripInDb(db,input.bookingId,input.bookingLegId,{tripId:trip.id,organizationId,userId:actorUserId,source:'manual_trip'});if(!bookingTransition.ok)return;}
-      db.trips.push(trip);
-      appendTripEventInDb(db,{tripId:trip.id,eventType:'trip_created',at:createdAt,actorUserId,reason:'manual_trip',metadata:{status:'scheduled',driverId:trip.driverId,vehicleId:trip.vehicleId,creationMutationKey:creationMutationKey||null}});
-      appendTripExecutionSnapshotInDb(db,trip,{source:'manual_trip',capturedAt:createdAt,actorUserId,reason:'Trip 建立時凍結執行資料'});
-      rebuildTripActualMetrics(trip);enforceTripInvariantsInDb(db,trip,'manual_trip_created');
-    });
-    if(duplicateTrip)return {ok:true,duplicate:true,trip:this.get(duplicateTrip.id)};
-    if(!bookingTransition.ok) return bookingTransition;
+    // 在複本上檢查與算出行程（快照、指標），實際寫入交給伺服器
+    const staged=deepClone(store.state);
+    if(input.bookingId){const bookingTransition=Booking.scheduleLegForTripInDb(staged,input.bookingId,input.bookingLegId,{tripId:trip.id,organizationId,userId:actorUserId,source:'manual_trip'});if(!bookingTransition.ok)return bookingTransition;}
+    staged.trips.push(trip);
+    appendTripExecutionSnapshotInDb(staged,trip,{source:'manual_trip',capturedAt:createdAt,actorUserId,reason:'Trip 建立時凍結執行資料',emitEvent:false});
+    rebuildTripActualMetrics(trip);enforceTripInvariantsInDb(staged,trip,'manual_trip_created');
+    const sent=await scheduleTripsOnServer_({trips:[trip]});
+    if(!sent.ok)return sent;
     Audit.log('trip_created_manual',`手動建立 ${code}｜${resource.driver.name}／${resource.vehicle.plate}`,{tripId:id,organizationId,driverId:input.driverId,vehicleId:input.vehicleId,actorUserId});
-    return {ok:true,trip};
+    return {ok:true,trip:this.get(trip.id)||trip};
   },
   assign(tripId,driverId,vehicleId,actorUserId,options={}){
     const lock=acquireTripMutationLock(tripId,actorUserId);if(!lock.ok)return lock;
@@ -6380,12 +6364,12 @@ function vehicleOptions(selected=''){ return `<option value="">未指派</option
 function canAssignTripResources(){ return Identity.can('trip.manage'); }
 function canManageVehicles(){ return Identity.can('vehicle.manage'); }
 function openManualTrip(){ if(!canAssignTripResources()){showToast('只有調度員或負責人可以建立派車行程');return;} selectedBookingId=''; selectedBookingLegId='';selectedCreateTripMutationKey=uid('tripcreate'); $('newPassenger').value=''; $('newPhone').value='0900000110'; $('newPickup').value=''; $('newDropoff').value=''; $('newPickupAt').value=toLocalInput(addMinutes(new Date(),60)); $('newNeed').value=''; $('newDriver').innerHTML=driverOptions(); $('newVehicle').innerHTML=vehicleOptions(); $('driverRecommendHint').textContent='共享車池：請分別指定本趟司機與車輛；不會建立永久綁定。'; openModal('createTripModal'); }
-function saveNewTrip(){
+async function saveNewTrip(){
   if(!canAssignTripResources()){showToast('只有調度員或負責人可以派車');return;}
   const scope=$('createTripModal');if(!validateFieldRules(scope,[{id:'newPassenger',message:'請輸入乘客姓名'},{id:'newPhone',message:'請輸入有效聯絡電話',test:f=>f.value.replace(/\D/g,'').length>=9},{id:'newPickup',message:'請輸入上車地址'},{id:'newDropoff',message:'請輸入目的地'},{id:'newPickupAt',message:'請選擇預定接送時間'},{id:'newDriver',message:'請指定司機'},{id:'newVehicle',message:'請指定車輛'}]))return;
   const selectedView=selectedBookingId?Booking.dispatchView(Booking.get(selectedBookingId)):null,btn=$('saveTripBtn');if(btn)btn.disabled=true;
   const input={name:$('newPassenger').value.trim(),phone:$('newPhone').value.replace(/\D/g,''),pickupAddress:$('newPickup').value.trim(),destination:$('newDropoff').value.trim(),pickupAt:$('newPickupAt').value,driverId:$('newDriver').value,vehicleId:$('newVehicle').value,needs:$('newNeed').value.trim()||'一般乘客',bookingId:selectedBookingId||null,bookingLegId:selectedBookingLegId||null,pickupAccessNote:selectedView?.pickupAccessNote||'',destinationAccessNote:selectedView?.destinationAccessNote||'',clientMutationKey:selectedCreateTripMutationKey||uid('tripcreate')};
-  const result=Trip.createManual(input,orgId(),Identity.currentUser()?.id); if(!result.ok){routeFieldError(result.error,[['乘客','newPassenger'],['電話','newPhone'],['上車','newPickup'],['目的地','newDropoff'],['時間','newPickupAt'],['司機','newDriver'],['車輛','newVehicle']]);if(btn)btn.disabled=false;return;} selectedBookingId='';selectedBookingLegId=''; closeModal('createTripModal'); render(); showToast(result.duplicate?'相同建立行程操作已處理，重複點擊已忽略':'行程已建立並完成司機＋車輛指派');
+  const result=await Trip.createManual(input,orgId(),Identity.currentUser()?.id); if(!result.ok){routeFieldError(result.error,[['乘客','newPassenger'],['電話','newPhone'],['上車','newPickup'],['目的地','newDropoff'],['時間','newPickupAt'],['司機','newDriver'],['車輛','newVehicle']]);if(btn)btn.disabled=false;return;} selectedBookingId='';selectedBookingLegId=''; closeModal('createTripModal'); render(); showToast(result.duplicate?'相同建立行程操作已處理，重複點擊已忽略':'行程已建立並完成司機＋車輛指派');
 }
 function openAssign(tripId){ if(!canAssignTripResources()){showToast('只有調度員或負責人可以改派');return;} selectedAssignTripId=tripId; const t=Trip.get(tripId);selectedAssignTripRevision=t?.revision??0; $('assignTripText').textContent=`${t.code}｜${t.passengerSummary}`; $('assignDriver').innerHTML=driverOptions(t.driverId); $('assignVehicle').innerHTML=vehicleOptions(t.vehicleId); openModal('assignModal'); }
 async function saveAssign(){ if(!canAssignTripResources()){showToast('只有調度員或負責人可以改派');return;}if(!validateFieldRules($('assignModal'),[{id:'assignDriver',message:'請選擇司機'},{id:'assignVehicle',message:'請選擇車輛'}]))return;const tripId=selectedAssignTripId,driverId=$('assignDriver').value,vehicleId=$('assignVehicle').value,expectedRevision=Number(selectedAssignTripRevision??0),key=Trip.mutationKey('assign',tripId,`${driverId}:${vehicleId}`,expectedRevision),btn=$('saveAssignBtn');if(btn)btn.disabled=true;try{const result=await Trip.withMutationLock(tripId,()=>Trip.assign(tripId,driverId,vehicleId,Identity.currentUser()?.id,{expectedRevision,idempotencyKey:key}));if(!result.ok){routeFieldError(result.error,[['司機','assignDriver'],['車輛','assignVehicle']]);return;}closeModal('assignModal');render();showToast(result.duplicate?'相同改派已處理，重複操作已忽略':'司機與車輛指派已更新');}finally{if(btn)btn.disabled=false;} }
@@ -6871,7 +6855,7 @@ function bindViewEvents(){
     }catch(error){btn.disabled=false;btn.removeAttribute('aria-busy');btn.textContent=oldText;showToast(`排車計算失敗：${error?.message||'請稍後再試'}`);}
   });
   $('repairAffectedTripsBtn')?.addEventListener('click',()=>{if(!Identity.can('booking.schedule')){showToast('你沒有局部重新派車權限');return;}const r=Dispatch.repairAffectedTrips({date:selectedTripDate,organizationId:orgId(),actorUserId:Identity.currentUser()?.id,objectiveName:optimizerObjectiveProfile,reason:'系統偵測到司機／車輛資源失效',changeType:'resource_change'});render();showToast(r.ok?(r.changed?`已局部重排 ${r.changed} 趟行程`:(r.message||'沒有需要重排的行程')):r.error);});
-  $('applyOptimizationBtn')?.addEventListener('click',e=>{if(!Identity.can('booking.schedule')){showToast('你沒有預約排車權限');return;}const r=Dispatch.confirm(e.currentTarget.dataset.plan,Identity.currentUser()?.id);if(!r.ok){showToast(r.error);return;}const created=Trip.createFromDispatch(r.plan,Identity.currentUser()?.id);render();if(created?.ok===false||created?.error){showToast(created.error||'調度方案套用失敗，請重新最佳化');return;}showToast(`已建立 ${created.length} 趟行程`);});
+  $('applyOptimizationBtn')?.addEventListener('click',async e=>{if(!Identity.can('booking.schedule')){showToast('你沒有預約排車權限');return;}const btn=e.currentTarget;const r=Dispatch.confirm(btn.dataset.plan,Identity.currentUser()?.id);if(!r.ok){showToast(r.error);return;}btn.disabled=true;const created=await Trip.createFromDispatch(r.plan,Identity.currentUser()?.id);btn.disabled=false;render();if(created?.ok===false||created?.error){showToast(created.error||'調度方案套用失敗，請重新最佳化');return;}showToast(`已建立 ${created.length} 趟行程`);});
   document.querySelectorAll('.booking-create-trip-btn').forEach(btn=>btn.addEventListener('click',()=>openBookingAsTrip(btn.dataset.booking)));
   document.querySelectorAll('.booking-release-btn').forEach(btn=>btn.addEventListener('click',()=>openBookingAction('release',btn.dataset.booking)));
   document.querySelectorAll('.booking-reject-btn').forEach(btn=>btn.addEventListener('click',()=>openBookingAction('reject',btn.dataset.booking)));

@@ -13,22 +13,16 @@
  * 呼叫 app.revoke_booking_organization，原機構立即失去存取。
  */
 
-const STATES = ['open', 'claimed', 'partially_scheduled', 'scheduled', 'rejected', 'cancelled', 'expired'];
+// 狀態轉換與前端共用同一份（js/lifecycle.js）
+const lifecycle = require('../../js/lifecycle.js');
 
+const STATES = lifecycle.BOOKING_STATES;
 // 需求者本人
-const OWNER_TRANSITIONS = {
-  open: ['open', 'expired'],
-  claimed: ['claimed', 'open'] // 重大修改：原承接失效、重新公開
-};
+const OWNER_TRANSITIONS = lifecycle.bookingWriteTransitions('owner');
 // 承接機構的負責人、調度員
-const OPS_TRANSITIONS = {
-  // expired：退回公開池時已超過接案期限（前端 release_guard），佇列裡只剩最後的狀態
-  claimed: ['claimed', 'partially_scheduled', 'scheduled', 'open', 'rejected', 'expired'],
-  partially_scheduled: ['partially_scheduled', 'scheduled'],
-  scheduled: ['scheduled', 'partially_scheduled']
-};
+const OPS_TRANSITIONS = lifecycle.bookingWriteTransitions('ops');
 // 轉到這些狀態時原承接機構失去存取
-const REVOKE_STATES = new Set(['open', 'rejected', 'expired']);
+const REVOKE_STATES = new Set(lifecycle.BOOKING_REVOKE_STATES);
 
 // 只能由伺服器或專用流程寫的欄位：一律沿用資料庫裡的值
 const SERVER_OWNED = [

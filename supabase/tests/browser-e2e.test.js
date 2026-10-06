@@ -8,6 +8,7 @@
  *   B. 司機工作台：出發 → 離線時完成接送、返回上一步、再完成 → 恢復連線自動同步
  *      → 回報異常 → 送達 → 補服務證明（含照片）
  *   C. 需求者在「我的預約」取消已排車預約並收到通知；已開始的行程取消失敗且沒有通知
+ *   D. 調度員在畫面上從預約建立行程：預約與行程經 schedule-trips 一筆交易寫入
  *
  * 操作用 DevTools Protocol 送出滑鼠點擊與文字輸入（Input.dispatchMouseEvent／
  * Input.insertText），不是直接呼叫前端函式；只有「切換左側選單」用 DOM click。
@@ -38,6 +39,7 @@ const db = require('../../netlify/functions/_db');
 const mutate = require('../../netlify/functions/v2-state-mutate');
 const bookingWrite = require('../../netlify/functions/v2-booking-write');
 const tripWrite = require('../../netlify/functions/v2-trip-write');
+const claimBooking = require('../../netlify/functions/v2-claim-booking');
 const { createServer } = require('../../tools/local-dev-server');
 const F = require('../../tests/_trip-fixtures');
 
@@ -172,7 +174,7 @@ async function openPage(cdp, baseUrl, label) {
     }
     if (msg.method === 'Network.requestWillBeSent' && msg.params.request.url.includes('/api/')) {
       const pathname = new URL(msg.params.request.url).pathname;
-      page.requests.push({ path: pathname, postData: /\/(state-mutate|trip-execute|claim-booking|cancel-booking)$/.test(pathname) ? msg.params.request.postData || '' : '' });
+      page.requests.push({ path: pathname, postData: /\/(state-mutate|trip-execute|claim-booking|cancel-booking|booking-write|trip-write|schedule-trips)$/.test(pathname) ? msg.params.request.postData || '' : '' });
     }
   });
   await page.send('Page.enable');
@@ -597,6 +599,49 @@ async function flowCancel(cdp, baseUrl, tokens) {
   await finishPage(page, S);
 }
 
+// ================================================================ D. 調度在畫面上排車
+async function flowSchedule(cdp, baseUrl, tokens) {
+  const S = 'D 調度排車';
+  const id = 'BKG-E2E-SCHED';
+  // 避開 C 情境留給同一位司機的行程（明天 10:00 進行中），否則司機在那個時段確實沒空
+  const date = dayOffset(2);
+  const vehicleId = 'VEH-E2E-SCHED';
+  const booking = { ...openBooking(id), pickupDate: date, pickupTime: '14:00',
+    legs: [{ id: `${id}_outbound`, schemaVersion: 1, sequence: 1, direction: 'outbound', label: '去程', status: 'pending',
+      requestedPickupAt: `${date}T14:00:00.000Z`, pickup: null, dropoff: null, tripId: null, scheduledOrganizationId: null, scheduledAt: null }] };
+  record(S, '（資料準備）需求者建立預約', (await apiMutate(tokens.req, [{ collection: 'bookings', id, record: booking }])) === 200);
+  const claimed = await claimBooking.handler({ httpMethod: 'POST', headers: { host: '127.0.0.1', cookie: `cr_at=${tokens.dsp}` },
+    body: J({ bookingId: id, organizationId: ORG }) });
+  record(S, '（資料準備）調度接案', claimed.statusCode === 200, claimed.body);
+  record(S, '（資料準備）機構的車輛', (await apiMutate(tokens.dsp, [{ collection: 'vehicles', id: vehicleId, record: {
+    id: vehicleId, organizationId: ORG, plate: 'E2E-0001', model: '合成車', capacity: 4, wheelchairSlots: 1, accessible: true,
+    status: 'available', fleetId: null, retiredAt: null, retiredByUserId: null } }])) === 200);
+
+  const page = await openPage(cdp, baseUrl, 'dispatcher-schedule');
+  try {
+    await login(page, U.dsp);
+    await goView(page, 'dispatch-home');
+    await evaluate(page, `(()=>{const d=document.getElementById('operationDateInput');d.value=${J(date)};d.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+    await click(page, `.booking-create-trip-btn[data-booking=${J(id)}]`);
+    await waitFor(page, "document.getElementById('createTripModal').classList.contains('open')&&!!document.getElementById('newDriver').value&&!!document.getElementById('newVehicle').value",
+      '建立行程視窗帶入司機與車輛');
+    await click(page, '#saveTripBtn');
+    const scheduled = await waitForDb(async () => { const r = await row('bookings', id); return r && r.data.state === 'scheduled' ? r : null; }, '預約變成已排車');
+    const tripId = scheduled.data.legs[0].tripId;
+    const trip = tripId ? await row('trips', tripId) : null;
+    record(S, '按「建立行程」後預約已排車，行程寫入且屬於調度的機構', Boolean(trip) && trip.organization_id === ORG
+      && scheduled.data.tripId === tripId, `tripId=${tripId}`);
+    record(S, '排車只呼叫一次 schedule-trips', page.requests.filter((r) => r.path === '/api/v2/schedule-trips').length === 1);
+    record(S, '預約與行程沒有另外經過 booking-write／trip-write',
+      !page.requests.some((r) => ['/api/v2/booking-write', '/api/v2/trip-write'].includes(r.path) && r.postData.includes(id)));
+    await waitFor(page, "!document.getElementById('createTripModal').classList.contains('open')", '建立行程視窗關閉');
+  } catch (e) {
+    record(S, `流程中斷：${e.message}`, false);
+    await screenshot(page, 'D-schedule');
+  }
+  await finishPage(page, S);
+}
+
 // ================================================================ 執行
 (async () => {
   let chrome = null;
@@ -622,6 +667,8 @@ async function flowCancel(cdp, baseUrl, tokens) {
     await flowDriver(cdp, baseUrl, tokens);
     console.log('--- C：需求者取消與通知 ---');
     await flowCancel(cdp, baseUrl, tokens);
+    console.log('--- D：調度在畫面上排車 ---');
+    await flowSchedule(cdp, baseUrl, tokens);
   } catch (e) {
     record('啟動', `端對端環境無法啟動：${e.message}`, false);
   } finally {
