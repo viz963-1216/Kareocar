@@ -46,7 +46,7 @@ exports.handler = async (event) => {
     const alsoRequester = body.alsoRequester === true;
 
     if (!organizationId || organizationId === REQUESTER_ORG_ID) {
-      throw auth.authError('VALIDATION_ERROR', '請選擇一般公司／機構組織');
+      throw auth.authError('VALIDATION_ERROR', '請選擇一般接送機構');
     }
     if (!STAFF_ROLES.includes(role)) throw auth.authError('VALIDATION_ERROR', '不支援的人員角色');
     if (!name || name.length > 80) throw auth.authError('VALIDATION_ERROR', '請輸入姓名');
@@ -58,21 +58,21 @@ exports.handler = async (event) => {
 
       const org = (await client.query(
         'select id, name from organizations where id = $1 and active', [organizationId])).rows[0];
-      if (!org) throw auth.authError('ORG_NOT_FOUND', '找不到有效組織');
+      if (!org) throw auth.authError('ORG_NOT_FOUND', '找不到有效機構');
 
       if (role === 'owner') {
         const existing = (await client.query(
           `select 1 from memberships
             where organization_id = $1 and role = 'owner' and status = 'active' limit 1`,
           [organizationId])).rows[0];
-        if (existing) throw auth.authError('OWNER_EXISTS', '此組織已經有有效負責人');
+        if (existing) throw auth.authError('OWNER_EXISTS', '此機構已經有有效負責人');
       }
 
       const found = (await client.query(
         'SELECT * FROM app.staff_lookup_user($1)', [auth.toE164(phone)])).rows[0];
 
       if (found && String(found.platform_role || '').toLowerCase() === 'super_admin') {
-        throw auth.authError('FORBIDDEN', '平台超級管理者不可加入公司 Membership');
+        throw auth.authError('FORBIDDEN', '平台超級管理者不可加入機構成員資格');
       }
 
       let userId = found ? found.id : null;
@@ -92,7 +92,7 @@ exports.handler = async (event) => {
           `select 1 from memberships
             where user_id = $1 and organization_id = $2 and status = 'active' limit 1`,
           [userId, organizationId])).rows[0];
-        if (dup) throw auth.authError('MEMBERSHIP_EXISTS', '此使用者在目前組織已有有效身分');
+        if (dup) throw auth.authError('MEMBERSHIP_EXISTS', '此使用者在目前機構已有有效身分');
       }
 
       const membershipId = newId('MEM-STAFF');

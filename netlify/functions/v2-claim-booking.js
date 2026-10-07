@@ -18,7 +18,7 @@ const { runAuthenticated, requireId, writeAudit } = require('./_business-rpc');
 
 exports.handler = (event) => runAuthenticated(event, async (client, body, claims) => {
   const bookingId = requireId(body.bookingId, '預約 ID ');
-  const organizationId = requireId(body.organizationId, '承接組織 ');
+  const organizationId = requireId(body.organizationId, '承接機構 ');
 
   const { rows } = await client.query(
     'select * from app.claim_app_state_booking($1, $2)', [bookingId, organizationId]);

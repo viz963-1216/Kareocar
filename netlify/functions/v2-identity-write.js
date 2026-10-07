@@ -59,9 +59,9 @@ async function upsert(client, updateSql, updateParams, insertSql, insertParams) 
 
 async function writeOrganization(client, id, r) {
   const type = text(r.type || r.orgType) || 'transport_provider';
-  if (!ORG_TYPES.includes(type)) throw auth.authError('VALIDATION_ERROR', `不支援的組織類型：${type}`);
+  if (!ORG_TYPES.includes(type)) throw auth.authError('VALIDATION_ERROR', `不支援的機構類型：${type}`);
   const name = text(r.name);
-  if (!name) throw auth.authError('VALIDATION_ERROR', '組織名稱不可空白');
+  if (!name) throw auth.authError('VALIDATION_ERROR', '機構名稱不可空白');
 
   const params = [toDbOrgId(id), type, name, text(r.taxId) || null, text(r.contactPhone) || null, bool(r.active)];
   return upsert(client,
@@ -78,7 +78,7 @@ async function writeMembership(client, id, r) {
   if (!MEMBERSHIP_STATES.includes(status)) throw auth.authError('VALIDATION_ERROR', `不支援的狀態：${status}`);
   const userId = text(r.userId);
   const orgId = toDbOrgId(r.organizationId);
-  if (!userId || !orgId) throw auth.authError('VALIDATION_ERROR', '成員資格缺少使用者或組織');
+  if (!userId || !orgId) throw auth.authError('VALIDATION_ERROR', '成員資格缺少使用者或機構');
 
   const params = [id, userId, orgId, role, status,
     status === 'revoked' ? new Date().toISOString() : null,
@@ -95,7 +95,7 @@ const DUTY_STATUSES = ['on_duty', 'break', 'off_duty', 'unavailable'];
 async function writeDriver(client, id, r) {
   const userId = text(r.userId);
   const orgId = toDbOrgId(r.organizationId);
-  if (!userId || !orgId) throw auth.authError('VALIDATION_ERROR', '司機資料缺少使用者或組織');
+  if (!userId || !orgId) throw auth.authError('VALIDATION_ERROR', '司機資料缺少使用者或機構');
 
   // 前端的欄位是 status（開始執勤／休息／結束執勤都改它）；dutyStatus 是載入時帶下來的舊值，只在沒有 status 時才用
   const duty = text(r.status) || text(r.dutyStatus) || 'off_duty';

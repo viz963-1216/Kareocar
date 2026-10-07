@@ -19,7 +19,7 @@
       const empty=$('#dispatchTripRows .empty',root)||$('#dispatchTripRows .empty');
       if(empty&&shown===0){
         if(total>0)makeEmptyState(empty,{icon:'⌕',title:'沒有符合篩選的行程',description:'',actions:[{label:'清除篩選',kind:'primary',run:()=>clickExisting('#clearTripFiltersBtn')}]});
-        else makeEmptyState(empty,{icon:'＋',title:'這一天沒有行程',description:'',actions:[{label:'看待排預約',kind:'outline',run:()=>jumpToView('dispatch-home')},...($('#openCreateTripBtn')?[{label:'手動建立行程',kind:'primary',run:()=>clickExisting('#openCreateTripBtn')}]:[])]});
+        else makeEmptyState(empty,{icon:'＋',title:'這一天沒有行程',description:'',actions:[{label:'看待排預約',kind:'outline',run:()=>jumpToView('dispatch-home')},...($('#openCreateTripBtn')?[{label:'手動排車',kind:'primary',run:()=>clickExisting('#openCreateTripBtn')}]:[])]});
       }
     }
     $$('.empty',root).forEach(el=>{
@@ -27,8 +27,8 @@
       if(text==='目前沒有異常')makeEmptyState(el,{icon:'✓',title:'沒有異常',description:'',actions:[]});
       else if(text.includes('目前沒有 補助規則集')||text.includes('目前沒有補助規則集'))makeEmptyState(el,{icon:'補',title:'還沒有補助規則',description:'',actions:[$('#openBenefitRulesetBtn')?{label:'新增補助規則',kind:'primary',run:()=>clickExisting('#openBenefitRulesetBtn')}:{label:'重新整理',kind:'outline',run:()=>location.reload()}]});
       else if(text==='目前還沒有需求者')makeEmptyState(el,{icon:'人',title:'還沒有需求者',description:'',actions:[]});
-      else if(text==='此組織目前沒有成員')makeEmptyState(el,{icon:'＋',title:'還沒有成員',description:'',actions:[$('#openAddStaffBtn')?{label:'新增成員',kind:'primary',run:()=>clickExisting('#openAddStaffBtn')}:{label:'返回組織管理',kind:'outline',run:()=>jumpToView('platform-organizations')}]});
-      else if(text==='目前沒有有效組織')makeEmptyState(el,{icon:'＋',title:'還沒有組織',description:'',actions:[$('#openAddOrganizationBtn')?{label:'新增組織',kind:'primary',run:()=>clickExisting('#openAddOrganizationBtn')}:{label:'前往組織管理',kind:'outline',run:()=>jumpToView('platform-organizations')}]});
+      else if(text==='此機構目前沒有成員')makeEmptyState(el,{icon:'＋',title:'還沒有成員',description:'',actions:[$('#openAddStaffBtn')?{label:'新增成員',kind:'primary',run:()=>clickExisting('#openAddStaffBtn')}:{label:'返回機構管理',kind:'outline',run:()=>jumpToView('platform-organizations')}]});
+      else if(text==='目前沒有有效機構')makeEmptyState(el,{icon:'＋',title:'還沒有機構',description:'',actions:[$('#openAddOrganizationBtn')?{label:'新增機構',kind:'primary',run:()=>clickExisting('#openAddOrganizationBtn')}:{label:'前往機構管理',kind:'outline',run:()=>jumpToView('platform-organizations')}]});
     });
   }
 
@@ -36,7 +36,7 @@
     const panel=$(`#${modalId} .modal-panel`);if(!panel)return;let note=$('.p3-risk-note',panel);if(!note){note=document.createElement('div');const hint=$('.smart-modal-hint',panel)||panel.querySelector('.danger-confirm-fields');(hint||panel.querySelector('.modal-actions'))?.insertAdjacentElement(hint?'afterend':'beforebegin',note);}if(!note)return;note.className=`p3-risk-note ${kind}`;note.textContent=text;
   }
   function enhanceRiskDialogs(){
-    const revoke=$('#revokeMembershipModal');if(revoke?.classList.contains('open'))addRiskNote('revokeMembershipModal','destructive','只撤銷在本公司的工作身分，不會刪除這個人的帳號與紀錄。');
+    const revoke=$('#revokeMembershipModal');if(revoke?.classList.contains('open'))addRiskNote('revokeMembershipModal','destructive','只撤銷在本機構的工作身分，不會刪除這個人的帳號與紀錄。');
   }
 
   function enhanceLongActions(root=document){
