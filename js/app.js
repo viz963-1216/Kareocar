@@ -537,6 +537,7 @@ function updateAuthoritativeWriteUI_(){
   if(pending){el.classList.remove('hidden');el.style.background='#fff7e8';el.style.borderColor='#efc27d';el.style.color='#7b520d';el.textContent=`正在將 ${pending} 筆操作寫入正式資料庫；完成前請不要關閉頁面。`;return;}
   el.classList.add('hidden');el.textContent='';
 }
+const RECIPIENT_FIRST_COLLECTIONS=new Set(['careRecipients','careRecipientRelations']);
 async function authoritativeFlush_(){
   if(authoritativeFlushInFlight){
     const started=Date.now();while(authoritativeFlushInFlight&&Date.now()-started<12000)await new Promise(resolve=>setTimeout(resolve,25));
@@ -555,11 +556,13 @@ async function authoritativeFlush_(){
     const payload=rows.map(({collection,id,record,deleted,expectedRevision})=>({collection,id,record,deleted,expectedRevision}));
     // 預約走預約端點：伺服器檢查狀態轉換、計算地址欄位、轉手時撤銷原機構存取。
     // 行程走行程端點：檢查機構歸屬、司機、車輛與狀態轉換。
-    // 依序送出：預約 → 行程 → 其他資料。排車不走這裡，一律送 schedule-trips（ADR 0003）。
+    // 依序送出：服務對象 → 預約 → 行程 → 其他資料。排車不走這裡，一律送 schedule-trips（ADR 0003）。
+    // 服務對象與關係要先存好，預約端點才查得到這位服務對象屬於需求者（#78）。
     const identityRows=payload.filter(x=>IDENTITY_WRITE_COLLECTIONS.has(x.collection));
+    const recipientRows=payload.filter(x=>RECIPIENT_FIRST_COLLECTIONS.has(x.collection));
     const bookingRows=payload.filter(x=>x.collection==='bookings');
     const tripRows=payload.filter(x=>x.collection==='trips');
-    const stateRows=payload.filter(x=>!IDENTITY_WRITE_COLLECTIONS.has(x.collection)&&!['bookings','trips'].includes(x.collection));
+    const stateRows=payload.filter(x=>!IDENTITY_WRITE_COLLECTIONS.has(x.collection)&&!RECIPIENT_FIRST_COLLECTIONS.has(x.collection)&&!['bookings','trips'].includes(x.collection));
     const post=async(url,changes)=>{
       if(!changes.length)return;
       const response=await apiFetch(url,{method:'POST',headers:{'content-type':'application/json'},credentials:'same-origin',cache:'no-store',body:JSON.stringify({changes})});
@@ -567,6 +570,7 @@ async function authoritativeFlush_(){
       if(!response.ok||!result?.ok)throw new Error(result?.error?.message||`正式資料寫入失敗（HTTP ${response.status}）`);
     };
     await post(APP_CONFIG.identityWriteUrl,identityRows);
+    await post(APP_CONFIG.stateMutateUrl,recipientRows);
     await post(APP_CONFIG.bookingWriteUrl,bookingRows);
     await post(APP_CONFIG.tripWriteUrl,tripRows);
     await post(APP_CONFIG.stateMutateUrl,stateRows);

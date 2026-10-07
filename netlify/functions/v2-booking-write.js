@@ -15,6 +15,8 @@
  *     （app.revoke_booking_organization），原機構立即讀不到
  *   - 不能刪除預約；接案與取消有各自的端點
  *   - 不能排車：排車只走 v2-schedule-trips（ADR 0003），去程／回程的排車欄位一律沿用資料庫的值
+ *   - 預約帶服務對象（recipientId）時，需求者必須是這位服務對象的建立者、且有未撤銷的可預約關係；
+ *     承接機構的負責人或調度員不受此限（#78）
  *
  * 整批在同一筆交易裡，任何一筆不合規則就整批不寫入。
  */
@@ -48,6 +50,31 @@ async function applyServerBenefit(client, record, existing) {
       ? { ...snap, benefit: { ...result } } : snap));
   }
   return stale;
+}
+
+/**
+ * 預約上的服務對象必須屬於這位需求者（#78）。新預約或改了服務對象時檢查；
+ * 沒改服務對象的修改沿用原本的檢查結果。
+ *
+ * 關係（careRecipientRelations）走一般寫入端點，任何人都能替自己寫一筆指向別人服務對象的
+ * 關係，所以除了關係之外，服務對象本身也必須是呼叫者建立的（替家人預約：只有建立者管理）。
+ */
+async function assertRecipientBookable(client, { actorUserId, record, existing, roles }) {
+  const recipientId = text(record.recipientId);
+  if (!recipientId) return;
+  if (existing && text((existing.data || {}).recipientId) === recipientId) return;
+  if (roles.admin || (existing ? roles.opsOfExisting : roles.opsOfClaimedOrg)) return;
+  const { rows } = await client.query(
+    `select 1
+       from app_state r
+       join app_state rel on rel.collection = 'careRecipientRelations' and not rel.deleted
+                         and rel.owner_user_id = $1
+                         and rel.data->>'userId' = $1 and rel.data->>'recipientId' = r.id
+                         and coalesce(rel.data->>'status', 'active') <> 'revoked'
+                         and rel.data->>'canBook' = 'true'
+      where r.collection = 'careRecipients' and r.id = $2 and not r.deleted and r.owner_user_id = $1
+      limit 1`, [actorUserId, recipientId]);
+  if (!rows.length) throw auth.authError('FORBIDDEN', '不能替這位服務對象預約');
 }
 
 async function isOps(client, organizationId) {
@@ -109,6 +136,7 @@ exports.handler = async (event) => {
           throw auth.authError(error.code || 'VALIDATION_ERROR', error.message);
         }
         const record = checked.record;
+        await assertRecipientBookable(client, { actorUserId: claims.userId, record, existing, roles });
         await applyServerBookingFields(client, id, record);
         const benefitRepriced = await applyServerBenefit(client, record, existing);
 
