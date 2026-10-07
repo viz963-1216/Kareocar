@@ -953,7 +953,7 @@ CareRecipient = {
   create(input={},context={}){
     const actorUserId=context.actorUserId||null,internal=context._internalToken===CARE_RECIPIENT_INTERNAL_TOKEN,name=String(input.name||input.displayName||'').trim(),phone=normalizeRecipientPhone(input.phone||input.primaryPhone),address=String(input.address||input.primaryAddress||'').trim(),birthDate=String(input.birthDate||'').trim()||null;
     const ownerOrganizationId=context.organizationId||null,ownerCanCreate=!!ownerOrganizationId&&!!activeOrganizationMembership(actorUserId,ownerOrganizationId,['owner']);if(!internal&&!actorIsSuperAdmin(actorUserId)&&!ownerCanCreate)return {ok:false,error:'只有平台超級管理者或目前組織負責人可以手動建立服務對象'};if(!name)return {ok:false,error:'請輸入服務對象姓名'};if(phone&&phone.length<9)return {ok:false,error:'請輸入正確聯絡手機'};
-    const matches=this.findPotentialMatches({name,phone,address,birthDate},{highConfidenceOnly:true});if(matches.length&&!context.allowPotentialMatch)return {ok:false,error:`系統找到疑似同一服務對象「${recipientDisplayName(matches[0].recipient)}」，請先查看既有主檔，避免重複建檔`,matches};
+    const matches=this.findPotentialMatches({name,phone,address,birthDate},{highConfidenceOnly:true});if(matches.length&&!context.allowPotentialMatch)return {ok:false,error:'系統找到疑似同一位服務對象，請先查看既有主檔，避免重複建檔',matches};
     const createdAt=nowISO(),recipientId=uid('rec'),addresses=normalizedAddressEntries(recipientId,{primary:address,commonPickup:address},address),emergencyContacts=normalizeEmergencyContacts(recipientId,input.emergencyContacts||[]),sp={defaultCompanions:0,commonDestinations:[],notes:'',...(input.servicePreferences||{})};delete sp.defaultPickupAddress;
     const recipient={id:recipientId,schemaVersion:CARE_RECIPIENT_SCHEMA_VERSION,scope:'platform',status:'active',identity:{displayName:name,birthDate,gender:input.gender||'unspecified'},contacts:{primaryPhone:phone,emergencyContacts},addresses,mobility:{...recipientEmptyMobility(),...(input.mobility||{})},servicePreferences:{...sp,defaultCompanions:Math.max(0,Number(sp.defaultCompanions??0)||0)},governance:{createdByUserId:actorUserId,source:context.source||'manual',sourceOrganizationId:context.organizationId||null,potentialDuplicateRecipientIds:matches.map(x=>x.recipient.id),createdAt,updatedAt:createdAt,archivedAt:null,mergedIntoRecipientId:null,mergedAt:null}};
     const hasExplicitLink=Object.prototype.hasOwnProperty.call(context,'linkUserId'),linkUserId=hasExplicitLink?context.linkUserId:null;if(linkUserId&&context.relationship==='self'){const check=canCreateSelfRelation(linkUserId,recipientId);if(!check.ok)return check;}
@@ -3277,8 +3277,8 @@ function passengersForTripStep(trip,step){
 function validatePassengerStateForStep(trip,step,nextState){
   const rows=passengersForTripStep(trip,step);if(!rows.length)return {ok:true,rows:[]};
   for(const p of rows){
-    if(nextState==='onboard'&&!['waiting','onboard'].includes(p.status))return {ok:false,error:`${p.name} 目前為「${tripPassengerStatusLabel(p.status)}」，不能再次上車`};
-    if(nextState==='dropped_off'&&!['onboard','dropped_off'].includes(p.status))return {ok:false,error:`${p.name} 尚未完成上車，不能直接標記送達`};
+    if(nextState==='onboard'&&!['waiting','onboard'].includes(p.status))return {ok:false,error:`這位乘客目前為「${tripPassengerStatusLabel(p.status)}」，不能再次上車`};
+    if(nextState==='dropped_off'&&!['onboard','dropped_off'].includes(p.status))return {ok:false,error:'這位乘客尚未完成上車，不能直接標記送達'};
   }
   return {ok:true,rows};
 }
@@ -3562,7 +3562,7 @@ function enforceTripInvariantsInDb(db,trip,context='mutation'){
 }
 function inferTripReasonCode(text=''){const s=String(text||'');if(/車輛故障|車輛設備/.test(s))return 'vehicle_failure';if(/交通事故/.test(s))return 'traffic_accident';if(/突發送醫|病患身體不適/.test(s))return 'medical_emergency';if(/乘客.*取消|臨時取消/.test(s))return 'passenger_cancelled';if(/無法聯絡|未到/.test(s))return 'no_show_or_unreachable';if(/安全|無法繼續/.test(s))return 'unsafe_to_continue';return 'other';}
 function handoverManifestForTrip(trip){normalizeTripPassengers(trip);return (trip.passengers||[]).filter(p=>!tripPassengerTerminal(p.status)).map(p=>({passengerId:p.id,bookingId:p.bookingId||null,name:p.name,status:p.status,seatUnits:Math.max(1,Number(p.seatUnits)||1),wheelchairUnits:Math.max(0,Number(p.wheelchairUnits)||0)}));}
-function validateHandoverManifest(trip,manifest){const current=handoverManifestForTrip(trip),byId=new Map((manifest||[]).map(x=>[x.passengerId,x]));const missing=current.filter(p=>!byId.has(p.passengerId));const mismatch=current.filter(p=>{const m=byId.get(p.passengerId);return m&&(m.status!==p.status||Number(m.seatUnits)!==Number(p.seatUnits)||Number(m.wheelchairUnits)!==Number(p.wheelchairUnits));});return missing.length||mismatch.length?{ok:false,error:`交接乘客清冊已改變：${[...missing,...mismatch].map(x=>x.name).join('、')}`}:{ok:true,current};}
+function validateHandoverManifest(trip,manifest){const current=handoverManifestForTrip(trip),byId=new Map((manifest||[]).map(x=>[x.passengerId,x]));const missing=current.filter(p=>!byId.has(p.passengerId));const mismatch=current.filter(p=>{const m=byId.get(p.passengerId);return m&&(m.status!==p.status||Number(m.seatUnits)!==Number(p.seatUnits)||Number(m.wheelchairUnits)!==Number(p.wheelchairUnits));});return missing.length||mismatch.length?{ok:false,error:`交接乘客清冊已改變（${missing.length+mismatch.length} 位乘客），請重新整理後再交接`}:{ok:true,current};}
 
 function normalizeTripRuntime(trip){
   if(!trip)return trip;

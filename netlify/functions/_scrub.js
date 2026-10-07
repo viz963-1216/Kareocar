@@ -7,16 +7,19 @@
  *   scrubValue(value)  物件遞迴處理；敏感鍵（name、phone、address…，含 primaryPhone 等 camelCase）的值整個拿掉
  */
 
-// 鍵名先拆成單字（camelCase、底線、連字號都拆，不分大小寫），任何一個單字是個資就整個值拿掉（#81）。
-// 例如 primaryPhone → primary、phone；emergencyContacts → emergency、contacts；filename 是一個字，不算 name。
-const PII_WORDS = new Set(['name', 'names', 'displayname', 'fullname', 'phone', 'phones', 'mobile', 'tel', 'email', 'emails',
-  'address', 'addresses', 'pickup', 'dropoff', 'destination', 'location', 'locations', 'lat', 'lng', 'gps', 'coords',
-  'contact', 'contacts', 'recipient', 'recipients', 'receiver', 'requester', 'signature', 'photo', 'note', 'notes',
-  'idnumber']);
+// 鍵名先拆成單字（camelCase、底線、連字號都拆，不分大小寫），再比對個資字根（#81）：
+//   - 字根比對單字開頭：telephone、mobileNumber、emailAddress、birthday、tokens 都算；filename、hostname 不算
+//   - 相鄰兩個字也合起來比對：id_number、idNo、nationalId
+//   - 有些短字只比對整個字，避免誤遮（lat 不比對 latency）
+// 敏感就把整個值拿掉；結尾是 Id、At、Date、Count、Code、Type、Status… 的是 ID／時間／狀態，不是個資本身。
+const PII_STEMS = ['name', 'displayname', 'fullname', 'phone', 'telephone', 'mobile', 'email', 'address', 'pickup', 'dropoff',
+  'destination', 'location', 'latitude', 'longitude', 'coord', 'contact', 'recipient', 'receiver', 'requester', 'passenger',
+  'guardian', 'signature', 'photo', 'note', 'idnumber', 'idno', 'nationalid', 'plate', 'licenseplate'];
+const PII_EXACT = new Set(['tel', 'lat', 'lng', 'gps', 'dob']);
 // 不管結尾是什麼都拿掉
-const ALWAYS_WORDS = new Set(['password', 'token', 'secret', 'cookie', 'authorization', 'session', 'birth', 'birthdate', 'credential']);
-// 這些結尾代表 ID、時間、狀態、筆數，不是個資本身（tripId、pickupAt、contactsCount）
-const SAFE_LAST_WORDS = new Set(['id', 'ids', 'at', 'date', 'time', 'count', 'code', 'type', 'status', 'version', 'sequence', 'label']);
+const ALWAYS_STEMS = ['password', 'token', 'secret', 'cookie', 'authorization', 'session', 'birth', 'credential', 'apikey',
+  'privatekey', 'jwt', 'otp'];
+const SAFE_LAST_WORDS = new Set(['id', 'ids', 'at', 'date', 'time', 'count', 'code', 'type', 'status', 'version', 'sequence']);
 
 function keyWords(key) {
   return String(key).replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
@@ -24,10 +27,15 @@ function keyWords(key) {
 }
 function isSensitiveKey(key) {
   const words = keyWords(key);
-  if (words.some((w) => ALWAYS_WORDS.has(w))) return true;
-  if (!words.some((w) => PII_WORDS.has(w))) return false;
+  const candidates = [...words, ...words.slice(1).map((w, i) => words[i] + w)];
+  const starts = (stems) => candidates.some((c) => stems.some((stem) => c.startsWith(stem)));
+  if (starts(ALWAYS_STEMS)) return true;
+  if (!starts(PII_STEMS) && !candidates.some((c) => PII_EXACT.has(c))) return false;
+  // idNumber、nationalId 的結尾 id 是個資本身，不是關聯 ID
+  if (candidates.some((c) => ['idnumber', 'idno', 'nationalid'].includes(c))) return true;
   return !SAFE_LAST_WORDS.has(words[words.length - 1]);
 }
+
 const MAX_DEPTH = 6;
 const MAX_STRING = 2000;
 
@@ -61,4 +69,4 @@ function scrubValue(value, depth = 0) {
   return String(value);
 }
 
-module.exports = { scrubText, scrubValue, isSensitiveKey };
+module.exports = { scrubText, scrubValue };
