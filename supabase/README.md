@@ -293,7 +293,7 @@ context 沒設定這個變數時，建置會失敗，因為無從判斷。
 ### 同意紀錄與保存期限（#26）
 
 - 條款版本在 `app_settings.legal_documents`，由平台超級管理者經 `/api/v2/platform-settings` 發布。
-- 登入方式開關（`login_methods`，試營運 Facebook 預設關閉）與客服聯絡（`support_contact`）也在 `app_settings`（0015），改了立刻生效；未登入的人只能經 `app.public_settings()` 讀到這兩組。
+- 登入方式開關（`login_methods`，試營運 Facebook 預設關閉）與客服聯絡（`support_contact`）也在 `app_settings`（0015），改了立刻生效；未登入的人只能經 `app.public_settings()` 讀到這兩組。關閉某個登入方式後，`oauth-start` 與我的帳戶的綁定立即拒絕；關閉前已經開始、還在授權頁上的那一次（PKCE cookie 有效期內）仍可完成，不另外擋。
   律師文件完成前版本是 null，不要求同意；發布或改版後，沒同意最新版本的使用者不能建立預約
   （`CONSENT_REQUIRED`），前端會跳出同意視窗，經 `/api/v2/consent` 記錄版本與時間。
 - 保存期限 `app_settings.retention_years`，預設 5 年，可設定 1–30 年。

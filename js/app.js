@@ -112,6 +112,8 @@ let PUBLIC_SETTINGS={loginMethods:{google:true,facebook:false},supportContact:{l
 async function loadPublicSettings_(){
   try{const r=await fetch(APP_CONFIG.publicSettingsUrl,{cache:'no-store',credentials:'same-origin'});const j=await r.json();if(r.ok&&j?.ok&&j.data)PUBLIC_SETTINGS=j.data;}catch(e){/* 讀不到就用預設值 */}
   applyPublicSettings_();
+  // 已登入時畫面可能在讀到設定之前就畫好了（我的帳戶的客服聯絡、登入方式）
+  if(!$('appShell')?.classList.contains('hidden'))render();
 }
 /** 客服聯絡（LINE 官方帳號與 Email）；都沒填時回空字串 */
 function supportContactHtml(){
@@ -5973,7 +5975,7 @@ function platformPrivacySettingsCard(){
   <div class="form-grid"><label class="checkbox-row"><input type="checkbox" id="loginMethodGoogleInput" ${PUBLIC_SETTINGS.loginMethods?.google?'checked':''}/> 開放 Google 登入</label><label class="checkbox-row"><input type="checkbox" id="loginMethodFacebookInput" ${PUBLIC_SETTINGS.loginMethods?.facebook?'checked':''}/> 開放 Facebook 登入</label>
   <div class="form-field"><label for="supportLineUrlInput">LINE 官方帳號連結</label><input id="supportLineUrlInput" value="${escapeHTML(PUBLIC_SETTINGS.supportContact?.lineUrl||'')}" placeholder="https://lin.ee/…"/></div>
   <div class="form-field"><label for="supportEmailInput">客服 Email</label><input id="supportEmailInput" type="email" value="${escapeHTML(PUBLIC_SETTINGS.supportContact?.email||'')}" placeholder="service@example.com"/></div></div>
-  <div class="item-actions"><button type="button" class="btn primary sm" id="savePublicSettingsBtn">儲存</button></div></section>
+  <div class="item-actions"><button type="button" class="btn primary sm" id="savePublicSettingsBtn" disabled>儲存</button></div></section>
   <section class="card"><div class="card-head"><h3>監控測試</h3></div>
   <div class="item-actions"><button type="button" class="btn outline sm" id="sendTestAlertBtn">送出測試告警</button><button type="button" class="btn outline sm" id="triggerTestErrorBtn">觸發測試錯誤</button></div></section>`;
 }
@@ -5981,10 +5983,17 @@ async function platformSettingsRequest_(payload,message){try{const r=await backe
 function bindPlatformPrivacySettings(){
   $('sendTestAlertBtn')?.addEventListener('click',async()=>{try{const r=await backendJsonPost(APP_CONFIG.platformSettingsUrl,{action:'test_alert'});const d=r.data?.delivered||[];showToast(d.length?`測試告警已送出：${d.join('、')}`:'已寫入稽核紀錄，但沒有設定 Email 或 Discord');}catch(error){showToast(error.message||'測試告警失敗');}});
   $('triggerTestErrorBtn')?.addEventListener('click',async()=>{try{await backendJsonPost(APP_CONFIG.platformSettingsUrl,{action:'test_error'});}catch(error){showToast(error.errorId||error.code?`已觸發測試錯誤${error.code?`（${error.code}）`:''}，請到 Sentry 確認`:'已觸發測試錯誤');}});
+  // 表單以伺服器目前的設定為準（讀到之前不能儲存，避免用預設值蓋掉真正的設定）
+  if($('savePublicSettingsBtn'))backendJsonPost(APP_CONFIG.platformSettingsUrl,{action:'get'}).then(r=>{
+    const d=r?.data||{};if(!d.loginMethods||!$('savePublicSettingsBtn'))return;
+    $('loginMethodGoogleInput').checked=d.loginMethods.google===true;$('loginMethodFacebookInput').checked=d.loginMethods.facebook===true;
+    $('supportLineUrlInput').value=d.supportContact?.lineUrl||'';$('supportEmailInput').value=d.supportContact?.email||'';$('savePublicSettingsBtn').disabled=false;
+  }).catch(()=>showToast('讀不到目前的登入方式與客服聯絡，請重新整理'));
   $('savePublicSettingsBtn')?.addEventListener('click',async()=>{
     try{
-      await backendJsonPost(APP_CONFIG.platformSettingsUrl,{action:'set_login_methods',loginMethods:{google:$('loginMethodGoogleInput').checked,facebook:$('loginMethodFacebookInput').checked}});
-      const r=await backendJsonPost(APP_CONFIG.platformSettingsUrl,{action:'set_support_contact',supportContact:{lineUrl:$('supportLineUrlInput').value.trim(),email:$('supportEmailInput').value.trim()}});
+      const r=await backendJsonPost(APP_CONFIG.platformSettingsUrl,{action:'set_public_settings',
+        loginMethods:{google:$('loginMethodGoogleInput').checked,facebook:$('loginMethodFacebookInput').checked},
+        supportContact:{lineUrl:$('supportLineUrlInput').value.trim(),email:$('supportEmailInput').value.trim()}});
       const d=r?.data||{};if(d.loginMethods)PUBLIC_SETTINGS={loginMethods:d.loginMethods,supportContact:d.supportContact};applyPublicSettings_();render();showToast('登入方式與客服聯絡已更新');
     }catch(error){showToast(error.message||'儲存失敗');}
   });

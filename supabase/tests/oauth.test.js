@@ -128,10 +128,29 @@ async function socialLogin(provider, subject, profile = {}) {
     return r.status === 200 && r.data.loginMethods.facebook === true && (await pub()).data.loginMethods.facebook === true
       && s.statusCode === 302 && new URL(loc(s)).searchParams.get('provider') === 'facebook';
   });
+  await t('兩組一起存：客服聯絡不合格時，登入方式也不會改', async () => {
+    const r = await settingsAs(asRoot, { action: 'set_public_settings', loginMethods: { google: false, facebook: true },
+      supportContact: { lineUrl: 'ftp://bad', email: 'help@example.tw' } });
+    const p = await pub();
+    return r.status === 400 && p.data.loginMethods.google === true;
+  });
+  await t('關掉 Google 與 Facebook：兩者開始登入都被拒；再打開後恢復', async () => {
+    const off = await settingsAs(asRoot, { action: 'set_public_settings', loginMethods: { google: false, facebook: false },
+      supportContact: { lineUrl: 'https://lin.ee/synthetic', email: 'help@example.tw' } });
+    const g = await get(start, { provider: 'google' });
+    const f = await get(start, { provider: 'facebook' });
+    // 下面的社群登入測試需要兩種都開著
+    const on = await settingsAs(asRoot, { action: 'set_login_methods', loginMethods: { google: true, facebook: true } });
+    return off.status === 200 && loc(g) === '/?login_error=provider_disabled' && loc(f) === '/?login_error=provider_disabled'
+      && on.status === 200 && (await pub()).data.loginMethods.google === true;
+  });
   await t('設定頁讀得到目前的登入方式與客服聯絡', async () => {
     const r = await settingsAs(asRoot, { action: 'get' });
     return r.status === 200 && r.data.loginMethods.facebook === true && r.data.supportContact.email === 'help@example.tw';
   });
+
+  // 以下的社群登入測試需要 Google、Facebook 都開著（試營運預設 Facebook 關）；不依賴上面測試的結果
+  sql(`update app_settings set value = '{"google": true, "facebook": true}' where key = 'login_methods'`);
 
   console.log('--- 開始登入 ---');
   let started;

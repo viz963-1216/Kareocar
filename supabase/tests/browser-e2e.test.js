@@ -681,7 +681,7 @@ async function flowPublicSettings(cdp, baseUrl) {
   try {
     await login(page, U.root);
     await goView(page, 'platform-organizations');
-    await waitFor(page, "!!document.getElementById('platformPublicSettings')", '平台設定出現登入方式與客服聯絡');
+    await waitFor(page, "!!document.getElementById('platformPublicSettings')&&!document.getElementById('savePublicSettingsBtn').disabled", '平台設定讀到目前的登入方式與客服聯絡');
     await evaluate(page, "(()=>{const c=document.getElementById('loginMethodFacebookInput');if(!c.checked)c.click();return true;})()");
     await typeInto(page, '#supportLineUrlInput', line);
     await typeInto(page, '#supportEmailInput', email);
