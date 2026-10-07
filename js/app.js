@@ -60,6 +60,7 @@ const APP_CONFIG = Object.freeze({
   benefitAuthorizationUrl: '/api/v2/benefit-authorization',
   consentUrl: '/api/v2/consent',
   platformSettingsUrl: '/api/v2/platform-settings',
+  publicSettingsUrl: '/api/v2/public-settings',
   accountDeletionUrl: '/api/v2/account-deletion',
   identityWriteUrl: '/api/v2/identity-write',
   claimBookingUrl: '/api/v2/claim-booking',
@@ -110,6 +111,34 @@ const tripPassengerStatusLabelGlobal = (status) => ({waiting:'等待上車',onbo
 
 
 const $ = (id) => document.getElementById(id);
+
+// 登入方式開關與客服聯絡（#79）：平台管理者在平台設定頁修改，未登入也讀得到（/api/v2/public-settings）。
+// 讀到之前用試營運的預設值：Google 開、Facebook 關。
+let PUBLIC_SETTINGS={loginMethods:{google:true,facebook:false},supportContact:{lineUrl:null,email:null}};
+// 平台設定頁：是否已讀到伺服器目前的設定（讀到之前不能儲存），以及正在編輯、還沒儲存的值
+// （背景同步會重畫畫面，不保留的話輸入到一半的內容會被蓋掉）
+let publicSettingsServerLoaded=false,publicSettingsDraft=null;
+async function loadPublicSettings_(){
+  try{const r=await fetch(APP_CONFIG.publicSettingsUrl,{cache:'no-store',credentials:'same-origin'});const j=await r.json();if(r.ok&&j?.ok&&j.data)PUBLIC_SETTINGS=j.data;}catch(e){/* 讀不到就用預設值 */}
+  applyPublicSettings_();
+  // 已登入時畫面可能在讀到設定之前就畫好了（我的帳戶的客服聯絡、登入方式）
+  if(!$('appShell')?.classList.contains('hidden'))render();
+}
+/** 客服聯絡（LINE 官方帳號與 Email）；都沒填時回空字串 */
+function supportContactHtml(){
+  const c=PUBLIC_SETTINGS.supportContact||{},rows=[];
+  if(c.lineUrl)rows.push(`<a class="btn outline sm" href="${escapeHTML(c.lineUrl)}" target="_blank" rel="noopener">LINE 官方帳號</a>`);
+  if(c.email)rows.push(`<a class="btn outline sm" href="mailto:${escapeHTML(c.email)}">${escapeHTML(c.email)}</a>`);
+  return rows.length?`<div class="support-contact">${rows.join('')}</div>`:'';
+}
+function applyPublicSettings_(){
+  const m=PUBLIC_SETTINGS.loginMethods||{};
+  $('oauthGoogleBtn')?.classList.toggle('hidden',m.google!==true);
+  $('oauthFacebookBtn')?.classList.toggle('hidden',m.facebook!==true);
+  $('loginSocialDivider')?.classList.toggle('hidden',m.google!==true&&m.facebook!==true);
+  const contact=supportContactHtml(),box=$('forgotSupportContact');
+  if(box){box.innerHTML=contact?`<p class="small">需求者也可以直接聯絡客服：</p>${contact}`:'';}
+}
 
 function setButtonBusy(button,busy,label='處理中…'){
   if(!button)return;
@@ -5787,7 +5816,8 @@ function genericAccount(){
 function accountView(){
   const u=Identity.currentUser(),body=role()==='driver'?driverAccount():role()==='requester'?requesterAccount():genericAccount();
   if(!u)return body;
-  return body+loginMethodsCard_()+systemReportAccountCard()+(Identity.isSuperAdmin()?'':orgApplicationCard()+deletionRequestCard())
+  const contact=supportContactHtml(),supportCard=contact?`<section class="card" id="supportContactCard"><div class="card-head"><h3>聯絡客服</h3></div>${contact}</section>`:'';
+  return body+loginMethodsCard_()+systemReportAccountCard()+(Identity.isSuperAdmin()?'':orgApplicationCard()+deletionRequestCard())+supportCard
     +`${appVersionNote()}<button type="button" class="btn outline block account-logout-btn">登出</button>`;
 }
 // 刪除帳號與個資申請（#26）：由平台管理者處理；核准後預約與行程匿名化、帳號停用
@@ -5982,7 +6012,7 @@ async function acceptConsent_(){
 
 // 個資保存期限與條款版本（#26）：只有平台超級管理者；條款內容由律師撰寫，發布版本後使用者要同意才能預約
 function platformPrivacySettingsCard(){
-  const docs=AppStateDatabase.consent?.documents||{},years=AppStateDatabase.platformSettings?.retentionYears||5;
+  const docs=AppStateDatabase.consent?.documents||{},years=AppStateDatabase.platformSettings?.retentionYears||5,ps=publicSettingsDraft||PUBLIC_SETTINGS;
   const docRow=(key)=>{const d=docs[key]||{},title=escapeHTML(d.title||key);return `<div class="form-2"><div class="form-field"><label for="legalDoc_${key}_version">${title}：版本</label><input id="legalDoc_${key}_version" value="${escapeHTML(d.version||'')}" placeholder="未發布就留白"/></div><div class="form-field"><label for="legalDoc_${key}_url">${title}：網址</label><input id="legalDoc_${key}_url" value="${escapeHTML(d.url||'')}" placeholder="https://"/></div></div>`;};
   // 三組設定各自一張卡，按鈕只放在自己那一組底下
   return `<section class="card" id="platformPrivacySettings"><div class="card-head"><div><h3>資料保存</h3><p>超過保存年限的行程每天自動匿名化。</p></div></div>
@@ -5991,6 +6021,11 @@ function platformPrivacySettingsCard(){
   <section class="card"><div class="card-head"><div><h3>條款版本</h3><p>改版後，使用者要重新同意才能預約。</p></div></div>
   <div class="form-grid">${docRow('privacy_notice')}${docRow('terms')}</div>
   <div class="item-actions"><button type="button" class="btn primary sm" id="saveLegalDocumentsBtn">儲存</button></div></section>
+  <section class="card" id="platformPublicSettings"><div class="card-head"><div><h3>登入方式與客服聯絡</h3><p>儲存後登入頁立刻生效。</p></div></div>
+  <div class="form-grid"><label class="checkbox-row"><input type="checkbox" id="loginMethodGoogleInput" ${ps.loginMethods?.google?'checked':''}/> 開放 Google 登入</label><label class="checkbox-row"><input type="checkbox" id="loginMethodFacebookInput" ${ps.loginMethods?.facebook?'checked':''}/> 開放 Facebook 登入</label>
+  <div class="form-field"><label for="supportLineUrlInput">LINE 官方帳號連結</label><input id="supportLineUrlInput" value="${escapeHTML(ps.supportContact?.lineUrl||'')}" placeholder="https://lin.ee/…"/></div>
+  <div class="form-field"><label for="supportEmailInput">客服 Email</label><input id="supportEmailInput" type="email" value="${escapeHTML(ps.supportContact?.email||'')}" placeholder="service@example.com"/></div></div>
+  <div class="item-actions"><button type="button" class="btn primary sm" id="savePublicSettingsBtn" ${publicSettingsServerLoaded?'':'disabled'}>儲存</button></div></section>
   <section class="card"><div class="card-head"><h3>監控測試</h3></div>
   <div class="item-actions"><button type="button" class="btn outline sm" id="sendTestAlertBtn">送出測試告警</button><button type="button" class="btn outline sm" id="triggerTestErrorBtn">觸發測試錯誤</button></div></section>`;
 }
@@ -5998,6 +6033,24 @@ async function platformSettingsRequest_(payload,message){try{const r=await backe
 function bindPlatformPrivacySettings(){
   $('sendTestAlertBtn')?.addEventListener('click',async()=>{try{const r=await backendJsonPost(APP_CONFIG.platformSettingsUrl,{action:'test_alert'});const d=r.data?.delivered||[];showToast(d.length?`測試告警已送出：${d.join('、')}`:'已寫入稽核紀錄，但沒有設定 Email 或 Discord');}catch(error){showToast(error.message||'測試告警失敗');}});
   $('triggerTestErrorBtn')?.addEventListener('click',async()=>{try{await backendJsonPost(APP_CONFIG.platformSettingsUrl,{action:'test_error'});}catch(error){showToast(error.errorId||error.code?`已觸發測試錯誤${error.code?`（${error.code}）`:''}，請到 Sentry 確認`:'已觸發測試錯誤');}});
+  // 表單以伺服器目前的設定為準（讀到之前不能儲存，避免用預設值蓋掉真正的設定）
+  const readPublicSettingsForm=()=>({loginMethods:{google:$('loginMethodGoogleInput').checked,facebook:$('loginMethodFacebookInput').checked},
+    supportContact:{lineUrl:$('supportLineUrlInput').value.trim(),email:$('supportEmailInput').value.trim()}});
+  ['loginMethodGoogleInput','loginMethodFacebookInput','supportLineUrlInput','supportEmailInput'].forEach(id=>{const el=$(id);if(!el)return;const keep=()=>{publicSettingsDraft=readPublicSettingsForm();};el.addEventListener('input',keep);el.addEventListener('change',keep);});
+  if($('savePublicSettingsBtn')&&!publicSettingsServerLoaded)backendJsonPost(APP_CONFIG.platformSettingsUrl,{action:'get'}).then(r=>{
+    const d=r?.data||{};if(!d.loginMethods)return;
+    PUBLIC_SETTINGS={loginMethods:d.loginMethods,supportContact:d.supportContact};publicSettingsServerLoaded=true;
+    if(!$('savePublicSettingsBtn'))return;
+    if(!publicSettingsDraft){$('loginMethodGoogleInput').checked=d.loginMethods.google===true;$('loginMethodFacebookInput').checked=d.loginMethods.facebook===true;
+      $('supportLineUrlInput').value=d.supportContact?.lineUrl||'';$('supportEmailInput').value=d.supportContact?.email||'';}
+    $('savePublicSettingsBtn').disabled=false;
+  }).catch(()=>showToast('讀不到目前的登入方式與客服聯絡，請重新整理'));
+  $('savePublicSettingsBtn')?.addEventListener('click',async()=>{
+    try{
+      const r=await backendJsonPost(APP_CONFIG.platformSettingsUrl,{action:'set_public_settings',...readPublicSettingsForm()});
+      const d=r?.data||{};if(d.loginMethods)PUBLIC_SETTINGS={loginMethods:d.loginMethods,supportContact:d.supportContact};publicSettingsDraft=null;applyPublicSettings_();render();showToast('登入方式與客服聯絡已更新');
+    }catch(error){showToast(error.message||'儲存失敗');}
+  });
   $('saveRetentionYearsBtn')?.addEventListener('click',()=>platformSettingsRequest_({action:'set_retention',years:Number($('retentionYearsInput').value)},'保存期限已更新'));
   $('runRetentionNowBtn')?.addEventListener('click',()=>{if(!confirm('立即把超過保存期限的預約與行程匿名化？匿名化後無法還原。'))return;platformSettingsRequest_({action:'run_retention'},d=>`已匿名化 ${d.anonymized?.bookings||0} 筆預約、${d.anonymized?.trips||0} 趟行程`);});
   document.querySelectorAll('.deletion-approve-btn').forEach(btn=>btn.addEventListener('click',()=>{if(!confirm('核准後立即匿名化並停用帳號，無法復原。確定執行？'))return;accountDeletionRequest_({action:'approve',id:btn.dataset.request},'已完成刪除');}));
@@ -6467,7 +6520,7 @@ async function saveStaff(){
 }
 // Google、Facebook 登入（#58）：按鈕連到自己的 API，token 只在 HttpOnly cookie
 const OAUTH_LABELS={google:'Google',facebook:'Facebook'};
-const LOGIN_ERROR_MESSAGES={provider_taken:'這個帳號已經綁定另一個同類型的社群帳號，請先解除再綁定',cancelled:'已取消社群登入',expired:'登入逾時，請再試一次',identity_in_use:'這個社群帳號已經綁定在其他帳號上',account_disabled:'此帳號已停用，請聯絡平台管理者',retry:'請再試一次',failed:'社群登入失敗，請再試一次或改用手機登入'};
+const LOGIN_ERROR_MESSAGES={provider_disabled:'這個登入方式目前沒有開放，請改用手機號碼登入',provider_taken:'這個帳號已經綁定另一個同類型的社群帳號，請先解除再綁定',cancelled:'已取消社群登入',expired:'登入逾時，請再試一次',identity_in_use:'這個社群帳號已經綁定在其他帳號上',account_disabled:'此帳號已停用，請聯絡平台管理者',retry:'請再試一次',failed:'社群登入失敗，請再試一次或改用手機登入'};
 function startSocialLogin_(provider){location.assign(`${APP_CONFIG.oauthStartUrl}?provider=${encodeURIComponent(provider)}`);}
 async function getJson_(url){
   const response=await apiFetch(url,{method:'GET',headers:{Accept:'application/json'},cache:'no-store'});
@@ -6519,7 +6572,7 @@ async function loadLoginMethods_(){
   const body=$('loginMethodsBody');if(!body)return;
   try{
     const d=await getJson_(APP_CONFIG.loginMethodsUrl);
-    body.innerHTML=`<div class="login-method-row"><span>手機＋密碼</span><span class="pill green">使用中</span></div>`+d.social.map(s=>`<div class="login-method-row"><span>${escapeHTML(OAUTH_LABELS[s.provider]||s.provider)}${s.email?`<br><span class="muted small">${escapeHTML(s.email)}</span>`:''}</span>${s.linked?`<button type="button" class="btn outline sm login-method-unlink-btn" data-provider="${escapeHTML(s.provider)}">解除綁定</button>`:`<button type="button" class="btn primary sm login-method-link-btn" data-provider="${escapeHTML(s.provider)}">綁定</button>`}</div>`).join('');
+    body.innerHTML=`<div class="login-method-row"><span>手機＋密碼</span><span class="pill green">使用中</span></div>`+d.social.filter(s=>s.linked||PUBLIC_SETTINGS.loginMethods?.[s.provider]===true).map(s=>`<div class="login-method-row"><span>${escapeHTML(OAUTH_LABELS[s.provider]||s.provider)}${s.email?`<br><span class="muted small">${escapeHTML(s.email)}</span>`:''}</span>${s.linked?`<button type="button" class="btn outline sm login-method-unlink-btn" data-provider="${escapeHTML(s.provider)}">解除綁定</button>`:`<button type="button" class="btn primary sm login-method-link-btn" data-provider="${escapeHTML(s.provider)}">綁定</button>`}</div>`).join('');
     body.querySelectorAll('.login-method-link-btn').forEach(btn=>btn.addEventListener('click',async()=>{
       setButtonBusy(btn,true,'前往中…');
       try{const r=await backendJsonPost(APP_CONFIG.loginMethodsUrl,{action:'link',provider:btn.dataset.provider});location.assign(r.data.url);}
@@ -7142,6 +7195,7 @@ async function bootstrapApplication(){
   renderLoginSecurityState();
   setInterval(()=>{const screen=$('loginScreen');if(screen&&!screen.classList.contains('hidden'))renderLoginSecurityState();},1000);
   if(Identity.currentUser()){$('loginScreen').classList.add('hidden');$('appShell').classList.remove('hidden');setupApp();}
+  await loadPublicSettings_();
   // 從 Google／Facebook 登入回來：錯誤訊息、綁定成功提示，或還沒綁定手機時打開綁定視窗
   await handleOAuthReturn_();
 

@@ -51,7 +51,8 @@ const DRIVER_ID = 'DRV-E2E-1';
 const U = {
   req: { id: 'USR-E2E-REQ', phone: '0922000001', name: '合成需求者' },
   dsp: { id: 'USR-E2E-DSP', phone: '0922000002', name: '合成調度員' },
-  drv: { id: 'USR-E2E-DRV', phone: '0922000003', name: '合成司機' }
+  drv: { id: 'USR-E2E-DRV', phone: '0922000003', name: '合成司機' },
+  root: { id: 'USR-E2E-ROOT', phone: '0922000009', name: '合成平台管理者' }
 };
 const J = JSON.stringify;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -338,7 +339,8 @@ async function seed() {
     insert into users (id, display_name, phone_e164, platform_role, active) values
       ('${U.req.id}','${U.req.name}','+886${U.req.phone.slice(1)}','none',true),
       ('${U.dsp.id}','${U.dsp.name}','+886${U.dsp.phone.slice(1)}','none',true),
-      ('${U.drv.id}','${U.drv.name}','+886${U.drv.phone.slice(1)}','none',true);
+      ('${U.drv.id}','${U.drv.name}','+886${U.drv.phone.slice(1)}','none',true),
+      ('${U.root.id}','${U.root.name}','+886${U.root.phone.slice(1)}','super_admin',true);
     insert into memberships (id, user_id, organization_id, role, status) values
       ('M-E2E-REQ','${U.req.id}','ORG-REQ-001','requester','active'),
       ('M-E2E-DSP','${U.dsp.id}','${ORG}','dispatcher','active'),
@@ -739,6 +741,67 @@ async function flowFamily(cdp, baseUrl, tokens) {
   await finishPage(page, S);
 }
 
+// ================================================================ F. 登入方式開關與客服聯絡（#79）
+async function flowPublicSettings(cdp, baseUrl) {
+  const S = 'F 登入方式與客服聯絡';
+  const line = 'https://lin.ee/synthetic-e2e';
+  const email = 'help-e2e@example.tw';
+  const visible = (id) => `(()=>{const el=document.getElementById(${J(id)});return !!el&&!el.classList.contains('hidden')&&el.offsetParent!==null;})()`;
+  const guest = await openPage(cdp, baseUrl, 'guest-settings');
+  try {
+    await waitFor(guest, visible('oauthGoogleBtn'), 'Google 登入按鈕顯示');
+    record(S, '試營運預設：登入頁有 Google、沒有 Facebook', !(await evaluate(guest, visible('oauthFacebookBtn'))));
+  } catch (e) {
+    record(S, `流程中斷：${e.message}`, false);
+  }
+  await finishPage(guest, S);
+
+  const page = await openPage(cdp, baseUrl, 'root-settings');
+  try {
+    await login(page, U.root);
+    await goView(page, 'platform-organizations');
+    await waitFor(page, "!!document.getElementById('platformPublicSettings')&&!document.getElementById('savePublicSettingsBtn').disabled", '平台設定讀到目前的登入方式與客服聯絡');
+    await evaluate(page, "(()=>{const c=document.getElementById('loginMethodFacebookInput');if(!c.checked)c.click();return true;})()");
+    await typeInto(page, '#supportLineUrlInput', line);
+    await typeInto(page, '#supportEmailInput', email);
+    await click(page, '#savePublicSettingsBtn');
+    const saved = await waitForDb(async () => {
+      const { rows } = await admin.query(`select key, value from app_settings where key in ('login_methods','support_contact')`);
+      const m = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+      return m.login_methods && m.login_methods.facebook === true && m.support_contact && m.support_contact.email === email ? m : null;
+    }, '設定寫入資料庫');
+    record(S, '平台管理者在設定頁打開 Facebook、填寫 LINE 與 Email，寫入資料庫', saved.support_contact.lineUrl === line);
+  } catch (e) {
+    record(S, `流程中斷：${e.message}`, false);
+    await screenshot(page, 'F-root');
+  }
+  await finishPage(page, S);
+
+  const after = await openPage(cdp, baseUrl, 'guest-after-settings');
+  try {
+    await waitFor(after, visible('oauthFacebookBtn'), '重新整理後 Facebook 登入按鈕出現', 10000);
+    record(S, '儲存後重新整理登入頁：Facebook 按鈕出現（不需重新部署）', true);
+    await click(after, '#forgotPasswordBtn');
+    await waitFor(after, `document.getElementById('forgotSupportContact').innerText.includes(${J(email)})`, '忘記密碼顯示客服聯絡', 8000);
+    record(S, '忘記密碼視窗顯示 LINE 官方帳號與客服 Email', await evaluate(after,
+      `!!document.querySelector('#forgotSupportContact a[href=${J(line)}]')&&!!document.querySelector('#forgotSupportContact a[href=${J(`mailto:${email}`)}]')`));
+    await click(after, '#forgotPasswordModal [data-close="forgotPasswordModal"]');
+    await waitFor(after, "!document.getElementById('forgotPasswordModal').classList.contains('open')", '關閉忘記密碼視窗');
+    await login(after, U.req);
+    await goView(after, 'account');
+    record(S, '我的帳戶顯示客服聯絡', await evaluate(after,
+      `!!document.querySelector('#supportContactCard a[href=${J(line)}]')&&document.getElementById('supportContactCard').innerText.includes(${J(email)})`));
+    await after.send('Page.navigate', { url: new URL('legal/privacy.html', baseUrl).href });
+    let shown = true;
+    try { await waitFor(after, `!!document.querySelector('[data-support-email] a[href=${J(`mailto:${email}`)}]')`, '隱私權政策顯示聯絡 Email', 8000); } catch (_) { shown = false; }
+    record(S, '隱私權政策顯示聯絡 Email', shown);
+  } catch (e) {
+    record(S, `流程中斷：${e.message}`, false);
+    await screenshot(after, 'F-guest');
+  }
+  await finishPage(after, S);
+}
+
 // ================================================================ 執行
 (async () => {
   let chrome = null;
@@ -768,6 +831,8 @@ async function flowFamily(cdp, baseUrl, tokens) {
     await flowSchedule(cdp, baseUrl, tokens);
     console.log('--- E：需求者替家人預約 ---');
     await flowFamily(cdp, baseUrl, tokens);
+    console.log('--- F：登入方式開關與客服聯絡 ---');
+    await flowPublicSettings(cdp, baseUrl);
   } catch (e) {
     record('啟動', `端對端環境無法啟動：${e.message}`, false);
   } finally {

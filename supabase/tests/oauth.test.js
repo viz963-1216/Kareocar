@@ -38,6 +38,8 @@ const bind = require(path.join(FN, 'v2-oauth-bind.js'));
 const methods = require(path.join(FN, 'v2-login-methods.js'));
 const login = require(path.join(FN, 'v2-password-login.js'));
 const stateLoad = require(path.join(FN, 'v2-state-load.js'));
+const publicSettings = require(path.join(FN, 'v2-public-settings.js'));
+const platformSettings = require(path.join(FN, 'v2-platform-settings.js'));
 const { getPool } = require(path.join(FN, '_db.js'));
 
 const hookClaims = (authUserId) => {
@@ -82,6 +84,74 @@ async function socialLogin(provider, subject, profile = {}) {
 }
 
 (async () => {
+  console.log('--- 登入方式開關與客服聯絡（#79） ---');
+  const asRoot = `cr_at=${fx.mintAccessToken('USR-ROOT')}`;
+  const asUser = `cr_at=${fx.mintAccessToken('USR-VICTIM')}`;
+  const settingsAs = async (cookie, body) => parse(await post(platformSettings, body, cookie));
+  const pub = async () => parse(await get(publicSettings));
+  await t('未登入可讀公開設定：試營運預設 Google 開、Facebook 關，客服聯絡未填；不含其他平台設定', async () => {
+    const r = await pub();
+    return r.status === 200 && JSON.stringify(Object.keys(r.data).sort()) === '["loginMethods","supportContact"]'
+      && r.data.loginMethods.google === true && r.data.loginMethods.facebook === false
+      && r.data.supportContact.lineUrl === null && r.data.supportContact.email === null;
+  });
+  await t('Facebook 關閉時，開始登入回首頁並帶「未開放」錯誤', async () => {
+    const r = await get(start, { provider: 'facebook' });
+    return r.statusCode === 302 && loc(r) === '/?login_error=provider_disabled';
+  });
+  await t('Facebook 關閉時，我的帳戶不能新綁定 Facebook', async () => {
+    const r = parse(await post(methods, { action: 'link', provider: 'facebook' }, asUser));
+    return r.status === 400 && r.error.code === 'VALIDATION_ERROR';
+  });
+  await t('非平台管理者不能改登入方式與客服聯絡', async () => {
+    const a = await settingsAs(asUser, { action: 'set_login_methods', loginMethods: { google: true, facebook: true } });
+    const b = await settingsAs(asUser, { action: 'set_support_contact', supportContact: { lineUrl: 'https://lin.ee/x', email: 'a@b.tw' } });
+    return a.status === 403 && b.status === 403 && (await pub()).data.loginMethods.facebook === false;
+  });
+  await t('資料庫層：非平台管理者直接呼叫設定函式被拒', async () => {
+    try { sql(`set app.user_id = 'USR-VICTIM'; set role care_ride_app; select app.set_platform_setting('login_methods', '{"google":true,"facebook":true}')`); return false; }
+    catch (e) { return /只有平台超級管理者/.test(String(e.stderr || e.message)); }
+  });
+  await t('客服聯絡格式：LINE 連結必須是 https、Email 要合法，否則拒絕且不寫入', async () => {
+    const a = await settingsAs(asRoot, { action: 'set_support_contact', supportContact: { lineUrl: 'http://lin.ee/x', email: 'help@example.tw' } });
+    const b = await settingsAs(asRoot, { action: 'set_support_contact', supportContact: { lineUrl: 'https://lin.ee/x', email: 'not-an-email' } });
+    return a.status === 400 && b.status === 400 && (await pub()).data.supportContact.lineUrl === null;
+  });
+  await t('平台管理者填寫客服聯絡：公開設定立即反映', async () => {
+    const r = await settingsAs(asRoot, { action: 'set_support_contact', supportContact: { lineUrl: 'https://lin.ee/synthetic', email: 'help@example.tw' } });
+    const p = await pub();
+    return r.status === 200 && p.data.supportContact.lineUrl === 'https://lin.ee/synthetic' && p.data.supportContact.email === 'help@example.tw';
+  });
+  await t('平台管理者打開 Facebook：公開設定反映，開始登入改轉到授權網址', async () => {
+    const r = await settingsAs(asRoot, { action: 'set_login_methods', loginMethods: { google: true, facebook: true } });
+    const s = await get(start, { provider: 'facebook' });
+    return r.status === 200 && r.data.loginMethods.facebook === true && (await pub()).data.loginMethods.facebook === true
+      && s.statusCode === 302 && new URL(loc(s)).searchParams.get('provider') === 'facebook';
+  });
+  await t('兩組一起存：客服聯絡不合格時，登入方式也不會改', async () => {
+    const r = await settingsAs(asRoot, { action: 'set_public_settings', loginMethods: { google: false, facebook: true },
+      supportContact: { lineUrl: 'ftp://bad', email: 'help@example.tw' } });
+    const p = await pub();
+    return r.status === 400 && p.data.loginMethods.google === true;
+  });
+  await t('關掉 Google 與 Facebook：兩者開始登入都被拒；再打開後恢復', async () => {
+    const off = await settingsAs(asRoot, { action: 'set_public_settings', loginMethods: { google: false, facebook: false },
+      supportContact: { lineUrl: 'https://lin.ee/synthetic', email: 'help@example.tw' } });
+    const g = await get(start, { provider: 'google' });
+    const f = await get(start, { provider: 'facebook' });
+    // 下面的社群登入測試需要兩種都開著
+    const on = await settingsAs(asRoot, { action: 'set_login_methods', loginMethods: { google: true, facebook: true } });
+    return off.status === 200 && loc(g) === '/?login_error=provider_disabled' && loc(f) === '/?login_error=provider_disabled'
+      && on.status === 200 && (await pub()).data.loginMethods.google === true;
+  });
+  await t('設定頁讀得到目前的登入方式與客服聯絡', async () => {
+    const r = await settingsAs(asRoot, { action: 'get' });
+    return r.status === 200 && r.data.loginMethods.facebook === true && r.data.supportContact.email === 'help@example.tw';
+  });
+
+  // 以下的社群登入測試需要 Google、Facebook 都開著（試營運預設 Facebook 關）；不依賴上面測試的結果
+  sql(`update app_settings set value = '{"google": true, "facebook": true}' where key = 'login_methods'`);
+
   console.log('--- 開始登入 ---');
   let started;
   await t('不支援的登入方式回首頁並帶錯誤', async () => {

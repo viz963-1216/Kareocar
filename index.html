@@ -35,9 +35,9 @@
         </div>
       </div>
       <button class="btn primary block" id="loginBtn" type="button">登入系統</button>
-      <div class="login-divider"><span>或</span></div>
+      <div class="login-divider" id="loginSocialDivider"><span>或</span></div>
       <button class="btn outline block social-login-btn" id="oauthGoogleBtn" type="button">使用 Google 登入</button>
-      <button class="btn outline block social-login-btn" id="oauthFacebookBtn" type="button">使用 Facebook 登入</button>
+      <button class="btn outline block social-login-btn hidden" id="oauthFacebookBtn" type="button">使用 Facebook 登入</button>
       <button class="btn outline sm block" id="forgotPasswordBtn" type="button">忘記密碼</button>
       <button class="btn secondary sm block" id="openRegisterBtn" type="button">新增帳號</button>
     </div>
@@ -185,6 +185,7 @@
     <li><strong>需求者、機構負責人</strong>：請聯絡平台管理者</li>
   </ul>
   <div class="login-note">拿到臨時密碼後登入，再到「我的帳戶」改密碼。</div>
+  <div id="forgotSupportContact"></div>
 </div></div>
 
 <div class="modal" id="oauthBindModal"><div class="modal-panel small">
