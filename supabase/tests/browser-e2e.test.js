@@ -235,6 +235,25 @@ async function typeInto(page, selector, text) {
   await page.send('Input.insertText', { text });
 }
 
+/**
+ * 背景同步會重畫整個畫面（輸入框失焦、捲動回到頂端）。表單操作用這兩個：
+ * 填完確認值真的在輸入框裡，點擊被捲出畫面就再試。
+ */
+async function typeConfirmed(page, selector, text) {
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    await typeInto(page, selector, text);
+    await sleep(250);
+    if (await evaluate(page, `(document.querySelector(${J(selector)})||{}).value===${J(text)}`)) return;
+  }
+  throw new Error(`${selector} 填不進去`);
+}
+async function clickRetry(page, selector) {
+  for (let attempt = 1; ; attempt++) {
+    try { await click(page, selector); return; }
+    catch (e) { if (attempt >= 3) throw e; await sleep(800); }
+  }
+}
+
 async function setOffline(page, offline) {
   await page.send('Network.emulateNetworkConditions', { offline, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
   await waitFor(page, `navigator.onLine===${!offline}`, offline ? '瀏覽器進入離線' : '瀏覽器恢復連線');
@@ -702,7 +721,7 @@ async function flowFamily(cdp, baseUrl, tokens) {
     await click(page, '.wizard-next-btn[data-next="3"]');
     // 排到第 3 天，避開其他情境留給同一位司機的行程
     await evaluate(page, `(()=>{const d=document.getElementById('rqDate');d.value=${J(dayOffset(3))};d.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
-    await click(page, '.wizard-next-btn[data-next="4"]');
+    await clickRetry(page, '.wizard-next-btn[data-next="4"]');
     let reviewed = true;
     try { await waitFor(page, `document.getElementById('requesterWizardReview').textContent.includes(${J(fam.name)})`, '確認步驟顯示乘車人', 8000); }
     catch (_) { reviewed = false; }
@@ -776,13 +795,10 @@ async function flowPublicSettings(cdp, baseUrl) {
     await goView(page, 'platform-organizations');
     await waitFor(page, "!!document.getElementById('platformPublicSettings')&&!document.getElementById('savePublicSettingsBtn').disabled", '平台設定讀到目前的登入方式與客服聯絡');
     await evaluate(page, "(()=>{const c=document.getElementById('loginMethodFacebookInput');if(!c.checked)c.click();return true;})()");
-    await typeInto(page, '#supportLineUrlInput', line);
-    await typeInto(page, '#supportEmailInput', email);
+    await typeConfirmed(page, '#supportLineUrlInput', line);
+    await typeConfirmed(page, '#supportEmailInput', email);
     // 背景同步重畫畫面時捲動位置會回到頂端（輸入的值會保留），按鈕剛好被捲出畫面就再試一次
-    for (let attempt = 1; ; attempt++) {
-      try { await click(page, '#savePublicSettingsBtn'); break; }
-      catch (e) { if (attempt >= 3) throw e; await sleep(800); }
-    }
+    await clickRetry(page, '#savePublicSettingsBtn');
     const saved = await waitForDb(async () => {
       const { rows } = await admin.query(`select key, value from app_settings where key in ('login_methods','support_contact')`);
       const m = Object.fromEntries(rows.map((r) => [r.key, r.value]));
