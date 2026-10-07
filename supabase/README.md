@@ -142,7 +142,8 @@ SELECT；寫入只經檢查身分與狀態的函式，連有漏洞的 handler �
 | `GET /api/health` | 設定與資料庫連線狀態 |
 | `POST /api/v2/password-login`、`logout`、`session` | 登入、登出、換新 token |
 | `POST /api/v2/register-requester` | 需求者註冊 |
-| `GET /api/v2/oauth-start`、`oauth-callback` | Google、Facebook 登入（PKCE；尚未綁定手機時轉到綁定畫面） |
+| `GET /api/v2/oauth-start`、`oauth-callback` | Google、Facebook 登入（PKCE；尚未綁定手機時轉到綁定畫面；平台設定關閉的方式回 `login_error=provider_disabled`） |
+| `GET /api/v2/public-settings` | 不需登入：啟用的登入方式與客服聯絡（LINE、Email），其他平台設定不會從這裡讀到 |
 | `GET`／`POST /api/v2/oauth-bind` | 社群帳號第一次登入後綁定手機：綁定既有帳號（要密碼，記到 `social_logins`，只確認一次）或建立需求者 |
 | `GET`／`POST /api/v2/login-methods` | 我的帳戶：查看、綁定、解除綁定 Google／Facebook（手機＋密碼一定保留） |
 | `POST /api/v2/admin-reset-password` | 後台重設密碼：平台管理者重設任何人、負責人重設自己機構的調度員與司機；回傳一次性臨時密碼（見 0013） |
@@ -161,7 +162,7 @@ SELECT；寫入只經檢查身分與狀態的函式，連有漏洞的 handler �
 | `POST /api/v2/trip-execute` | 司機執行自己的行程 |
 | `POST /api/v2/benefit-ruleset`、`benefit-assess`、`benefit-authorization` | 補助規則、試算、正式核定 |
 | `POST /api/v2/consent` | 同意個資告知與服務條款 |
-| `POST /api/v2/platform-settings` | 保存期限、條款版本、立即匿名化（平台管理者） |
+| `POST /api/v2/platform-settings` | 保存期限、條款版本、登入方式開關、客服聯絡、立即匿名化（平台管理者） |
 | `POST /api/v2/account-deletion` | 刪除帳號申請與審核 |
 | `POST /api/v2/client-error` | 前端未處理錯誤轉送 Sentry（不需登入，有大小與頻率限制） |
 
@@ -292,6 +293,7 @@ context 沒設定這個變數時，建置會失敗，因為無從判斷。
 ### 同意紀錄與保存期限（#26）
 
 - 條款版本在 `app_settings.legal_documents`，由平台超級管理者經 `/api/v2/platform-settings` 發布。
+- 登入方式開關（`login_methods`，試營運 Facebook 預設關閉）與客服聯絡（`support_contact`）也在 `app_settings`（0015），改了立刻生效；未登入的人只能經 `app.public_settings()` 讀到這兩組。關閉某個登入方式後，`oauth-start` 與我的帳戶的綁定立即拒絕；關閉前已經開始、還在授權頁上的那一次（PKCE cookie 有效期內）仍可完成，不另外擋。
   律師文件完成前版本是 null，不要求同意；發布或改版後，沒同意最新版本的使用者不能建立預約
   （`CONSENT_REQUIRED`），前端會跳出同意視窗，經 `/api/v2/consent` 記錄版本與時間。
 - 保存期限 `app_settings.retention_years`，預設 5 年，可設定 1–30 年。

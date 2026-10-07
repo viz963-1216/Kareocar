@@ -20,6 +20,7 @@ const auth = require('./_auth-pg');
 const supabaseAuth = require('./_supabase-auth');
 const session = require('./_session');
 const oauth = require('./_oauth');
+const { loginMethodEnabled } = require('./_public-settings');
 
 async function currentMethods(claims) {
   const mapped = await withUser(claims.userId, async (client) => {
@@ -64,7 +65,12 @@ exports.handler = async (event) => {
     const provider = supabaseAuth.assertOAuthProvider(body.provider);
 
     if (body.action === 'link') {
-      await withUser(claims.userId, (client) => session.assertSessionActive(client, claims));
+      const enabled = await withUser(claims.userId, async (client) => {
+        await session.assertSessionActive(client, claims);
+        return loginMethodEnabled(client, provider);
+      });
+      // 平台設定關閉的登入方式不能新綁定（#79）；已綁定的仍可解除
+      if (!enabled) throw auth.authError('VALIDATION_ERROR', '這個登入方式目前沒有開放');
       const { verifier, challenge } = supabaseAuth.pkcePair();
       const url = supabaseAuth.authorizeUrl({ provider, redirectTo: oauth.callbackUrl(event), codeChallenge: challenge });
       return withCookies(json(200, { ok: true, data: { url } }),
