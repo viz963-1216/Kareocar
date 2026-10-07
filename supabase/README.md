@@ -22,6 +22,7 @@ API 端點與各項業務規則。部署流程與上線檢查清單見 [DEPLOYME
 | `migrations/0013_admin_password_reset.sql` | 後台重設密碼的權限判斷 `app.password_reset_target`：平台管理者可重設自己以外的任何人；負責人只能重設工作身分全在自己機構的調度員、司機 |
 | `migrations/0014_social_logins.sql` | 社群登入對應 `social_logins`（社群帳號 → 使用者）、綁定／解除／刪除帳號時清除的受控函式、Supabase 的 Custom Access Token Hook（`public.custom_access_token_hook`，加上 `app_user_id`） |
 | `migrations/0016_anonymize_completeness.sql` | 匿名化補齊：預約修改紀錄的快照、服務證明的自由文字與操作收據、行程的地點座標與執行快照、事件紀錄、所有預約都過期（或從沒預約、建立超過期限）的服務對象；核准刪除帳號每筆寫稽核紀錄 |
+| `migrations/0018_anonymize_remaining.sql` | 匿名化補齊（#89）：預約去程／回程的地點只留行政區、執行快照的司機只留 ID、預約的通知內容、到期服務對象的補助試算資料 |
 | `migrations/0017_requester_hub_name.sql` | 系統機構 ORG-REQ-001 改名「需求者群組」（畫面用語統一，#83） |
 | `rollback/<名稱>.down.sql` | 每支 migration 的回復檔（`0001` 的回復會刪除所有資料，只用在空資料庫或 Staging 重建） |
 | `migrations_archive/` | 壓縮成 baseline 之前的 0001–0008，只供查閱，不再套用 |
