@@ -141,12 +141,16 @@ function booking(id, extra = {}) {
   await writeBooking(U.req, booking('BKG-PRV-OLD', { pickupDate: '2015-03-01', recipientId: 'CR-PRV-OLD',
     legs: [{ id: 'BKG-PRV-OLD_outbound', sequence: 1, direction: 'outbound', label: '去程', status: 'pending',
       requestedPickupAt: '2015-03-01T01:00:00.000Z', pickupAddress: '新北市板橋區文化路一段188號', destination: '臺北市中正區公園路20號',
-      pickup: { address: '新北市板橋區文化路一段188號', lat: 25.0123, lng: 121.4567, district: '新北市板橋區' },
-      dropoff: { address: '臺北市中正區公園路20號', lat: 25.0401, lng: 121.5167 } }] }));
+      // 前端 makeLocationSnapshot 的形狀
+      pickup: { addressText: '新北市板橋區文化路一段188號', city: '新北市', district: '板橋區', road: '文化路一段',
+        accessNote: '合成：巷口上車', placeId: 'PLACE-X', lat: 25.0123, lng: 121.4567 },
+      dropoff: { addressText: '臺北市中正區公園路20號', city: '', district: '', lat: 25.0401, lng: 121.5167 } }] }));
   // 通知內容與補助試算（#89）
   await admin.query(`insert into notifications (id, booking_id, recipient_user_id, template, payload, message_summary, status)
     values ('NTF-PRV-OLD', 'BKG-PRV-OLD', $1, 'booking_cancelled', $2::jsonb, '合成摘要：188號', 'sent')`,
     [U.req, JSON.stringify({ bookingId: 'BKG-PRV-OLD', reason: '合成原因：住 188號', pickupDate: '2015-03-01' })]);
+  await admin.query(`insert into notifications (id, trip_id, recipient_user_id, template, payload, status)
+    values ('NTF-PRV-TRIP', 'TRP-PRV-OLD', $1, 'trip_assigned', $2::jsonb, 'sent')`, [U.req, JSON.stringify({ tripId: 'TRP-PRV-OLD', note: '合成：188號' })]);
   await admin.query(`insert into benefit_assessments (id, care_recipient_id, cms_level, identity_category, facts, data)
     values ('BA-PRV-OLD', 'CR-PRV-OLD', '4', 'low_income', '{"cmsLevel": 4, "residenceCity": "新北市"}', '{"facts": {"cmsLevel": 4}}')`);
   await writeBooking(U.req, booking('BKG-PRV-OLD2', { pickupDate: '2015-04-01', recipientId: 'CR-PRV-MIX' }));
@@ -245,11 +249,15 @@ function booking(id, extra = {}) {
       && (await row('bookings', 'BKG-PRV-OLD2')).data.name === null && (await row('bookings', 'BKG-PRV-MIXF')).data.name === '合成王小明');
   const oldLeg = oldAfter.legs[0];
   record('到期預約的去程／回程地點只留行政區（#89）', !JSON.stringify(oldAfter.legs).includes('188號')
-    && !JSON.stringify(oldAfter.legs).includes('25.0123') && oldLeg.pickup.district === '新北市板橋區'
-    && oldLeg.dropoff.district === '台北市中正區' && oldLeg.status === 'pending', JSON.stringify(oldAfter.legs));
+    && !JSON.stringify(oldAfter.legs).includes('25.0123') && !JSON.stringify(oldAfter.legs).includes('巷口')
+    && !JSON.stringify(oldAfter.legs).includes('PLACE-X') && !JSON.stringify(oldAfter.legs).includes('文化路')
+    && JSON.stringify(oldLeg.pickup) === JSON.stringify({ city: '新北市', district: '板橋區' })
+    && JSON.stringify(oldLeg.dropoff) === JSON.stringify({ district: '台北市中正區' }) && oldLeg.status === 'pending', JSON.stringify(oldAfter.legs));
   const oldNtf = (await admin.query(`select payload, message_summary from notifications where id = 'NTF-PRV-OLD'`)).rows[0];
   record('到期預約的通知內容清除，只留關聯 ID（#89）', !JSON.stringify(oldNtf).includes('188號') && oldNtf.payload.bookingId === 'BKG-PRV-OLD'
     && !('reason' in oldNtf.payload) && oldNtf.message_summary === null, JSON.stringify(oldNtf));
+  const tripNtf = (await admin.query(`select payload from notifications where id = 'NTF-PRV-TRIP'`)).rows[0];
+  record('到期行程的通知（沒有預約 ID 的）內容也清除（#89）', JSON.stringify(tripNtf.payload) === JSON.stringify({ tripId: 'TRP-PRV-OLD' }), JSON.stringify(tripNtf));
   const ba = (await admin.query(`select cms_level, identity_category, facts, data from benefit_assessments where id = 'BA-PRV-OLD'`)).rows[0];
   record('匿名化的服務對象：補助試算的事實資料、長照等級、身分別清除（#89）', ba.cms_level === null && ba.identity_category === null
     && JSON.stringify(ba.facts) === '{}' && !('facts' in ba.data), JSON.stringify(ba));

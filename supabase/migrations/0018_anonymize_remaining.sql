@@ -33,11 +33,17 @@ as $$
          (select coalesce(jsonb_agg(case when jsonb_typeof(l) = 'object'
                     then l || jsonb_build_object('pickupAddress', app.approx_area(l->>'pickupAddress'),
                                                  'destination', app.approx_area(l->>'destination'))
-                           -- 地點物件（地址、座標）只留行政區（#89）
-                           || case when jsonb_typeof(l->'pickup') = 'object' then jsonb_build_object('pickup', jsonb_build_object('district',
-                                coalesce(l->'pickup'->>'district', app.approx_area(l->'pickup'->>'address')))) else '{}'::jsonb end
-                           || case when jsonb_typeof(l->'dropoff') = 'object' then jsonb_build_object('dropoff', jsonb_build_object('district',
-                                coalesce(l->'dropoff'->>'district', app.approx_area(l->'dropoff'->>'address')))) else '{}'::jsonb end
+                           -- 地點物件（makeLocationSnapshot：addressText、座標、上車注意事項…）只留縣市與行政區（#89）
+                           || case when jsonb_typeof(l->'pickup') = 'object' then jsonb_build_object('pickup',
+                                jsonb_strip_nulls(jsonb_build_object(
+                                'city', nullif(l->'pickup'->>'city', ''),
+                                'district', coalesce(nullif(l->'pickup'->>'district', ''),
+                                  app.approx_area(coalesce(l->'pickup'->>'addressText', l->'pickup'->>'address')))))) else '{}'::jsonb end
+                           || case when jsonb_typeof(l->'dropoff') = 'object' then jsonb_build_object('dropoff',
+                                jsonb_strip_nulls(jsonb_build_object(
+                                'city', nullif(l->'dropoff'->>'city', ''),
+                                'district', coalesce(nullif(l->'dropoff'->>'district', ''),
+                                  app.approx_area(coalesce(l->'dropoff'->>'addressText', l->'dropoff'->>'address')))))) else '{}'::jsonb end
                     else l end order by ord), '[]'::jsonb)
             from jsonb_array_elements(p_data->'legs') with ordinality as x(l, ord)))
        else '{}'::jsonb end
@@ -130,6 +136,10 @@ begin
      where s.collection = 'trips' and s.id = r.id;
     update app_state e set data = app.anonymize_event_data(e.data)
      where e.collection = 'tripEvents' and coalesce(e.trip_id, e.data->>'tripId') = r.id and not (e.data ? 'anonymizedAt');
+    -- 這趟行程的通知（寄給司機的，沒有預約 ID 的也算）（#89）
+    update notifications n set payload = jsonb_strip_nulls(jsonb_build_object(
+               'bookingId', n.payload->'bookingId', 'tripId', n.payload->'tripId')), message_summary = null, data = '{}'::jsonb
+     where n.trip_id = r.id;
     insert into audit_events (id, event_type, actor_user_id, entity_type, entity_id, reason_code, details)
     values ('AUD-' || replace(gen_random_uuid()::text, '-', ''), 'retention.anonymized', app.current_user_id(),
             'trip', r.id, 'RETENTION_EXPIRED', jsonb_build_object('retentionYears', v_years, 'cutoff', v_cutoff));
@@ -282,7 +292,7 @@ begin
   -- 這些預約的通知（寄給司機、調度等其他人的）內容（#89）；寄給他本人的下面整筆刪除
   update notifications n set payload = jsonb_strip_nulls(jsonb_build_object(
              'bookingId', n.payload->'bookingId', 'tripId', n.payload->'tripId')), message_summary = null, data = '{}'::jsonb
-   where n.booking_id = any(v_bookings);
+   where n.booking_id = any(v_bookings) or n.trip_id = any(v_trip_ids);
   -- 這些預約、行程、服務對象的事件紀錄（修改前後的值、原因、收受人）（#80）
   update app_state e set data = app.anonymize_event_data(e.data)
    where not (e.data ? 'anonymizedAt')
