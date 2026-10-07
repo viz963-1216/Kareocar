@@ -15,8 +15,9 @@ const { toGlossary } = require(path.join(ROOT, 'netlify', 'functions', '_glossar
 const AVOID = ['承接單位', '服務單位', '服務組織', '公司', '組織', '車隊', '業者', '客戶', '會員', '個案', '特約廠商', '合約單位',
   '補貼', '津貼', '訂單', '需求單', '案件', '行程段', '派車單', '趟次', '公開池', '接案池', '公開需求', '搶單', '受理', '派車',
   '建立行程', '併車', '拼車'];
-// 例外：公司的法定名稱（例如「安心交通有限公司」）；車輛群組的資料名稱（「X 車隊」，畫面不顯示，改名時依名稱比對）
-const ALLOWED = [/有限公司/g, /^ 車隊$/];
+// 例外：公司的法定名稱（例如「安心交通有限公司」）；車輛群組的資料名稱（「X 車隊」，畫面不顯示，改名時依名稱比對）；
+// 「指派車輛」是指派＋車輛，不是派車
+const ALLOWED = [/有限公司/g, /^… 車隊$/, /指派車輛/g];
 
 /** 字串字面值的內容（略過註解與正規表示式；樣板字串只取文字部分） */
 function stringLiterals(src) {
@@ -31,13 +32,14 @@ function stringLiterals(src) {
       let j = i + 1; while (j < n && src[j] !== c) { if (src[j] === '\\') j++; j++; }
       out.push(src.slice(i + 1, j)); i = j + 1; lastSig = '"'; lastWord = ''; continue;
     }
-    if (c === '`' || (c === '}' && stack.length && stack[stack.length - 1] === depth)) {
-      if (c === '}') stack.pop();
+    if (c === '`' || (c === '}' && stack.length && stack[stack.length - 1].depth === depth)) {
+      // 樣板字串整段一起檢查（${…} 換成 …），英文詞被 ${} 隔開時才抓得到
+      const frame = c === '}' ? stack.pop() : { depth, parts: [] };
       let j = i + 1; const start = j;
       while (j < n && src[j] !== '`' && !(src[j] === '$' && src[j + 1] === '{')) { if (src[j] === '\\') j++; j++; }
-      out.push(src.slice(start, j));
-      if (src[j] === '`') { i = j + 1; lastSig = '"'; lastWord = ''; continue; }
-      stack.push(depth); i = j + 2; lastSig = '{'; lastWord = ''; continue;
+      frame.parts.push(src.slice(start, j));
+      if (src[j] === '`') { out.push(frame.parts.join('…')); i = j + 1; lastSig = '"'; lastWord = ''; continue; }
+      frame.depth = depth; stack.push(frame); i = j + 2; lastSig = '{'; lastWord = ''; continue;
     }
     if (c === '/' && regexAllowed()) {
       let j = i + 1; let inClass = false;

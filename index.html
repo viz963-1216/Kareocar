@@ -156,7 +156,7 @@
 
 <div class="modal" id="revokeMembershipModal"><div class="modal-panel small">
   <div class="modal-head"><h3>撤銷機構工作帳號</h3><button class="icon-btn" data-close="revokeMembershipModal" type="button" aria-label="關閉視窗">×</button></div>
-  <p id="revokeMembershipText">撤銷後，此人在目前機構的機構身分會失效。</p>
+  <p id="revokeMembershipText">撤銷後，此人在目前機構的工作身分會失效。</p>
   
   <div class="danger-confirm-fields" id="revokeMembershipConfirmFields">
     <div class="form-field"><label for="revokeMembershipReasonInput">撤銷原因</label><textarea id="revokeMembershipReasonInput" placeholder="請說明撤銷原因，供後續稽核"></textarea></div>
@@ -311,7 +311,7 @@
   <div class="form-field form-full"><label for="newPickup">上車地址（含門牌）</label><input id="newPickup" placeholder="臺北市○○區○○路 100 號" /></div>
   <div class="form-field form-full"><label for="newDropoff">目的地（含門牌）</label><input id="newDropoff" placeholder="臺北市○○區○○路 200 號" /></div>
   <div class="form-field"><label for="newPickupAt">預定接送時間</label><input id="newPickupAt" type="datetime-local" /></div>
-  <div class="form-field"><label for="newDriver">指派司機</label><select id="newDriver"></select></div><div class="form-field"><label for="newVehicle">指排車輛</label><select id="newVehicle"></select></div><div class="form-field form-full"><div class="smart-modal-hint" id="driverRecommendHint">尚未計算建議司機與車輛</div></div>
+  <div class="form-field"><label for="newDriver">指派司機</label><select id="newDriver"></select></div><div class="form-field"><label for="newVehicle">指派車輛</label><select id="newVehicle"></select></div><div class="form-field form-full"><div class="smart-modal-hint" id="driverRecommendHint">尚未計算建議司機與車輛</div></div>
   <div class="form-field form-full"><label for="newNeed">特殊需求</label><input id="newNeed" placeholder="例如：手動輪椅、需陪同" /></div>
 </div><div class="modal-actions"><button type="button" class="btn secondary" data-close="createTripModal">取消</button><button type="button" class="btn primary" id="saveTripBtn">排車</button></div></div></div>
 <div class="modal" id="assignModal"><div class="modal-panel small"><div class="modal-head"><h3>指派／改派司機與車輛</h3><button class="icon-btn" data-close="assignModal" type="button" aria-label="關閉視窗">×</button></div><p class="small muted" id="assignTripText"></p><div class="form-grid"><div class="form-field"><label for="assignDriver">選擇司機</label><select id="assignDriver"></select></div><div class="form-field"><label for="assignVehicle">選擇車輛</label><select id="assignVehicle"></select></div></div><div class="modal-actions"><button type="button" class="btn secondary" data-close="assignModal">取消</button><button type="button" class="btn primary" id="saveAssignBtn">儲存指派</button></div></div></div>
@@ -344,7 +344,7 @@
     <div class="form-field"><label for="vehicleCapacityInput">載客量</label><input id="vehicleCapacityInput" type="number" min="1" max="20" value="4" /></div>
     <div class="form-field"><label for="vehicleWheelchairInput">輪椅位</label><input id="vehicleWheelchairInput" type="number" min="0" max="6" value="1" /></div>
     <div class="form-field"><label for="vehicleAccessibleInput">無障礙設備</label><select id="vehicleAccessibleInput"><option value="true">有</option><option value="false">無</option></select></div>
-    <div class="form-field"><label for="vehicleStatusInput">狀態</label><select id="vehicleStatusInput"><option value="available">可排車</option><option value="maintenance">維修／保養中</option><option value="retired">已退役</option></select></div>
+    <div class="form-field"><label for="vehicleStatusInput">狀態</label><select id="vehicleStatusInput"><option value="available">可使用</option><option value="maintenance">維修／保養中</option><option value="retired">已退役</option></select></div>
   </div>
   <div class="smart-modal-hint">「維修中」暫時不能排車；「已退役」永久不能排車。</div>
   <div class="modal-actions"><button type="button" class="btn secondary" data-close="addVehicleModal">取消</button><button type="button" class="btn primary" id="saveVehicleBtn">新增車輛</button></div>
