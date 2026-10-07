@@ -150,21 +150,40 @@ function booking(id, extra = {}) {
         state: 'open', bookingVersion: 1 } })]);
   await revision('BREV-PRV-OLD', 'BKG-PRV-OLD');
   await revision('BREV-PRV-FRESH', 'BKG-PRV-1');
+  // 事件紀錄：修改前後的值、metadata 都可能有個資
+  const event = (collection, id, links, data) => admin.query(
+    `insert into app_state (collection, id, trip_id, booking_id, data) values ($1, $2, $3, $4, $5::jsonb)`,
+    [collection, id, links.tripId || null, links.bookingId || null, JSON.stringify({ id, ...data })]);
+  await event('bookingEvents', 'BEVT-PRV-OLD', { bookingId: 'BKG-PRV-OLD' }, { bookingId: 'BKG-PRV-OLD', eventType: 'amended',
+    reasonText: '合成原因：改到 188號', metadata: { attemptedPickupAddress: '新北市板橋區文化路一段188號' } });
+  await event('tripEvents', 'TEVT-PRV-OLD', { tripId: 'TRP-PRV-OLD' }, { tripId: 'TRP-PRV-OLD', eventType: 'proof_service_captured',
+    metadata: { receiverName: '合成收受人' } });
+  await event('careRecipientEvents', 'CREVT-PRV-OLD', {}, { recipientId: 'CR-PRV-OLD', eventType: 'updated', detail: '更新服務對象主檔',
+    changes: [{ field: '手機', from: '0955666777', to: '0955666778' }] });
+  // 從沒預約過的服務對象：建立超過保存期限才匿名化
+  const zero = recipient('CR-PRV-ZERO').record;
+  await admin.query(`insert into app_state (collection, id, owner_user_id, data, created_at) values ('careRecipients', 'CR-PRV-ZERO', $1, $2::jsonb, '2015-01-01')`,
+    [U.req, JSON.stringify(zero)]);
+  await call(mutateFn.handler, 'POST', U.req, { changes: [recipient('CR-PRV-NEWZERO')] });
   const oldBefore = (await row('bookings', 'BKG-PRV-OLD')).data;
   const trip = F.makeTrip({ id: 'TRP-PRV-OLD', organizationId: 'ORG-REQ-001', driverId: null, vehicleId: null, bookingId: 'BKG-PRV-OLD',
     startAt: '2015-03-01T01:00:00.000Z', extra: { status: 'completed', locationSamples: [{ lat: 25.01, lng: 121.46 }],
       serviceProofs: [{ id: 'P1', status: 'active', receiverName: '合成收受人', photo: { objectKey: 'k' }, stepId: 'x',
         note: '合成服務證明備註：交給鄰居', supersededReason: '合成更正原因：簽錯人' }],
-      executionSnapshots: [{ id: 'SNAP1', passengers: [{ name: '合成乘客快照', phone: '0911222333',
-        careRecipient: { displayName: '合成長輩快照', primaryPhone: '0955666777' },
-        locations: { pickup: { address: '新北市板橋區文化路一段188號' } } }] }] } });
+      mutationReceipts: [{ key: 'proof_service:TRP-PRV-OLD:x:合成收受人:r1' }],
+      pickupLocation: { address: '新北市板橋區文化路一段188號', lat: 25.01, lng: 121.46 },
+      executionSnapshots: [{ id: 'SNAP1', needsSummary: '合成需求摘要', route: { pickupAddress: '新北市板橋區文化路一段188號' },
+        passengers: [{ name: '合成乘客快照', phone: '0911222333',
+          careRecipient: { displayName: '合成長輩快照', primaryPhone: '0955666777' },
+          leg: { pickup: { address: '新北市板橋區文化路一段188號', lat: 25.01 } },
+          locations: { pickup: { address: '新北市板橋區文化路一段188號' } } }] }] } });
   await admin.query(`insert into app_state (collection, id, data) values ('trips', 'TRP-PRV-OLD', $1::jsonb)`, [JSON.stringify(trip)]);
   const reqRun = await db.withUser(U.req, (c) => c.query('select * from app.anonymize_expired_records()')).then(() => 'allowed', (e) => e.code);
   record('一般使用者不能執行匿名化', reqRun === '42501', reqRun);
   const res = await scheduled.handler({});
   const body = JSON.parse(res.body);
   record('每日排程執行成功', res.statusCode === 200 && body.anonymized.bookings === 2 && body.anonymized.trips === 1
-    && body.anonymized.bookingRevisions === 1 && body.anonymized.careRecipients === 1, res.body);
+    && body.anonymized.bookingRevisions === 1 && body.anonymized.careRecipients === 2, res.body);
   const oldAfter = (await row('bookings', 'BKG-PRV-OLD')).data;
   record('到期預約：姓名、電話、完整地址、自由文字清除', oldAfter.name === null && oldAfter.phone === null
     && oldAfter.pickupAddress === '新北市板橋區' && oldAfter.destination === '臺北市中正區' && !('specialNeed' in oldAfter)
@@ -179,8 +198,10 @@ function booking(id, extra = {}) {
   record('到期行程：乘客姓名、電話、地址、定位軌跡、服務證明收受人與照片清除', !('locationSamples' in tripAfter)
     && tripAfter.passengers.every((p) => p.name === '' && p.phone === '') && tripAfter.serviceProofs[0].receiverName === null
     && !('photo' in tripAfter.serviceProofs[0]) && tripAfter.date === '2015-03-01' && tripAfter.status === 'completed');
-  record('到期行程：服務證明的自由文字（備註、更正原因）與執行快照裡的乘客個資清除',
+  record('到期行程：服務證明的自由文字、操作收據的收受人、地點座標、執行快照的乘客個資與路線清除',
     !JSON.stringify(tripAfter).includes('合成服務證明備註') && !JSON.stringify(tripAfter).includes('合成更正原因')
+      && !JSON.stringify(tripAfter).includes('合成收受人') && !JSON.stringify(tripAfter).includes('121.46')
+      && !JSON.stringify(tripAfter).includes('合成需求摘要')
       && !JSON.stringify(tripAfter).includes('合成乘客快照') && !JSON.stringify(tripAfter).includes('合成長輩快照')
       && !JSON.stringify(tripAfter).includes('0955666777') && !JSON.stringify(tripAfter).includes('188號')
       && tripAfter.serviceProofs[0].status === 'active' && tripAfter.executionSnapshots.length === 1, JSON.stringify(tripAfter.serviceProofs[0]));
@@ -198,6 +219,14 @@ function booking(id, extra = {}) {
       && !JSON.stringify(crOld).includes('合成備註') && !JSON.stringify(crOld).includes('合成緊急聯絡人')
       && crOld.addresses.district === '新北市板橋區' && crOld.identity.gender === 'female'
       && crOld.mobility.wheelchairType === 'manual' && crOld.status === 'active' && Boolean(crOld.anonymizedAt), JSON.stringify(crOld));
+  record('從沒預約、建立超過保存期限的服務對象匿名化；剛建立的不動',
+    !JSON.stringify((await row('careRecipients', 'CR-PRV-ZERO')).data).includes('0955666777')
+      && (await row('careRecipients', 'CR-PRV-NEWZERO')).data.contacts.primaryPhone === '0955666777');
+  const evAfter = await Promise.all([['bookingEvents', 'BEVT-PRV-OLD'], ['tripEvents', 'TEVT-PRV-OLD'], ['careRecipientEvents', 'CREVT-PRV-OLD']]
+    .map(async ([c, i]) => (await row(c, i)).data));
+  record('匿名化的預約、行程、服務對象的事件紀錄：metadata、修改前後的值、原因清除，保留事件類型',
+    evAfter.every((e) => Boolean(e.anonymizedAt) && e.eventType) && !JSON.stringify(evAfter).includes('188號')
+      && !JSON.stringify(evAfter).includes('合成收受人') && !JSON.stringify(evAfter).includes('0955666'), JSON.stringify(evAfter));
   const crMix = (await row('careRecipients', 'CR-PRV-MIX')).data;
   record('還有未到期預約的服務對象不被匿名化（它過期的那筆預約照常匿名化）',
     crMix.identity.displayName === '合成長輩CR-PRV-MIX' && crMix.contacts.primaryPhone === '0955666777' && !crMix.anonymizedAt
@@ -205,9 +234,9 @@ function booking(id, extra = {}) {
   const fresh = (await row('bookings', 'BKG-PRV-1')).data;
   record('未到期資料不受影響', fresh.name === '合成王小明' && fresh.phone === '0911222333' && !fresh.anonymizedAt);
   const auditRows = (await admin.query(`select entity_type, entity_id, details from audit_events where event_type = 'retention.anonymized' order by entity_type`)).rows;
-  record('每筆匿名化都寫稽核紀錄（含保存期限）：2 筆預約、1 趟行程、1 筆修改紀錄、1 位服務對象',
-    auditRows.length === 5 && auditRows.every((a) => a.details.retentionYears === 3)
-      && JSON.stringify(auditRows.map((a) => a.entity_type).sort()) === JSON.stringify(['booking', 'booking', 'booking_revision', 'care_recipient', 'trip']),
+  record('每筆匿名化都寫稽核紀錄（含保存期限）：2 筆預約、1 趟行程、1 筆修改紀錄、2 位服務對象',
+    auditRows.length === 6 && auditRows.every((a) => a.details.retentionYears === 3)
+      && JSON.stringify(auditRows.map((a) => a.entity_type).sort()) === JSON.stringify(['booking', 'booking', 'booking_revision', 'care_recipient', 'care_recipient', 'trip']),
     JSON.stringify(auditRows.map((a) => `${a.entity_type}:${a.entity_id}`)));
   const again = await settings(U.root, { action: 'run_retention' });
   record('平台管理者手動執行：已匿名化的不會重複處理', again.status === 200 && again.data.anonymized.bookings === 0 && again.data.anonymized.trips === 0
@@ -228,6 +257,8 @@ function booking(id, extra = {}) {
     startAt: '2025-05-01T01:00:00.000Z', extra: { status: 'completed',
       serviceProofs: [{ id: 'PD1', status: 'active', receiverName: '合成刪除者', stepId: 'x', note: '合成刪除者的證明備註' }] } });
   await admin.query(`insert into app_state (collection, id, booking_id, data) values ('trips', 'TRP-DEL-P', 'BKG-DEL-P', $1::jsonb)`, [JSON.stringify(delTrip)]);
+  await event('tripEvents', 'TEVT-DEL-P', { tripId: 'TRP-DEL-P' }, { tripId: 'TRP-DEL-P', eventType: 'proof_service_captured', metadata: { receiverName: '合成刪除者' } });
+  await event('careRecipientEvents', 'CREVT-DEL-1', {}, { recipientId: 'CR-DEL-1', eventType: 'updated', changes: [{ field: '手機', from: '0933000111', to: '0933000112' }] });
   const rootReq = await del(U.root, { action: 'request' });
   record('平台管理者不能經申請刪除自己', rootReq.status === 400, outcome(rootReq));
   const r1 = await del(U.req2, { action: 'request', reason: '不再使用' });
@@ -271,6 +302,13 @@ function booking(id, extra = {}) {
   const delTripAfter = (await row('trips', 'TRP-DEL-P')).data;
   record('核准刪除：這位使用者預約的服務證明簽收人與備註清除', delTripAfter.serviceProofs[0].receiverName === null
     && !JSON.stringify(delTripAfter).includes('合成刪除者的證明備註'), JSON.stringify(delTripAfter.serviceProofs[0]));
+  const delEvents = [(await row('tripEvents', 'TEVT-DEL-P')).data, (await row('careRecipientEvents', 'CREVT-DEL-1')).data];
+  record('核准刪除：行程與服務對象的事件紀錄清除', !JSON.stringify(delEvents).includes('合成刪除者') && !JSON.stringify(delEvents).includes('0933000111'),
+    JSON.stringify(delEvents));
+  const perRow = (await admin.query(`select entity_type from audit_events where event_type = 'account.deletion_anonymized' and details->>'deletionRequestId' = $1`, [REQ])).rows
+    .map((a) => a.entity_type).sort();
+  record('核准刪除：預約、修改紀錄、行程、服務對象每一筆都寫稽核紀錄',
+    JSON.stringify(perRow) === JSON.stringify(['booking', 'booking', 'booking_revision', 'care_recipient', 'trip']), JSON.stringify(perRow));
   const cr = (await admin.query(`select deleted, data from app_state where collection = 'careRecipients' and id = 'CR-DEL-1'`)).rows[0];
   record('服務對象清除內容並標記刪除', cr.deleted === true && !JSON.stringify(cr.data).includes('0933000111'));
   const u = (await admin.query('select active, display_name, phone_e164, email from users where id = $1', [U.req2])).rows[0];

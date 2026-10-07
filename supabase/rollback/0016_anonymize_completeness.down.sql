@@ -163,5 +163,6 @@ begin
 end $$;
 grant execute on function app.review_account_deletion(text, text, text) to care_ride_app;
 
+drop function if exists app.anonymize_event_data(jsonb);
 drop function if exists app.anonymize_recipient_data(jsonb);
 drop function if exists app.anonymize_booking_revision_data(jsonb);
