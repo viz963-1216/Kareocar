@@ -164,7 +164,10 @@ function booking(id, extra = {}) {
   const del = (userId, body) => call(deletionFn.handler, 'POST', userId, body);
   for (const [doc, ver] of [['privacy_notice', '2026-10'], ['terms', '2027-01']]) await consent(U.req2, { action: 'accept', document: doc, version: ver });
   await call(mutateFn.handler, 'POST', U.req2, { changes: [{ collection: 'careRecipients', id: 'CR-DEL-1',
-    record: { id: 'CR-DEL-1', identity: { displayName: '合成被刪除長輩' }, contacts: { primaryPhone: '0933000111' } } }] });
+    record: { id: 'CR-DEL-1', identity: { displayName: '合成被刪除長輩' }, contacts: { primaryPhone: '0933000111' } } },
+  // 預約端點要求需求者對服務對象有可預約的關係（#78）
+  { collection: 'careRecipientRelations', id: 'CRR-DEL-1',
+    record: { id: 'CRR-DEL-1', userId: U.req2, recipientId: 'CR-DEL-1', relationship: 'self', canBook: true, status: 'active' } }] });
   await writeBooking(U.req2, booking('BKG-DEL-F', { requestedByUserId: U.req2, recipientId: 'CR-DEL-1', name: '合成刪除者', phone: '0933000111' }));
   await writeBooking(U.req2, booking('BKG-DEL-P', { requestedByUserId: U.req2, recipientId: 'CR-DEL-1', name: '合成刪除者', phone: '0933000111', pickupDate: '2025-05-01' }));
   const rootReq = await del(U.root, { action: 'request' });
