@@ -17,6 +17,7 @@
  *   - 不能排車：排車只走 v2-schedule-trips（ADR 0003），去程／回程的排車欄位一律沿用資料庫的值
  *   - 預約帶服務對象（recipientId）時，需求者必須是這位服務對象的建立者、且有未撤銷的可預約關係；
  *     承接機構的負責人或調度員不受此限（#78）
+ *   - 替家人預約時的聯絡人（contacts.requester）由伺服器依登入的需求者寫入，之後沿用資料庫的值（#82）
  *
  * 整批在同一筆交易裡，任何一筆不合規則就整批不寫入。
  */
@@ -80,6 +81,28 @@ async function assertRecipientBookable(client, { actorUserId, record, existing, 
   if (!rows.length) throw auth.authError('FORBIDDEN', '不能替這位服務對象預約');
 }
 
+/** 0912345678 形式（前端與預約的電話都是這個形式） */
+const localPhone = (e164) => { const d = text(e164).replace(/\D/g, ''); return d.startsWith('886') ? `0${d.slice(3)}` : d; };
+
+/**
+ * 替家人預約的聯絡人（#82）。前端送來的姓名、電話一律不採用：新預約由需求者自己建立、
+ * 而且要求聯絡人時，用登入者的帳號資料；修改時沿用資料庫的值。
+ */
+async function applyRequesterContact(client, { actorUserId, record, existing }) {
+  const asked = record.contacts && typeof record.contacts === 'object' && record.contacts.requester;
+  const before = existing && existing.data && existing.data.contacts && existing.data.contacts.requester;
+  let requester = null;
+  if (existing) requester = before || null;
+  else if (asked && !text(record.organizationId)) {
+    const u = (await client.query('select display_name, phone_e164 from users where id = $1', [actorUserId])).rows[0];
+    if (u) requester = { userId: actorUserId, name: text(u.display_name), phone: localPhone(u.phone_e164) };
+  }
+  const contacts = { ...(record.contacts && typeof record.contacts === 'object' ? record.contacts : {}) };
+  delete contacts.requester;
+  if (requester) contacts.requester = requester;
+  if (Object.keys(contacts).length) record.contacts = contacts; else delete record.contacts;
+}
+
 async function isOps(client, organizationId) {
   if (!organizationId) return false;
   const { rows } = await client.query(`select app.has_role_in($1, array['owner','dispatcher']) as ok`, [organizationId]);
@@ -140,6 +163,7 @@ exports.handler = async (event) => {
         }
         const record = checked.record;
         await assertRecipientBookable(client, { actorUserId: claims.userId, record, existing, roles });
+        await applyRequesterContact(client, { actorUserId: claims.userId, record, existing });
         await applyServerBookingFields(client, id, record);
         const benefitRepriced = await applyServerBenefit(client, record, existing);
 

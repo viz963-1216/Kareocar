@@ -662,6 +662,85 @@ async function flowSchedule(cdp, baseUrl, tokens) {
   await finishPage(page, S);
 }
 
+// ================================================================ E. 替家人預約（#82）
+async function flowFamily(cdp, baseUrl, tokens) {
+  const S = 'E 替家人預約';
+  const fam = { name: '合成家人王媽媽', phone: '0933111222', address: '新北市板橋區中山路一段161號', aid: '手動輪椅', special: '需協助上下車' };
+  const destination = '台北市中正區常德街1號';
+  const page = await openPage(cdp, baseUrl, 'requester-family');
+  try {
+    await login(page, U.req);
+    await goView(page, 'account');
+    await click(page, '#addFamilyBtn');
+    await waitFor(page, "document.getElementById('careRecipientEditModal').classList.contains('open')", '新增家人視窗開啟');
+    await typeInto(page, '#crNameInput', fam.name);
+    await typeInto(page, '#crPhoneInput', fam.phone);
+    await typeInto(page, '#crAddressInput', fam.address);
+    await typeInto(page, '#crDefaultAidInput', fam.aid);
+    await typeInto(page, '#crDefaultSpecialInput', fam.special);
+    await click(page, '#saveCareRecipientBtn');
+    await waitFor(page, `document.querySelector('#familyList')&&document.querySelector('#familyList').innerText.includes(${J(fam.name)})`, '我的家人列出新家人');
+    const recipient = await waitForDb(async () => {
+      const { rows } = await admin.query(`select id, owner_user_id, data from app_state where collection = 'careRecipients' and data->'identity'->>'displayName' = $1`, [fam.name]);
+      return rows[0] || null;
+    }, '家人寫入資料庫');
+    const relation = await waitForDb(async () => {
+      const { rows } = await admin.query(`select owner_user_id, data from app_state where collection = 'careRecipientRelations' and data->>'recipientId' = $1`, [recipient.id]);
+      return rows[0] || null;
+    }, '家屬關係寫入資料庫');
+    record(S, '新增家人：建立服務對象（需求者建立）與一筆可預約、可管理、主要聯絡人的家屬關係',
+      recipient.owner_user_id === U.req.id && relation.owner_user_id === U.req.id && relation.data.userId === U.req.id
+        && relation.data.relationship === 'family' && relation.data.canBook === true && relation.data.canManageProfile === true
+        && relation.data.isPrimaryContact === true, J(relation.data));
+
+    await goView(page, 'requester-new');
+    await click(page, `[data-recipient-choice=${J(recipient.id)}]`);
+    await click(page, '.wizard-next-btn[data-next="2"]');
+    record(S, '選了家人後，上車地址預設為家人的住址', await evaluate(page, `document.getElementById('rqPickup').value===${J(fam.address)}`),
+      await evaluate(page, "document.getElementById('rqPickup').value"));
+    await typeInto(page, '#rqDestination', destination);
+    await click(page, '.wizard-next-btn[data-next="3"]');
+    await click(page, '.wizard-next-btn[data-next="4"]');
+    let reviewed = true;
+    try { await waitFor(page, `document.getElementById('requesterWizardReview').textContent.includes(${J(fam.name)})`, '確認步驟顯示乘車人', 8000); }
+    catch (_) { reviewed = false; }
+    record(S, '確認步驟的乘車人是家人', reviewed, reviewed ? '' : await evaluate(page, "document.getElementById('requesterWizardReview').textContent"));
+    await click(page, '#submitRequesterBookingBtn');
+    const booking = await waitForDb(async () => {
+      const { rows } = await admin.query(`select id, owner_user_id, data from app_state where collection = 'bookings' and data->>'recipientId' = $1`, [recipient.id]);
+      return rows[0] || null;
+    }, '家人的預約寫入資料庫');
+    const d = booking.data;
+    record(S, '資料庫的預約是家人：服務對象、乘車人姓名與電話是家人，需求者是聯絡人',
+      d.requestedByUserId === U.req.id && d.name === fam.name && d.phone === fam.phone
+        && d.contacts && d.contacts.requester && d.contacts.requester.name === U.req.name, J({ name: d.name, phone: d.phone, contacts: d.contacts }));
+    await waitFor(page, "!!document.querySelector('.nav-btn.active[data-view=\"requester-bookings\"]')", '送出後回到我的預約');
+    record(S, '我的預約顯示這筆是替家人預約（乘車人是家人、標示「家人」）', await evaluate(page,
+      `[...document.querySelectorAll('main .list-item h4')].some((h)=>h.innerText.includes(${J(fam.name)})&&h.innerText.includes('家人'))`));
+
+    const claimed = await claimBooking.handler({ httpMethod: 'POST', headers: { host: '127.0.0.1', cookie: `cr_at=${tokens.dsp}` },
+      body: J({ bookingId: booking.id, organizationId: ORG }) });
+    record(S, '（資料準備）調度接案', claimed.statusCode === 200, claimed.body);
+    const dsp = await openPage(cdp, baseUrl, 'dispatcher-family');
+    try {
+      await login(dsp, U.dsp);
+      await goView(dsp, 'dispatch-home');
+      await evaluate(dsp, `(()=>{const el=document.getElementById('operationDateInput');el.value=${J(d.pickupDate)};el.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+      let shown = true;
+      try { await waitFor(dsp, `document.querySelector('main').innerText.includes(${J(fam.name)})`, '調度畫面顯示家人', 10000); } catch (_) { shown = false; }
+      const text = await evaluate(dsp, "document.querySelector('main').innerText");
+      record(S, '調度畫面顯示服務對象（家人）的姓名與需求，需求者為聯絡人',
+        shown && text.includes(fam.aid) && text.includes(`聯絡人：${U.req.name}`), shown ? '' : text.slice(0, 400));
+    } finally {
+      await finishPage(dsp, S);
+    }
+  } catch (e) {
+    record(S, `流程中斷：${e.message}`, false);
+    await screenshot(page, 'E-family');
+  }
+  await finishPage(page, S);
+}
+
 // ================================================================ F. 登入方式開關與客服聯絡（#79）
 async function flowPublicSettings(cdp, baseUrl) {
   const S = 'F 登入方式與客服聯絡';
@@ -685,7 +764,11 @@ async function flowPublicSettings(cdp, baseUrl) {
     await evaluate(page, "(()=>{const c=document.getElementById('loginMethodFacebookInput');if(!c.checked)c.click();return true;})()");
     await typeInto(page, '#supportLineUrlInput', line);
     await typeInto(page, '#supportEmailInput', email);
-    await click(page, '#savePublicSettingsBtn');
+    // 背景同步重畫畫面時捲動位置會回到頂端（輸入的值會保留），按鈕剛好被捲出畫面就再試一次
+    for (let attempt = 1; ; attempt++) {
+      try { await click(page, '#savePublicSettingsBtn'); break; }
+      catch (e) { if (attempt >= 3) throw e; await sleep(800); }
+    }
     const saved = await waitForDb(async () => {
       const { rows } = await admin.query(`select key, value from app_settings where key in ('login_methods','support_contact')`);
       const m = Object.fromEntries(rows.map((r) => [r.key, r.value]));
@@ -750,6 +833,8 @@ async function flowPublicSettings(cdp, baseUrl) {
     await flowCancel(cdp, baseUrl, tokens);
     console.log('--- D：調度在畫面上排車 ---');
     await flowSchedule(cdp, baseUrl, tokens);
+    console.log('--- E：需求者替家人預約 ---');
+    await flowFamily(cdp, baseUrl, tokens);
     console.log('--- F：登入方式開關與客服聯絡 ---');
     await flowPublicSettings(cdp, baseUrl);
   } catch (e) {
