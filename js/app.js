@@ -496,6 +496,8 @@ const AUTHORITATIVE_STATE_COLLECTIONS=Object.freeze([
 // 這三個集合有自己的 typed 資料表，寫入走 identity-write 而不是 state-mutate。
 // users 不在裡面：建立帳號只能透過註冊或建立員工的端點。
 const IDENTITY_WRITE_COLLECTIONS=new Set(['organizations','memberships','drivers']);
+// 預約端點會查服務對象屬於需求者（#78），所以這兩種要比預約先送
+const RECIPIENT_FIRST_COLLECTIONS=new Set(['careRecipients','careRecipientRelations']);
 const AUTHORITATIVE_QUEUE_KEY=`${APP_CONFIG.storageKey}:authoritativeQueue:v1`;
 const authoritativeQueue=new Map();
 let authoritativeFlushTimer=null,authoritativeFlushInFlight=false,authoritativeLastError='',authoritativeLastAckAt=null;
@@ -537,7 +539,6 @@ function updateAuthoritativeWriteUI_(){
   if(pending){el.classList.remove('hidden');el.style.background='#fff7e8';el.style.borderColor='#efc27d';el.style.color='#7b520d';el.textContent=`正在將 ${pending} 筆操作寫入正式資料庫；完成前請不要關閉頁面。`;return;}
   el.classList.add('hidden');el.textContent='';
 }
-const RECIPIENT_FIRST_COLLECTIONS=new Set(['careRecipients','careRecipientRelations']);
 async function authoritativeFlush_(){
   if(authoritativeFlushInFlight){
     const started=Date.now();while(authoritativeFlushInFlight&&Date.now()-started<12000)await new Promise(resolve=>setTimeout(resolve,25));
@@ -556,8 +557,7 @@ async function authoritativeFlush_(){
     const payload=rows.map(({collection,id,record,deleted,expectedRevision})=>({collection,id,record,deleted,expectedRevision}));
     // 預約走預約端點：伺服器檢查狀態轉換、計算地址欄位、轉手時撤銷原機構存取。
     // 行程走行程端點：檢查機構歸屬、司機、車輛與狀態轉換。
-    // 依序送出：服務對象 → 預約 → 行程 → 其他資料。排車不走這裡，一律送 schedule-trips（ADR 0003）。
-    // 服務對象與關係要先存好，預約端點才查得到這位服務對象屬於需求者（#78）。
+    // 依序送出：身分 → 服務對象 → 預約 → 行程 → 其他資料。排車不走這裡，一律送 schedule-trips（ADR 0003）。
     const identityRows=payload.filter(x=>IDENTITY_WRITE_COLLECTIONS.has(x.collection));
     const recipientRows=payload.filter(x=>RECIPIENT_FIRST_COLLECTIONS.has(x.collection));
     const bookingRows=payload.filter(x=>x.collection==='bookings');

@@ -31,6 +31,8 @@ const benefit = require('./_benefit');
 
 const MAX_CHANGES = 50;
 const text = (v) => String(v === undefined || v === null ? '' : v).trim();
+/** 新預約，或修改時換了服務對象 */
+const recipientChanged = (record, existing) => !existing || text((existing.data || {}).recipientId) !== text(record.recipientId);
 
 /**
  * 補助估算由伺服器計算（#23）：新預約、改了日期或服務對象時，依當下唯一 approved 的規則
@@ -42,7 +44,7 @@ async function applyServerBenefit(client, record, existing) {
   const previous = before && before.serverComputed && before.serverComputed.benefit;
   const stale = !previous || !before
     || String(before.pickupDate || '') !== String(record.pickupDate || '')
-    || String(before.recipientId || '') !== String(record.recipientId || '');
+    || recipientChanged(record, existing);
   const result = stale ? await benefit.bookingBenefit(client, record) : previous;
   record.serverComputed = { ...(record.serverComputed || {}), benefit: result };
   if (Array.isArray(record.commercialSnapshots)) {
@@ -54,15 +56,15 @@ async function applyServerBenefit(client, record, existing) {
 
 /**
  * 預約上的服務對象必須屬於這位需求者（#78）。新預約或改了服務對象時檢查；
- * 沒改服務對象的修改沿用原本的檢查結果。
+ * 沒改服務對象的修改沿用原本的檢查結果（關係事後撤銷，已建立的預約仍可修改或取消）。
+ * 服務對象要是使用中（不是已封存或已合併），關係的 canBook 沒寫視為可預約（與前端相同）。
  *
  * 關係（careRecipientRelations）走一般寫入端點，任何人都能替自己寫一筆指向別人服務對象的
  * 關係，所以除了關係之外，服務對象本身也必須是呼叫者建立的（替家人預約：只有建立者管理）。
  */
 async function assertRecipientBookable(client, { actorUserId, record, existing, roles }) {
   const recipientId = text(record.recipientId);
-  if (!recipientId) return;
-  if (existing && text((existing.data || {}).recipientId) === recipientId) return;
+  if (!recipientId || !recipientChanged(record, existing)) return;
   if (roles.admin || (existing ? roles.opsOfExisting : roles.opsOfClaimedOrg)) return;
   const { rows } = await client.query(
     `select 1
@@ -71,8 +73,9 @@ async function assertRecipientBookable(client, { actorUserId, record, existing, 
                          and rel.owner_user_id = $1
                          and rel.data->>'userId' = $1 and rel.data->>'recipientId' = r.id
                          and coalesce(rel.data->>'status', 'active') <> 'revoked'
-                         and rel.data->>'canBook' = 'true'
+                         and coalesce(rel.data->>'canBook', 'true') <> 'false'
       where r.collection = 'careRecipients' and r.id = $2 and not r.deleted and r.owner_user_id = $1
+        and coalesce(r.data->>'status', 'active') = 'active'
       limit 1`, [actorUserId, recipientId]);
   if (!rows.length) throw auth.authError('FORBIDDEN', '不能替這位服務對象預約');
 }

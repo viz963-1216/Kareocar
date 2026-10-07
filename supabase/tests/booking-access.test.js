@@ -308,6 +308,17 @@ async function newClaimed(id) {
   record('承接機構的調度修改已承接預約：照常成功', opsEdit.status === 200, outcome(opsEdit));
   const ownerEdit = await writeBooking(U.req, { ...(await row('bookings', 'BKG-ACC-R1')).data, pickupTime: '11:00' });
   record('需求者修改自己替自己的預約：照常成功', ownerEdit.status === 200, outcome(ownerEdit));
+  const toMom = await writeBooking(U.req, { ...(await row('bookings', 'BKG-ACC-R1')).data, recipientId: 'CR-ACC-MOM' });
+  record('需求者把預約改成自己另一位可預約的服務對象：成功', toMom.status === 200, outcome(toMom));
+  const legacy = await mutate(U.req, [recipient('CR-ACC-UNCLE'), relation('CRR-ACC-UNCLE', U.req, 'CR-ACC-UNCLE', { canBook: undefined })]);
+  const legacyBooking = await writeBooking(U.req, booking('BKG-ACC-R8', { recipientId: 'CR-ACC-UNCLE' }));
+  record('舊資料的關係沒寫 canBook：視為可預約（與前端相同）', legacy.status === 200 && legacyBooking.status === 200, outcome(legacyBooking));
+  await mutate(U.req, [{ ...recipient('CR-ACC-UNCLE'), record: { ...recipient('CR-ACC-UNCLE').record, status: 'archived' } }]);
+  const archived = await writeBooking(U.req, booking('BKG-ACC-R9', { recipientId: 'CR-ACC-UNCLE' }));
+  record('服務對象已封存：被拒、沒有寫入', archived.status === 403 && !(await row('bookings', 'BKG-ACC-R9')), outcome(archived));
+  const opsCreate = await writeBooking(U.dspA, booking('BKG-ACC-R10', { requestedByUserId: null, state: 'claimed', claimStatus: 'claimed',
+    status: 'claimed', organizationId: ORG_A, recipientId: 'CR-ACC-MOM' }));
+  record('機構自行建立（電話預約）帶服務對象：不受需求者關係限制', opsCreate.status === 200, outcome(opsCreate));
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n結果：${results.length - failed.length} 通過 / ${failed.length} 失敗`);
