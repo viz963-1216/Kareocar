@@ -25,4 +25,11 @@ async function retentionYears(client) {
   return Number.isInteger(n) && n > 0 ? n : 5;
 }
 
-module.exports = { legalDocuments, consentStatus, retentionYears };
+/** app.anonymize_expired_records() 回傳的列 → 各類各匿名化了幾筆 */
+function anonymizedSummary(rows) {
+  const count = (kind) => rows.filter((r) => r.kind === kind).length;
+  return { bookings: count('booking'), trips: count('trip'), bookingRevisions: count('booking_revision'),
+    careRecipients: count('care_recipient') };
+}
+
+module.exports = { legalDocuments, consentStatus, retentionYears, anonymizedSummary };
