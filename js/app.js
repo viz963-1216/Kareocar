@@ -109,6 +109,9 @@ const $ = (id) => document.getElementById(id);
 // 登入方式開關與客服聯絡（#79）：平台管理者在平台設定頁修改，未登入也讀得到（/api/v2/public-settings）。
 // 讀到之前用試營運的預設值：Google 開、Facebook 關。
 let PUBLIC_SETTINGS={loginMethods:{google:true,facebook:false},supportContact:{lineUrl:null,email:null}};
+// 平台設定頁：是否已讀到伺服器目前的設定（讀到之前不能儲存），以及正在編輯、還沒儲存的值
+// （背景同步會重畫畫面，不保留的話輸入到一半的內容會被蓋掉）
+let publicSettingsServerLoaded=false,publicSettingsDraft=null;
 async function loadPublicSettings_(){
   try{const r=await fetch(APP_CONFIG.publicSettingsUrl,{cache:'no-store',credentials:'same-origin'});const j=await r.json();if(r.ok&&j?.ok&&j.data)PUBLIC_SETTINGS=j.data;}catch(e){/* 讀不到就用預設值 */}
   applyPublicSettings_();
@@ -5962,7 +5965,7 @@ async function acceptConsent_(){
 
 // 個資保存期限與條款版本（#26）：只有平台超級管理者；條款內容由律師撰寫，發布版本後使用者要同意才能預約
 function platformPrivacySettingsCard(){
-  const docs=AppStateDatabase.consent?.documents||{},years=AppStateDatabase.platformSettings?.retentionYears||5;
+  const docs=AppStateDatabase.consent?.documents||{},years=AppStateDatabase.platformSettings?.retentionYears||5,ps=publicSettingsDraft||PUBLIC_SETTINGS;
   const docRow=(key)=>{const d=docs[key]||{},title=escapeHTML(d.title||key);return `<div class="form-2"><div class="form-field"><label for="legalDoc_${key}_version">${title}：版本</label><input id="legalDoc_${key}_version" value="${escapeHTML(d.version||'')}" placeholder="未發布就留白"/></div><div class="form-field"><label for="legalDoc_${key}_url">${title}：網址</label><input id="legalDoc_${key}_url" value="${escapeHTML(d.url||'')}" placeholder="https://"/></div></div>`;};
   // 三組設定各自一張卡，按鈕只放在自己那一組底下
   return `<section class="card" id="platformPrivacySettings"><div class="card-head"><div><h3>資料保存</h3><p>超過保存年限的行程每天自動匿名化。</p></div></div>
@@ -5972,10 +5975,10 @@ function platformPrivacySettingsCard(){
   <div class="form-grid">${docRow('privacy_notice')}${docRow('terms')}</div>
   <div class="item-actions"><button type="button" class="btn primary sm" id="saveLegalDocumentsBtn">儲存</button></div></section>
   <section class="card" id="platformPublicSettings"><div class="card-head"><div><h3>登入方式與客服聯絡</h3><p>儲存後登入頁立刻生效。</p></div></div>
-  <div class="form-grid"><label class="checkbox-row"><input type="checkbox" id="loginMethodGoogleInput" ${PUBLIC_SETTINGS.loginMethods?.google?'checked':''}/> 開放 Google 登入</label><label class="checkbox-row"><input type="checkbox" id="loginMethodFacebookInput" ${PUBLIC_SETTINGS.loginMethods?.facebook?'checked':''}/> 開放 Facebook 登入</label>
-  <div class="form-field"><label for="supportLineUrlInput">LINE 官方帳號連結</label><input id="supportLineUrlInput" value="${escapeHTML(PUBLIC_SETTINGS.supportContact?.lineUrl||'')}" placeholder="https://lin.ee/…"/></div>
-  <div class="form-field"><label for="supportEmailInput">客服 Email</label><input id="supportEmailInput" type="email" value="${escapeHTML(PUBLIC_SETTINGS.supportContact?.email||'')}" placeholder="service@example.com"/></div></div>
-  <div class="item-actions"><button type="button" class="btn primary sm" id="savePublicSettingsBtn" disabled>儲存</button></div></section>
+  <div class="form-grid"><label class="checkbox-row"><input type="checkbox" id="loginMethodGoogleInput" ${ps.loginMethods?.google?'checked':''}/> 開放 Google 登入</label><label class="checkbox-row"><input type="checkbox" id="loginMethodFacebookInput" ${ps.loginMethods?.facebook?'checked':''}/> 開放 Facebook 登入</label>
+  <div class="form-field"><label for="supportLineUrlInput">LINE 官方帳號連結</label><input id="supportLineUrlInput" value="${escapeHTML(ps.supportContact?.lineUrl||'')}" placeholder="https://lin.ee/…"/></div>
+  <div class="form-field"><label for="supportEmailInput">客服 Email</label><input id="supportEmailInput" type="email" value="${escapeHTML(ps.supportContact?.email||'')}" placeholder="service@example.com"/></div></div>
+  <div class="item-actions"><button type="button" class="btn primary sm" id="savePublicSettingsBtn" ${publicSettingsServerLoaded?'':'disabled'}>儲存</button></div></section>
   <section class="card"><div class="card-head"><h3>監控測試</h3></div>
   <div class="item-actions"><button type="button" class="btn outline sm" id="sendTestAlertBtn">送出測試告警</button><button type="button" class="btn outline sm" id="triggerTestErrorBtn">觸發測試錯誤</button></div></section>`;
 }
@@ -5984,17 +5987,21 @@ function bindPlatformPrivacySettings(){
   $('sendTestAlertBtn')?.addEventListener('click',async()=>{try{const r=await backendJsonPost(APP_CONFIG.platformSettingsUrl,{action:'test_alert'});const d=r.data?.delivered||[];showToast(d.length?`測試告警已送出：${d.join('、')}`:'已寫入稽核紀錄，但沒有設定 Email 或 Discord');}catch(error){showToast(error.message||'測試告警失敗');}});
   $('triggerTestErrorBtn')?.addEventListener('click',async()=>{try{await backendJsonPost(APP_CONFIG.platformSettingsUrl,{action:'test_error'});}catch(error){showToast(error.errorId||error.code?`已觸發測試錯誤${error.code?`（${error.code}）`:''}，請到 Sentry 確認`:'已觸發測試錯誤');}});
   // 表單以伺服器目前的設定為準（讀到之前不能儲存，避免用預設值蓋掉真正的設定）
-  if($('savePublicSettingsBtn'))backendJsonPost(APP_CONFIG.platformSettingsUrl,{action:'get'}).then(r=>{
-    const d=r?.data||{};if(!d.loginMethods||!$('savePublicSettingsBtn'))return;
-    $('loginMethodGoogleInput').checked=d.loginMethods.google===true;$('loginMethodFacebookInput').checked=d.loginMethods.facebook===true;
-    $('supportLineUrlInput').value=d.supportContact?.lineUrl||'';$('supportEmailInput').value=d.supportContact?.email||'';$('savePublicSettingsBtn').disabled=false;
+  const readPublicSettingsForm=()=>({loginMethods:{google:$('loginMethodGoogleInput').checked,facebook:$('loginMethodFacebookInput').checked},
+    supportContact:{lineUrl:$('supportLineUrlInput').value.trim(),email:$('supportEmailInput').value.trim()}});
+  ['loginMethodGoogleInput','loginMethodFacebookInput','supportLineUrlInput','supportEmailInput'].forEach(id=>{const el=$(id);if(!el)return;const keep=()=>{publicSettingsDraft=readPublicSettingsForm();};el.addEventListener('input',keep);el.addEventListener('change',keep);});
+  if($('savePublicSettingsBtn')&&!publicSettingsServerLoaded)backendJsonPost(APP_CONFIG.platformSettingsUrl,{action:'get'}).then(r=>{
+    const d=r?.data||{};if(!d.loginMethods)return;
+    PUBLIC_SETTINGS={loginMethods:d.loginMethods,supportContact:d.supportContact};publicSettingsServerLoaded=true;
+    if(!$('savePublicSettingsBtn'))return;
+    if(!publicSettingsDraft){$('loginMethodGoogleInput').checked=d.loginMethods.google===true;$('loginMethodFacebookInput').checked=d.loginMethods.facebook===true;
+      $('supportLineUrlInput').value=d.supportContact?.lineUrl||'';$('supportEmailInput').value=d.supportContact?.email||'';}
+    $('savePublicSettingsBtn').disabled=false;
   }).catch(()=>showToast('讀不到目前的登入方式與客服聯絡，請重新整理'));
   $('savePublicSettingsBtn')?.addEventListener('click',async()=>{
     try{
-      const r=await backendJsonPost(APP_CONFIG.platformSettingsUrl,{action:'set_public_settings',
-        loginMethods:{google:$('loginMethodGoogleInput').checked,facebook:$('loginMethodFacebookInput').checked},
-        supportContact:{lineUrl:$('supportLineUrlInput').value.trim(),email:$('supportEmailInput').value.trim()}});
-      const d=r?.data||{};if(d.loginMethods)PUBLIC_SETTINGS={loginMethods:d.loginMethods,supportContact:d.supportContact};applyPublicSettings_();render();showToast('登入方式與客服聯絡已更新');
+      const r=await backendJsonPost(APP_CONFIG.platformSettingsUrl,{action:'set_public_settings',...readPublicSettingsForm()});
+      const d=r?.data||{};if(d.loginMethods)PUBLIC_SETTINGS={loginMethods:d.loginMethods,supportContact:d.supportContact};publicSettingsDraft=null;applyPublicSettings_();render();showToast('登入方式與客服聯絡已更新');
     }catch(error){showToast(error.message||'儲存失敗');}
   });
   $('saveRetentionYearsBtn')?.addEventListener('click',()=>platformSettingsRequest_({action:'set_retention',years:Number($('retentionYearsInput').value)},'保存期限已更新'));
