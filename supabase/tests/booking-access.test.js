@@ -316,6 +316,16 @@ async function newClaimed(id) {
   await mutate(U.req, [{ ...recipient('CR-ACC-UNCLE'), record: { ...recipient('CR-ACC-UNCLE').record, status: 'archived' } }]);
   const archived = await writeBooking(U.req, booking('BKG-ACC-R9', { recipientId: 'CR-ACC-UNCLE' }));
   record('服務對象已封存：被拒、沒有寫入', archived.status === 403 && !(await row('bookings', 'BKG-ACC-R9')), outcome(archived));
+  // 替家人預約的聯絡人由伺服器依登入者決定（#82）
+  const forgedContact = await writeBooking(U.req, booking('BKG-ACC-R11', { recipientId: 'CR-ACC-MOM', pickupDate: '2099-02-01',
+    contacts: { requester: { userId: U.dspB, name: '偽造聯絡人', phone: '0900000000' } } }));
+  const contactRow = await row('bookings', 'BKG-ACC-R11');
+  const savedContact = contactRow && contactRow.data.contacts && contactRow.data.contacts.requester;
+  record('替家人預約：聯絡人是登入的需求者，不採用前端送來的姓名電話', forgedContact.status === 200 && Boolean(savedContact)
+    && savedContact.userId === U.req && savedContact.name === '合成需求者' && savedContact.phone === '0944000001', JSON.stringify(savedContact));
+  const editContact = await writeBooking(U.req, { ...contactRow.data, contacts: { requester: { userId: U.req, name: '改過的名字', phone: '0911111111' } } });
+  const afterEdit = (await row('bookings', 'BKG-ACC-R11')).data.contacts.requester;
+  record('修改預約不能改聯絡人', editContact.status === 200 && afterEdit.name === '合成需求者' && afterEdit.phone === '0944000001', JSON.stringify(afterEdit));
   const opsCreate = await writeBooking(U.dspA, booking('BKG-ACC-R10', { requestedByUserId: null, state: 'claimed', claimStatus: 'claimed',
     status: 'claimed', organizationId: ORG_A, recipientId: 'CR-ACC-MOM' }));
   record('機構自行建立（電話預約）帶服務對象：不受需求者關係限制', opsCreate.status === 200, outcome(opsCreate));

@@ -713,7 +713,8 @@ async function flowFamily(cdp, baseUrl, tokens) {
       d.requestedByUserId === U.req.id && d.name === fam.name && d.phone === fam.phone
         && d.contacts && d.contacts.requester && d.contacts.requester.name === U.req.name, J({ name: d.name, phone: d.phone, contacts: d.contacts }));
     await waitFor(page, "!!document.querySelector('.nav-btn.active[data-view=\"requester-bookings\"]')", '送出後回到我的預約');
-    record(S, '我的預約顯示這筆是替家人預約', await evaluate(page, `document.querySelector('main').innerText.includes(${J(fam.name)})`));
+    record(S, '我的預約顯示這筆是替家人預約（乘車人是家人、標示「家人」）', await evaluate(page,
+      `[...document.querySelectorAll('main .list-item h4')].some((h)=>h.innerText.includes(${J(fam.name)})&&h.innerText.includes('家人'))`));
 
     const claimed = await claimBooking.handler({ httpMethod: 'POST', headers: { host: '127.0.0.1', cookie: `cr_at=${tokens.dsp}` },
       body: J({ bookingId: booking.id, organizationId: ORG }) });
