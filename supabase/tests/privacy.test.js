@@ -138,7 +138,21 @@ function booking(id, extra = {}) {
     record: { id, userId: U.req, recipientId: rid, relationship: 'family', canBook: true, canManageProfile: true, status: 'active' } });
   await call(mutateFn.handler, 'POST', U.req, { changes: [recipient('CR-PRV-OLD'), relation('CRR-PRV-OLD', 'CR-PRV-OLD'),
     recipient('CR-PRV-MIX'), relation('CRR-PRV-MIX', 'CR-PRV-MIX')] });
-  await writeBooking(U.req, booking('BKG-PRV-OLD', { pickupDate: '2015-03-01', recipientId: 'CR-PRV-OLD' }));
+  await writeBooking(U.req, booking('BKG-PRV-OLD', { pickupDate: '2015-03-01', recipientId: 'CR-PRV-OLD',
+    legs: [{ id: 'BKG-PRV-OLD_outbound', sequence: 1, direction: 'outbound', label: '去程', status: 'pending',
+      requestedPickupAt: '2015-03-01T01:00:00.000Z', pickupAddress: '新北市板橋區文化路一段188號', destination: '臺北市中正區公園路20號',
+      // 前端 makeLocationSnapshot 的形狀
+      pickup: { addressText: '新北市板橋區文化路一段188號', city: '新北市', district: '板橋區', road: '文化路一段',
+        accessNote: '合成：巷口上車', placeId: 'PLACE-X', lat: 25.0123, lng: 121.4567 },
+      dropoff: { addressText: '臺北市中正區公園路20號', city: '', district: '', lat: 25.0401, lng: 121.5167 } }] }));
+  // 通知內容與補助試算（#89）
+  await admin.query(`insert into notifications (id, booking_id, recipient_user_id, template, payload, message_summary, status)
+    values ('NTF-PRV-OLD', 'BKG-PRV-OLD', $1, 'booking_cancelled', $2::jsonb, '合成摘要：188號', 'sent')`,
+    [U.req, JSON.stringify({ bookingId: 'BKG-PRV-OLD', reason: '合成原因：住 188號', pickupDate: '2015-03-01' })]);
+  await admin.query(`insert into notifications (id, trip_id, recipient_user_id, template, payload, status)
+    values ('NTF-PRV-TRIP', 'TRP-PRV-OLD', $1, 'trip_assigned', $2::jsonb, 'sent')`, [U.req, JSON.stringify({ tripId: 'TRP-PRV-OLD', note: '合成：188號' })]);
+  await admin.query(`insert into benefit_assessments (id, care_recipient_id, cms_level, identity_category, facts, data)
+    values ('BA-PRV-OLD', 'CR-PRV-OLD', '4', 'low_income', '{"cmsLevel": 4, "residenceCity": "新北市"}', '{"facts": {"cmsLevel": 4}}')`);
   await writeBooking(U.req, booking('BKG-PRV-OLD2', { pickupDate: '2015-04-01', recipientId: 'CR-PRV-MIX' }));
   await writeBooking(U.req, booking('BKG-PRV-MIXF', { pickupDate: '2099-04-01', recipientId: 'CR-PRV-MIX' }));
   // 預約修改紀錄：快照裡有修改前的姓名、電話、完整地址與自由文字
@@ -173,6 +187,8 @@ function booking(id, extra = {}) {
       mutationReceipts: [{ key: 'proof_service:TRP-PRV-OLD:x:合成收受人:r1' }],
       pickupLocation: { address: '新北市板橋區文化路一段188號', lat: 25.01, lng: 121.46 },
       executionSnapshots: [{ id: 'SNAP1', needsSummary: '合成需求摘要', route: { pickupAddress: '新北市板橋區文化路一段188號' },
+        resources: { driver: { id: 'DRV-X', userId: 'USR-X', name: '合成司機姓名', phone: '0988777666', status: 'on_duty' },
+          vehicle: { id: 'VEH-X', plate: 'ABC-1234' } },
         passengers: [{ name: '合成乘客快照', phone: '0911222333',
           careRecipient: { displayName: '合成長輩快照', primaryPhone: '0955666777' },
           leg: { pickup: { address: '新北市板橋區文化路一段188號', lat: 25.01 } },
@@ -231,6 +247,23 @@ function booking(id, extra = {}) {
   record('還有未到期預約的服務對象不被匿名化（它過期的那筆預約照常匿名化）',
     crMix.identity.displayName === '合成長輩CR-PRV-MIX' && crMix.contacts.primaryPhone === '0955666777' && !crMix.anonymizedAt
       && (await row('bookings', 'BKG-PRV-OLD2')).data.name === null && (await row('bookings', 'BKG-PRV-MIXF')).data.name === '合成王小明');
+  const oldLeg = oldAfter.legs[0];
+  record('到期預約的去程／回程地點只留行政區（#89）', !JSON.stringify(oldAfter.legs).includes('188號')
+    && !JSON.stringify(oldAfter.legs).includes('25.0123') && !JSON.stringify(oldAfter.legs).includes('巷口')
+    && !JSON.stringify(oldAfter.legs).includes('PLACE-X') && !JSON.stringify(oldAfter.legs).includes('文化路')
+    && JSON.stringify(oldLeg.pickup) === JSON.stringify({ city: '新北市', district: '板橋區' })
+    && JSON.stringify(oldLeg.dropoff) === JSON.stringify({ district: '台北市中正區' }) && oldLeg.status === 'pending', JSON.stringify(oldAfter.legs));
+  const oldNtf = (await admin.query(`select payload, message_summary from notifications where id = 'NTF-PRV-OLD'`)).rows[0];
+  record('到期預約的通知內容清除，只留關聯 ID（#89）', !JSON.stringify(oldNtf).includes('188號') && oldNtf.payload.bookingId === 'BKG-PRV-OLD'
+    && !('reason' in oldNtf.payload) && oldNtf.message_summary === null, JSON.stringify(oldNtf));
+  const tripNtf = (await admin.query(`select payload from notifications where id = 'NTF-PRV-TRIP'`)).rows[0];
+  record('到期行程的通知（沒有預約 ID 的）內容也清除（#89）', JSON.stringify(tripNtf.payload) === JSON.stringify({ tripId: 'TRP-PRV-OLD' }), JSON.stringify(tripNtf));
+  const ba = (await admin.query(`select cms_level, identity_category, facts, data from benefit_assessments where id = 'BA-PRV-OLD'`)).rows[0];
+  record('匿名化的服務對象：補助試算的事實資料、長照等級、身分別清除（#89）', ba.cms_level === null && ba.identity_category === null
+    && JSON.stringify(ba.facts) === '{}' && !('facts' in ba.data), JSON.stringify(ba));
+  const snapRes = (await row('trips', 'TRP-PRV-OLD')).data.executionSnapshots[0].resources;
+  record('到期行程執行快照的司機只留 ID 與狀態（#89）', !JSON.stringify(snapRes).includes('合成司機姓名')
+    && !JSON.stringify(snapRes).includes('0988777666') && snapRes.driver.id === 'DRV-X' && snapRes.vehicle.plate === 'ABC-1234', JSON.stringify(snapRes));
   const fresh = (await row('bookings', 'BKG-PRV-1')).data;
   record('未到期資料不受影響', fresh.name === '合成王小明' && fresh.phone === '0911222333' && !fresh.anonymizedAt);
   const auditRows = (await admin.query(`select entity_type, entity_id, details from audit_events where event_type = 'retention.anonymized' order by entity_type`)).rows;
@@ -257,6 +290,8 @@ function booking(id, extra = {}) {
     startAt: '2025-05-01T01:00:00.000Z', extra: { status: 'completed',
       serviceProofs: [{ id: 'PD1', status: 'active', receiverName: '合成刪除者', stepId: 'x', note: '合成刪除者的證明備註' }] } });
   await admin.query(`insert into app_state (collection, id, booking_id, data) values ('trips', 'TRP-DEL-P', 'BKG-DEL-P', $1::jsonb)`, [JSON.stringify(delTrip)]);
+  await admin.query(`insert into notifications (id, booking_id, recipient_user_id, template, payload, status)
+    values ('NTF-DEL-P', 'BKG-DEL-P', $1, 'trip_cancelled', $2::jsonb, 'sent')`, [U.req3, JSON.stringify({ bookingId: 'BKG-DEL-P', reason: '合成刪除者的原因' })]);
   await event('tripEvents', 'TEVT-DEL-P', { tripId: 'TRP-DEL-P' }, { tripId: 'TRP-DEL-P', eventType: 'proof_service_captured', metadata: { receiverName: '合成刪除者' } });
   await event('careRecipientEvents', 'CREVT-DEL-1', {}, { recipientId: 'CR-DEL-1', eventType: 'updated', changes: [{ field: '手機', from: '0933000111', to: '0933000112' }] });
   const rootReq = await del(U.root, { action: 'request' });
@@ -302,6 +337,9 @@ function booking(id, extra = {}) {
   const delTripAfter = (await row('trips', 'TRP-DEL-P')).data;
   record('核准刪除：這位使用者預約的服務證明簽收人與備註清除', delTripAfter.serviceProofs[0].receiverName === null
     && !JSON.stringify(delTripAfter).includes('合成刪除者的證明備註'), JSON.stringify(delTripAfter.serviceProofs[0]));
+  const delNtf = (await admin.query(`select payload from notifications where id = 'NTF-DEL-P'`)).rows[0];
+  record('核准刪除：這位使用者預約的通知（寄給其他人的）內容清除（#89）', delNtf && !JSON.stringify(delNtf).includes('合成刪除者')
+    && delNtf.payload.bookingId === 'BKG-DEL-P', JSON.stringify(delNtf));
   const delEvents = [(await row('tripEvents', 'TEVT-DEL-P')).data, (await row('careRecipientEvents', 'CREVT-DEL-1')).data];
   record('核准刪除：行程與服務對象的事件紀錄清除', !JSON.stringify(delEvents).includes('合成刪除者') && !JSON.stringify(delEvents).includes('0933000111'),
     JSON.stringify(delEvents));
