@@ -83,7 +83,7 @@ exports.handler = async (event) => {
       });
     } catch (auditError) {
       console.error('[audit] identity.requester_registered 寫入失敗', auditError);
-      result.organizations = [{ id: REQUESTER_ORG_ID, type: 'requester_hub', name: '需求者組織', active: true }];
+      result.organizations = [{ id: REQUESTER_ORG_ID, type: 'requester_hub', name: '需求者群組', active: true }];
     }
 
     return withCookies(json(200, { ok: true, data: result }), session.sessionCookies(event, tokens));

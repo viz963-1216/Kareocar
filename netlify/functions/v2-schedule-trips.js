@@ -155,7 +155,7 @@ exports.handler = async (event) => {
              values ('trips', $1, $2, $1, $3, $4, 1)
            returning organization_id, revision`,
           [trip.id, organizationId, text(record.bookingId) || null, JSON.stringify(record)])).rows[0];
-        if (!saved || saved.organization_id !== organizationId) fail('FORBIDDEN', '沒有權限替這個機構建立行程');
+        if (!saved || saved.organization_id !== organizationId) fail('FORBIDDEN', '沒有權限替這個機構排車');
 
         const events = [tripEvent(trip.id, 1, 'trip_created', {
           at, actorUserId: claims.userId, reason: dispatchPlanId ? 'dispatch_plan' : 'manual_trip',

@@ -430,9 +430,9 @@ async function flowClaim(cdp, baseUrl, tokens) {
       let notified = true;
       try {
         await goView(reqPage, 'requester-home');
-        await waitFor(reqPage, "document.body.innerText.includes('已有服務單位承接你的預約')", '首頁顯示承接通知', 8000);
+        await waitFor(reqPage, "document.body.innerText.includes('已有接送機構承接你的預約')", '首頁顯示承接通知', 8000);
       } catch (_) { notified = false; }
-      record(S, '需求者首頁的最新通知顯示「已有服務單位承接你的預約」', notified);
+      record(S, '需求者首頁的最新通知顯示「已有接送機構承接你的預約」', notified);
       await goView(reqPage, 'requester-bookings');
       record(S, '需求者的「我的預約」顯示承接單位名稱，而且只拿到名稱',
         orgShown && Boolean(reqOrg) && !('taxId' in reqOrg) && !('contactPhone' in reqOrg), JSON.stringify(reqOrg));

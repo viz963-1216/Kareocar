@@ -63,7 +63,7 @@
 
       <div class="topbar-right">
         <button class="mobile-context-trigger" id="mobileIdentityContextBtn" type="button" aria-haspopup="dialog" aria-controls="identityContextModal"><span class="context-copy" id="mobileIdentityContextText">目前身分</span><span class="context-chevron" aria-hidden="true">⌄</span></button>
-        <select class="org-switcher hidden" id="organizationSwitcher" aria-label="切換組織"></select>
+        <select class="org-switcher hidden" id="organizationSwitcher" aria-label="切換機構"></select>
         <span class="role-badge" id="roleBadge">司機</span>
         <span class="pill green" id="onlineBadge">線上</span>
         <button class="header-logout" id="logoutBtn" type="button">登出</button>
@@ -98,65 +98,65 @@
 </div></div>
 
 <div class="modal" id="addStaffModal"><div class="modal-panel small">
-  <div class="modal-head"><h3 id="addStaffModalTitle">新增公司人員</h3><button class="icon-btn" data-close="addStaffModal" type="button" aria-label="關閉視窗">×</button></div>
+  <div class="modal-head"><h3 id="addStaffModalTitle">新增機構人員</h3><button class="icon-btn" data-close="addStaffModal" type="button" aria-label="關閉視窗">×</button></div>
   <p class="small muted" id="addStaffModalDescription">請設定至少 8 碼初始密碼，交付本人後建議立即變更；忘記密碼時可在人員清單按「重設密碼」。</p>
   <div class="form-grid">
     <div class="form-field"><label for="staffNameInput">姓名</label><input id="staffNameInput" placeholder="例如：王怡婷" /></div>
     <div class="form-field"><label for="staffPhoneInput">手機號碼</label><input id="staffPhoneInput" inputmode="tel" placeholder="請輸入手機號碼" /></div>
     <div class="form-field"><label for="staffInitialPasswordInput">初始密碼</label><input id="staffInitialPasswordInput" type="password" autocomplete="new-password" placeholder="至少 8 碼，請交付本人後立即變更" /></div>
     <div class="form-field"><label for="staffRoleInput">角色</label><select id="staffRoleInput"></select></div>
-    <div class="form-field hidden" id="staffRequesterField"><label style="display:flex;align-items:center;gap:9px;font-weight:800"><input id="staffAlsoRequesterInput" type="checkbox" style="width:auto" /> 同時新增「需求者」身分</label><div class="small muted" style="margin-top:5px">只會在需求者組織新增需求者身分，不會改變此人在公司的員工角色。</div></div>
+    <div class="form-field hidden" id="staffRequesterField"><label style="display:flex;align-items:center;gap:9px;font-weight:800"><input id="staffAlsoRequesterInput" type="checkbox" style="width:auto" /> 同時新增「需求者」身分</label><div class="small muted" style="margin-top:5px">只會在需求者群組新增需求者身分，不會改變此人在機構的員工角色。</div></div>
   </div>
   <div class="modal-actions"><button type="button" class="btn secondary" data-close="addStaffModal">取消</button><button class="btn primary" id="saveStaffBtn" type="button">建立帳號</button></div>
 </div></div>
 
 <div class="modal" id="addOrganizationModal"><div class="modal-panel small">
-  <div class="modal-head"><h3>新增組織</h3><button class="icon-btn" data-close="addOrganizationModal" type="button" aria-label="關閉視窗">×</button></div>
+  <div class="modal-head"><h3>新增機構</h3><button class="icon-btn" data-close="addOrganizationModal" type="button" aria-label="關閉視窗">×</button></div>
   
   <div class="form-grid">
-    <div class="form-field"><label for="organizationNameInput">組織名稱</label><input id="organizationNameInput" placeholder="例如：安心交通有限公司" /></div>
-    <div class="form-field"><label for="organizationTypeInput">組織類型</label><select id="organizationTypeInput"><option value="transport_provider">交通／車隊公司</option><option value="care_facility">長照／日照機構</option><option value="other">其他合作組織</option></select></div>
+    <div class="form-field"><label for="organizationNameInput">機構名稱</label><input id="organizationNameInput" placeholder="例如：安心交通有限公司" /></div>
+    <div class="form-field"><label for="organizationTypeInput">機構類型</label><select id="organizationTypeInput"><option value="transport_provider">交通接送機構</option><option value="care_facility">長照／日照機構</option><option value="other">其他合作機構</option></select></div>
     <div class="form-field"><label for="organizationTaxIdInput">統一編號 <span class="field-optional">選填</span></label><input id="organizationTaxIdInput" inputmode="numeric" /></div>
     <div class="form-field"><label for="organizationContactPhoneInput">聯絡電話 <span class="field-optional">選填</span></label><input id="organizationContactPhoneInput" inputmode="tel" placeholder="例如：02-23456789 或 0912345678" /></div>
   </div>
-  <div class="modal-actions"><button type="button" class="btn secondary" data-close="addOrganizationModal">取消</button><button class="btn primary" id="saveOrganizationBtn" type="button">建立組織</button></div>
+  <div class="modal-actions"><button type="button" class="btn secondary" data-close="addOrganizationModal">取消</button><button class="btn primary" id="saveOrganizationBtn" type="button">建立機構</button></div>
 </div></div>
 
 <div class="modal" id="editOrganizationModal"><div class="modal-panel small">
-  <div class="modal-head"><h3>編輯組織資料</h3><button class="icon-btn" data-close="editOrganizationModal" type="button" aria-label="關閉視窗">×</button></div>
-  <p class="small muted" id="editOrganizationNameText">平台超級管理者可修改公司基本資料與唯一負責人。</p>
+  <div class="modal-head"><h3>編輯機構資料</h3><button class="icon-btn" data-close="editOrganizationModal" type="button" aria-label="關閉視窗">×</button></div>
+  <p class="small muted" id="editOrganizationNameText">平台超級管理者可修改機構基本資料與唯一負責人。</p>
   <input id="editOrganizationIdInput" type="hidden" />
   <div class="form-grid">
-    <div class="form-field"><label for="editOrganizationDisplayNameInput">組織名稱</label><input id="editOrganizationDisplayNameInput" placeholder="輸入組織名稱" /></div>
+    <div class="form-field"><label for="editOrganizationDisplayNameInput">機構名稱</label><input id="editOrganizationDisplayNameInput" placeholder="輸入機構名稱" /></div>
     <div class="form-field"><label for="editOrganizationTaxIdInput">統一編號</label><input id="editOrganizationTaxIdInput" inputmode="numeric" placeholder="8 位數統一編號" /></div>
     <div class="form-field"><label for="editOrganizationContactPhoneInput">聯絡電話</label><input id="editOrganizationContactPhoneInput" inputmode="tel" placeholder="例如：02-23456789 或 0912345678" /></div>
     <div class="form-field"><label for="editOrganizationOwnerInput">負責人</label><select id="editOrganizationOwnerInput"></select></div>
     
   </div>
-  <div class="modal-actions"><button type="button" class="btn secondary" data-close="editOrganizationModal">取消</button><button class="btn primary" id="saveOrganizationDetailsBtn" type="button">儲存組織資料</button></div>
+  <div class="modal-actions"><button type="button" class="btn secondary" data-close="editOrganizationModal">取消</button><button class="btn primary" id="saveOrganizationDetailsBtn" type="button">儲存機構資料</button></div>
 </div></div>
 
 <div class="modal" id="editMemberModal"><div class="modal-panel small">
-  <div class="modal-head"><h3>編輯組織成員</h3><button class="icon-btn" data-close="editMemberModal" type="button" aria-label="關閉視窗">×</button></div>
+  <div class="modal-head"><h3>編輯機構成員</h3><button class="icon-btn" data-close="editMemberModal" type="button" aria-label="關閉視窗">×</button></div>
   <p class="small muted" id="editMemberContextText">平台超級管理者可直接修改成員姓名與登入手機。</p>
   <input id="editMemberMembershipIdInput" type="hidden" />
   <div class="form-grid">
     <div class="form-field"><label for="editMemberNameInput">姓名</label><input id="editMemberNameInput" /></div>
     <div class="form-field"><label for="editMemberPhoneInput">手機號碼</label><input id="editMemberPhoneInput" inputmode="tel" placeholder="請輸入手機號碼" /></div>
-    <div class="form-field" id="editMemberRequesterField"><label style="display:flex;align-items:center;gap:9px;font-weight:800"><input id="editMemberRequesterInput" type="checkbox" style="width:auto" /> 同時具備「需求者」身分</label><div class="small muted" style="margin-top:5px">勾選後，這個使用者可在需求者組織使用預約功能；取消勾選會撤銷目前需求者組織身分。</div></div>
+    <div class="form-field" id="editMemberRequesterField"><label style="display:flex;align-items:center;gap:9px;font-weight:800"><input id="editMemberRequesterInput" type="checkbox" style="width:auto" /> 同時具備「需求者」身分</label><div class="small muted" style="margin-top:5px">勾選後，這個使用者可在需求者群組使用預約功能；取消勾選會撤銷目前需求者群組身分。</div></div>
   </div>
   <div class="modal-actions"><button type="button" class="btn secondary" data-close="editMemberModal">取消</button><button class="btn primary" id="saveMemberProfileBtn" type="button">儲存成員資料</button></div>
 </div></div>
 
 <div class="modal" id="membershipHistoryModal"><div class="modal-panel">
-  <div class="modal-head"><div><h3>身分異動紀錄</h3><p class="small muted" id="membershipHistoryContext">僅平台超級管理者與該公司負責人可查看。</p></div><button class="icon-btn" data-close="membershipHistoryModal" type="button" aria-label="關閉視窗">×</button></div>
+  <div class="modal-head"><div><h3>身分異動紀錄</h3><p class="small muted" id="membershipHistoryContext">僅平台超級管理者與該機構負責人可查看。</p></div><button class="icon-btn" data-close="membershipHistoryModal" type="button" aria-label="關閉視窗">×</button></div>
   <div class="list" id="membershipHistoryList"></div>
   <div class="modal-actions"><button type="button" class="btn secondary" data-close="membershipHistoryModal">關閉</button></div>
 </div></div>
 
 <div class="modal" id="revokeMembershipModal"><div class="modal-panel small">
-  <div class="modal-head"><h3>撤銷公司工作帳號</h3><button class="icon-btn" data-close="revokeMembershipModal" type="button" aria-label="關閉視窗">×</button></div>
-  <p id="revokeMembershipText">撤銷後，此人在目前公司的組織身分會失效。</p>
+  <div class="modal-head"><h3>撤銷機構工作帳號</h3><button class="icon-btn" data-close="revokeMembershipModal" type="button" aria-label="關閉視窗">×</button></div>
+  <p id="revokeMembershipText">撤銷後，此人在目前機構的工作身分會失效。</p>
   
   <div class="danger-confirm-fields" id="revokeMembershipConfirmFields">
     <div class="form-field"><label for="revokeMembershipReasonInput">撤銷原因</label><textarea id="revokeMembershipReasonInput" placeholder="請說明撤銷原因，供後續稽核"></textarea></div>
@@ -170,7 +170,7 @@
   <div class="modal-head"><h3>回報系統問題</h3><button class="icon-btn" data-close="systemReportModal" type="button" aria-label="關閉視窗">×</button></div>
   
   <div class="form-grid">
-    <div class="form-field"><label for="systemReportCategory">問題類型</label><select id="systemReportCategory"><option>登入／帳號</option><option>預約／派車</option><option>司機端</option><option>資料同步</option><option>介面／操作</option><option>其他</option></select></div>
+    <div class="form-field"><label for="systemReportCategory">問題類型</label><select id="systemReportCategory"><option>登入／帳號</option><option>預約／排車</option><option>司機端</option><option>資料同步</option><option>介面／操作</option><option>其他</option></select></div>
     <div class="form-field"><label for="systemReportTitle">問題標題</label><input id="systemReportTitle" placeholder="簡短描述發生什麼問題" /></div>
     <div class="form-field"><label for="systemReportDetail">詳細說明</label><textarea id="systemReportDetail" placeholder="請描述操作步驟、畫面狀況或希望改善的地方"></textarea></div>
   </div>
@@ -219,13 +219,13 @@
 
 
 <div class="modal" id="organizationStatusModal"><div class="modal-panel small">
-  <div class="modal-head"><h3 id="organizationStatusTitle">移除組織</h3><button class="icon-btn" data-close="organizationStatusModal" type="button" aria-label="關閉視窗">×</button></div>
-  <p class="muted small" id="organizationStatusDescription">確定要變更這個組織的狀態嗎？</p>
+  <div class="modal-head"><h3 id="organizationStatusTitle">移除機構</h3><button class="icon-btn" data-close="organizationStatusModal" type="button" aria-label="關閉視窗">×</button></div>
+  <p class="muted small" id="organizationStatusDescription">確定要變更這個機構的狀態嗎？</p>
   <div class="smart-modal-hint" id="organizationStatusHint">既有預約、行程、成員與歷史資料都會保留。</div>
   <div class="danger-confirm-fields hidden" id="organizationDangerFields">
     <div class="form-field"><label for="organizationStatusReasonInput">停用原因</label><textarea id="organizationStatusReasonInput" placeholder="請輸入停用原因"></textarea></div>
     <div class="danger-requirement" id="organizationStatusTokenHint"></div>
-    <div class="form-field"><label for="organizationStatusTokenInput">輸入組織名稱確認</label><input class="danger-token" id="organizationStatusTokenInput" autocomplete="off" /></div>
+    <div class="form-field"><label for="organizationStatusTokenInput">輸入機構名稱確認</label><input class="danger-token" id="organizationStatusTokenInput" autocomplete="off" /></div>
   </div>
   <div class="modal-actions"><button type="button" class="btn secondary" data-close="organizationStatusModal">取消</button><button class="btn danger" id="confirmOrganizationStatusBtn" type="button">確認移除</button></div>
 </div></div>
@@ -313,7 +313,7 @@
   <div class="form-field"><label for="newPickupAt">預定接送時間</label><input id="newPickupAt" type="datetime-local" /></div>
   <div class="form-field"><label for="newDriver">指派司機</label><select id="newDriver"></select></div><div class="form-field"><label for="newVehicle">指派車輛</label><select id="newVehicle"></select></div><div class="form-field form-full"><div class="smart-modal-hint" id="driverRecommendHint">尚未計算建議司機與車輛</div></div>
   <div class="form-field form-full"><label for="newNeed">特殊需求</label><input id="newNeed" placeholder="例如：手動輪椅、需陪同" /></div>
-</div><div class="modal-actions"><button type="button" class="btn secondary" data-close="createTripModal">取消</button><button type="button" class="btn primary" id="saveTripBtn">建立行程</button></div></div></div>
+</div><div class="modal-actions"><button type="button" class="btn secondary" data-close="createTripModal">取消</button><button type="button" class="btn primary" id="saveTripBtn">排車</button></div></div></div>
 <div class="modal" id="assignModal"><div class="modal-panel small"><div class="modal-head"><h3>指派／改派司機與車輛</h3><button class="icon-btn" data-close="assignModal" type="button" aria-label="關閉視窗">×</button></div><p class="small muted" id="assignTripText"></p><div class="form-grid"><div class="form-field"><label for="assignDriver">選擇司機</label><select id="assignDriver"></select></div><div class="form-field"><label for="assignVehicle">選擇車輛</label><select id="assignVehicle"></select></div></div><div class="modal-actions"><button type="button" class="btn secondary" data-close="assignModal">取消</button><button type="button" class="btn primary" id="saveAssignBtn">儲存指派</button></div></div></div>
 <div class="modal" id="handoverTripModal"><div class="modal-panel small">
   <div class="modal-head"><h3>中斷行程資源交接</h3><button class="icon-btn" data-close="handoverTripModal" type="button" aria-label="關閉視窗">×</button></div>
@@ -344,9 +344,9 @@
     <div class="form-field"><label for="vehicleCapacityInput">載客量</label><input id="vehicleCapacityInput" type="number" min="1" max="20" value="4" /></div>
     <div class="form-field"><label for="vehicleWheelchairInput">輪椅位</label><input id="vehicleWheelchairInput" type="number" min="0" max="6" value="1" /></div>
     <div class="form-field"><label for="vehicleAccessibleInput">無障礙設備</label><select id="vehicleAccessibleInput"><option value="true">有</option><option value="false">無</option></select></div>
-    <div class="form-field"><label for="vehicleStatusInput">狀態</label><select id="vehicleStatusInput"><option value="available">可派車</option><option value="maintenance">維修／保養中</option><option value="retired">已退役</option></select></div>
+    <div class="form-field"><label for="vehicleStatusInput">狀態</label><select id="vehicleStatusInput"><option value="available">可使用</option><option value="maintenance">維修／保養中</option><option value="retired">已退役</option></select></div>
   </div>
-  <div class="smart-modal-hint">「維修中」暫時不能派車；「已退役」永久不能派車。</div>
+  <div class="smart-modal-hint">「維修中」暫時不能排車；「已退役」永久不能排車。</div>
   <div class="modal-actions"><button type="button" class="btn secondary" data-close="addVehicleModal">取消</button><button type="button" class="btn primary" id="saveVehicleBtn">新增車輛</button></div>
 </div></div>
 

@@ -1,5 +1,7 @@
 'use strict';
 
+const { toGlossary } = require('./_glossary');
+
 /**
  * Postgres 連線層。
  *
@@ -85,13 +87,13 @@ function withoutUser(fn) {
   return withUser(null, fn);
 }
 
-/** Postgres 的錯誤碼轉成前端已經在處理的錯誤碼。 */
+/** Postgres 的錯誤碼轉成前端已經在處理的錯誤碼；訊息換成用語表的叫法（#83，見 _glossary.js）。 */
 function translateDbError(error) {
   const pgCode = error && error.code;
-  if (pgCode === '42501') return Object.assign(new Error(error.message), { code: 'FORBIDDEN' });
-  if (pgCode === '55006') return Object.assign(new Error(error.message), { code: 'BOOKING_CONFLICT' });
+  if (pgCode === '42501') return Object.assign(new Error(toGlossary(error.message)), { code: 'FORBIDDEN' });
+  if (pgCode === '55006') return Object.assign(new Error(toGlossary(error.message)), { code: 'BOOKING_CONFLICT' });
   if (pgCode === '23505') return Object.assign(new Error('資料已存在'), { code: 'ACCOUNT_EXISTS' });
-  if (pgCode === 'P0002') return Object.assign(new Error(error.message), { code: 'NOT_FOUND' });
+  if (pgCode === 'P0002') return Object.assign(new Error(toGlossary(error.message)), { code: 'NOT_FOUND' });
   return error;
 }
 

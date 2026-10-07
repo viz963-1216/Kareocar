@@ -12,12 +12,13 @@ const { json, parseBody, handleError } = require('./_http');
 const { withUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
 const session = require('./_session');
+const { toGlossary } = require('./_glossary');
 
 /** 這些 security definer 函式使用的自訂 SQLSTATE。 */
 function translateRpcError(error) {
   const code = error && error.code;
-  if (code === 'CR400') return Object.assign(new Error(error.message), { code: 'VALIDATION_ERROR' });
-  if (code === 'CR409') return Object.assign(new Error(error.message), { code: 'TRIP_CONFLICT' });
+  if (code === 'CR400') return Object.assign(new Error(toGlossary(error.message)), { code: 'VALIDATION_ERROR' });
+  if (code === 'CR409') return Object.assign(new Error(toGlossary(error.message)), { code: 'TRIP_CONFLICT' });
   return translateDbError(error);
 }
 

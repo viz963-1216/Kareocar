@@ -86,7 +86,7 @@ exports.handler = async (event) => {
         const saved = upsert.rows[0];
         if (saved.organization_id !== organizationId) {
           // 觸發器把組織清掉代表呼叫者不是該組織的營運方；上面已檢查過，這裡是保險
-          throw auth.authError('FORBIDDEN', `沒有權限替這個機構建立行程`);
+          throw auth.authError('FORBIDDEN', `沒有權限替這個機構排車`);
         }
         await notifyDrivers(client, { id, record, before: existing ? existing.data || {} : null,
           organizationId, revision: saved.revision });
