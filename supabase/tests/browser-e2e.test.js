@@ -314,6 +314,24 @@ async function fixtureScheduled(bookingId, tripId) {
   } finally { c.release(); }
 }
 
+/**
+ * 狀態 fixture：直接寫入一趟含預約的行程。排車只能走 v2-schedule-trips（ADR 0003），
+ * 行程端點不再接受新的預約；這裡只準備取消情境的資料。
+ */
+async function fixtureTrip(trip) {
+  const c = await admin.connect();
+  try {
+    await c.query('begin');
+    await c.query(`select set_config('app.state_scope_override','1',true)`);
+    await c.query(
+      `insert into app_state (collection, id, trip_id, booking_id, data, revision)
+         values ('trips', $1, $1, $2, $3, 1)`, [trip.id, trip.bookingId || null, JSON.stringify(trip)]);
+    // 觸發器會清掉 INSERT 的組織；UPDATE 在 override 下才保留
+    await c.query(`update app_state set organization_id = $2, revision = 1 where collection = 'trips' and id = $1`, [trip.id, ORG]);
+    await c.query('commit');
+  } catch (e) { await c.query('rollback'); throw e; } finally { c.release(); }
+}
+
 async function seed() {
   await admin.query(`
     insert into organizations (id, org_type, name, active) values ('${ORG}','transport_provider','合成承運 E2E',true);
@@ -546,11 +564,7 @@ async function flowCancel(cdp, baseUrl, tokens) {
     await fixtureScheduled(b.id, b.trip);
     const trip = F.makeTrip({ id: b.trip, organizationId: ORG, driverId: DRIVER_ID, vehicleId: 'VEH-E2E-1', bookingId: b.id,
       startAt: `${dayOffset(1)}T10:00:00.000Z`, extra: { bookingId: b.id, status } });
-    // 新行程一律從 scheduled 開始，需要時再由調度改狀態
-    let ok = (await apiMutate(tokens.dsp, [{ collection: 'trips', id: b.trip, record: { ...trip, status: 'scheduled' } }])) === 200;
-    if (ok && status !== 'scheduled') {
-      ok = (await apiMutate(tokens.dsp, [{ collection: 'trips', id: b.trip, expectedRevision: 1, record: { ...trip, status } }])) === 200;
-    }
+    const ok = await fixtureTrip(trip).then(() => true, (e) => { console.log(e.message); return false; });
     record(S, `（資料準備）${status} 行程與已排車預約`, ok);
   }
   // 取消端點產生的通知（notifications 資料表，0007）；形狀沿用 { data: { template, recipientId } }

@@ -26,18 +26,20 @@ ok('一般預約寫入：需求者只能改公開與已承接的預約，重大�
     open: ['expired', 'open']
   });
 });
-ok('一般預約寫入：承接機構可以退回、不受理、逾期、排車，排好的可以退回部分排車', () => {
+ok('一般預約寫入：承接機構可以退回、不受理、逾期；排車狀態只由排車 command 改變', () => {
   assert.deepEqual(sorted(L.bookingWriteTransitions('ops')), {
-    claimed: ['claimed', 'expired', 'open', 'partially_scheduled', 'rejected', 'scheduled'],
-    partially_scheduled: ['partially_scheduled', 'scheduled'],
-    scheduled: ['partially_scheduled', 'scheduled']
+    claimed: ['claimed', 'expired', 'open', 'rejected'],
+    partially_scheduled: ['partially_scheduled'],
+    scheduled: ['scheduled']
   });
 });
-ok('接案與取消有專用端點，一般預約寫入不接受', () => {
+ok('接案、取消、排車有專用端點，一般預約寫入不接受', () => {
   for (const role of ['owner', 'ops']) {
     const t = L.bookingWriteTransitions(role);
     assert.ok(!(t.open || []).includes('claimed'), role);
     for (const tos of Object.values(t)) assert.ok(!tos.includes('cancelled'), role);
+    assert.ok(!(t.claimed || []).some((to) => ['partially_scheduled', 'scheduled'].includes(to)), role);
+    assert.ok(!(t.partially_scheduled || []).includes('scheduled'), role);
   }
 });
 ok('前端的動作：每個動作從每個狀態最多一個目標，只有排車可能是部分或全部', () => {

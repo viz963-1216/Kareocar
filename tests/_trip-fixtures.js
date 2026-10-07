@@ -33,6 +33,16 @@ function makeStop(tripId, type, sequence, scheduledAt, extra = {}) {
 }
 
 /** 一趟單人行程：出發 → 接送 → 送達。startAt 是接送時間。 */
+/** 預約的去程（單程預約只有這一段）；排車 command 需要它。 */
+function outboundLeg(bookingId, requestedPickupAt = '2099-01-01T01:00:00.000Z') {
+  return { id: `${bookingId}_outbound`, schemaVersion: 1, sequence: 1, direction: 'outbound', label: '去程', status: 'pending',
+    requestedPickupAt, tripId: null, scheduledOrganizationId: null, scheduledAt: null };
+}
+/** 排車 command 用的行程：把這些預約的去程排進去。 */
+function legRefsFor(bookingIds) {
+  return bookingIds.map((bookingId) => ({ bookingId, legId: `${bookingId}_outbound` }));
+}
+
 function makeTrip({ id, organizationId, driverId, vehicleId, bookingId = null, startAt, extra = {} }) {
   const pid = `tpax_${id}_${bookingId || 'manual_0'}`;
   const link = { bookingId, passengerId: pid };
@@ -230,4 +240,4 @@ function locationSample(trip, actorUserId, at, lat = 25.0418, lng = 121.5654) {
   return { sample, request: { tripId: trip.id, command: 'location_sample', idempotencyKey: sample.id, samples: [sample], liveNavigation, events: [] } };
 }
 
-module.exports = { clone, addMinutes, makeTrip, snapshotOf, completeStep, undoStep, addProof, reportIssue, locationSample, firstPending };
+module.exports = { clone, addMinutes, outboundLeg, legRefsFor, makeTrip, snapshotOf, completeStep, undoStep, addProof, reportIssue, locationSample, firstPending };

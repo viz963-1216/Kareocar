@@ -156,7 +156,8 @@ SELECT；寫入只經檢查身分與狀態的函式，連有漏洞的 handler �
 | `POST /api/v2/booking-write` | 預約建立與修改 |
 | `POST /api/v2/claim-booking` | 接案 |
 | `POST /api/v2/cancel-booking` | 需求者取消 |
-| `POST /api/v2/trip-write` | 調度建立、改派、中斷、取消行程 |
+| `POST /api/v2/schedule-trips` | 排車：建立行程並把預約的去程／回程排進去，一筆交易（ADR 0003） |
+| `POST /api/v2/trip-write` | 調度改派、中斷、取消既有行程；不能把預約排進行程 |
 | `POST /api/v2/trip-execute` | 司機執行自己的行程 |
 | `POST /api/v2/benefit-ruleset`、`benefit-assess`、`benefit-authorization` | 補助規則、試算、正式核定 |
 | `POST /api/v2/consent` | 同意個資告知與服務條款 |
@@ -206,16 +207,17 @@ context 沒設定這個變數時，建置會失敗，因為無從判斷。
 `netlify/functions/_booking-rules.js`：
 
 - 需求者：只能建立公開待接的預約；公開中可修改或過期；已承接時可修改，重大修改會回到公開池
-- 承接機構的負責人、調度員：已承接 → 排車、退回公開池、不受理
+- 承接機構的負責人、調度員：已承接 → 退回需求池、不受理；**不能排車**，排車狀態也不能改回（只走 `schedule-trips`）
+- 去程／回程的排車欄位（狀態、行程、排車時間、排車機構）與舊版 `tripId` 一律沿用資料庫的值
 - 進入排車後，需求者不能改時間與地址
-- 接案走 `claim-booking`、取消走 `cancel-booking`；預約不能刪除
+- 接案走 `claim-booking`、取消走 `cancel-booking`、排車走 `schedule-trips`；預約不能刪除
 - 需求者、承接人、取消紀錄等欄位一律沿用資料庫的值
 
 退回公開池、不受理、重大修改時，同一交易內撤銷原承接機構，原機構立即讀不到。
 
 ### 預約的伺服器計算欄位（serverComputed）
 
-建立預約或改了上下車地址時，`v2-state-mutate` 用 Google 定位兩個地址並算路線，把結果
+建立預約或改了上下車地址時，`v2-booking-write` 用 Google 定位兩個地址並算路線，把結果
 寫進預約的 `serverComputed`（模糊地址、行政區、經緯度、距離、車程、報價狀態）。前端送來
 的 `serverComputed` 與報價金額一律被覆蓋；地址找不到回 400 `ADDRESS_NOT_FOUND`（`field`
 指出是哪個地址），整批不寫入。地址沒改就沿用原本的結果，不重複呼叫 Google。
@@ -225,12 +227,14 @@ context 沒設定這個變數時，建置會失敗，因為無從判斷。
 
 ### 行程寫入（/api/v2/trip-write）
 
-調度端建立、改派、中斷、取消行程走 `v2-trip-write`（規則在 `_trip-rules.js`）；司機執行自己的
-行程走 `v2-trip-execute`。行程與取消紀錄都不再接受從 `state-mutate` 寫入。
+排車（建立行程並把預約排進去）走 `v2-schedule-trips`，一筆交易寫入行程、預約與事件（ADR 0003）。
+調度端改派、中斷、取消既有行程走 `v2-trip-write`（規則在 `_trip-rules.js`），它不接受帶預約的新行程，
+也不能替既有行程加掛預約；司機執行自己的行程走 `v2-trip-execute`。行程與取消紀錄都不再接受從
+`state-mutate` 寫入。
 
 - 只有行程機構的負責人、調度員可以寫；行程的機構建立後不能改
 - 新行程一律從 `scheduled` 開始；狀態照轉換表走，已開始的行程不能取消（請用中斷）
-- 指派的司機、車輛、新關聯的預約都必須屬於行程的機構
+- 指派的司機、車輛都必須屬於行程的機構；排車時預約也必須屬於行程的機構
 - 行程不能刪除；用 revision 做樂觀鎖
 
 ### 通知
@@ -240,7 +244,7 @@ context 沒設定這個變數時，建置會失敗，因為無從判斷。
 | 事件 | 產生的地方 | 收件人 |
 |---|---|---|
 | 承接 `booking_claimed` | `claim-booking` | 需求者（帶承接單位名稱） |
-| 排車 `booking_scheduled` | `booking-write` | 需求者 |
+| 排車 `booking_scheduled` | `schedule-trips` | 需求者 |
 | 指派、改派 `trip_assigned`／`trip_unassigned` | `trip-write` | 新、舊司機 |
 | 調度取消行程 `trip_cancelled` | `trip-write` | 司機 |
 | 需求者取消 `booking_cancelled`、`trip_cancelled` | `cancel-booking` | 需求者、司機 |

@@ -58,6 +58,10 @@ const writeBooking = (userId, record) => call(bookingWriteFn.handler, 'POST', us
 const mutate = (userId, changes) => call(mutateFn.handler, 'POST', userId, { changes });
 const tripWriteFn = require('../../netlify/functions/v2-trip-write');
 const writeTrips = (userId, changes) => call(tripWriteFn.handler, 'POST', userId, { changes });
+const scheduleFn = require('../../netlify/functions/v2-schedule-trips');
+/** 排車只走 command（ADR 0003）：建立行程並把這筆預約的去程排進去 */
+const scheduleTrip = (userId, trip, bookingId) => call(scheduleFn.handler, 'POST', userId,
+  { trips: [{ ...trip, bookingIds: [bookingId], bookingLegRefs: F.legRefsFor([bookingId]) }] });
 const claim = (userId, bookingId, organizationId) => call(claimFn.handler, 'POST', userId, { bookingId, organizationId });
 const cancel = (userId, bookingId) => call(cancelFn.handler, 'POST', userId, { bookingId, reasonCode: 'requester_no_longer_needed' });
 const load = (userId) => call(loadFn.handler, 'GET', userId);
@@ -71,7 +75,9 @@ function booking(id, extra = {}) {
     id, state: 'open', claimStatus: 'open', status: 'open', version: 1,
     requestedByUserId: U.req, name: '合成需求者', phone: '0911000001',
     pickupDate: '2099-01-01', pickupTime: '09:00', pickupAddress: ADDRESS, destination: '臺北市中正區公園路20號',
-    tripType: '單程', passengerCount: 1, wheelchairSlots: 0, rideshareConsent: true, ...extra
+    tripType: '單程', passengerCount: 1, wheelchairSlots: 0, rideshareConsent: true,
+    legs: [F.outboundLeg(id)],
+    ...extra
   };
 }
 /** 承接機構的調度員以預約端點更新預約（模擬前端 transition 後送出的整筆資料）。 */
@@ -168,9 +174,9 @@ async function newClaimed(id) {
   const trip = F.makeTrip({ id: tripId, organizationId: ORG_A, driverId: DRIVER_A, vehicleId: 'VEH-ACC-A',
     bookingId: 'BKG-ACC-5', startAt: F.addMinutes(new Date().toISOString(), 24 * 60),
     extra: { pickupAddress: ADDRESS, passengerSummary: '合成需求者' } });
-  const schedule = await opsUpdate(U.dspA, 'BKG-ACC-5', { state: 'scheduled', status: 'scheduled', claimStatus: 'claimed', tripId });
-  const tripWrite = await writeTrips(U.dspA, [{ collection: 'trips', id: tripId, record: trip }]);
-  record('A 排車：預約 scheduled、行程寫入', schedule.status === 200 && tripWrite.status === 200, `${outcome(schedule)} / ${outcome(tripWrite)}`);
+  const schedule = await scheduleTrip(U.dspA, trip, 'BKG-ACC-5');
+  record('A 排車：預約 scheduled、行程寫入', schedule.status === 200 && (await row('bookings', 'BKG-ACC-5')).data.state === 'scheduled'
+    && Boolean(await row('trips', tripId)), outcome(schedule));
   const lockedEdit = await writeBooking(U.req, { ...(await row('bookings', 'BKG-ACC-5')).data, pickupTime: '11:00' });
   record('排車後需求者不能改時間', lockedEdit.status === 400, outcome(lockedEdit));
   const backToOpen = await opsUpdate(U.dspA, 'BKG-ACC-5', { state: 'open' });
@@ -200,8 +206,7 @@ async function newClaimed(id) {
   record('（前提）A 接第五筆', await newClaimed(inProgress));
   const runTrip = F.makeTrip({ id: 'TRP-ACC-6', organizationId: ORG_A, driverId: DRIVER_A, vehicleId: 'VEH-ACC-A',
     bookingId: inProgress, startAt: new Date().toISOString() });
-  await opsUpdate(U.dspA, inProgress, { state: 'scheduled', status: 'scheduled', tripId: 'TRP-ACC-6' });
-  await writeTrips(U.dspA, [{ collection: 'trips', id: 'TRP-ACC-6', record: runTrip }]);
+  await scheduleTrip(U.dspA, runTrip, inProgress);
   await writeTrips(U.dspA, [{ collection: 'trips', id: 'TRP-ACC-6', expectedRevision: 1, record: { ...runTrip, status: 'in_progress' } }]);
   const cancelRunning = await cancel(U.req, inProgress);
   record('已開始的行程取消被拒，並說明原因', cancelRunning.status === 400 && /已開始/.test(cancelRunning.error.message)
@@ -224,9 +229,11 @@ async function newClaimed(id) {
   await mutate(U.dspB, [{ collection: 'vehicles', id: 'VEH-ACC-B', record: { id: 'VEH-ACC-B', organizationId: ORG_B, plate: 'B-0001' } }]);
   const otherVehicle = await writeTrips(U.dspA, [{ collection: 'trips', id: 'TRP-ACC-V', record: baseTrip('TRP-ACC-V', { vehicleId: 'VEH-ACC-B' }) }]);
   record('A 不能指派 B 的車輛', otherVehicle.status === 400 && /車輛/.test(otherVehicle.error.message), outcome(otherVehicle));
-  const otherBooking = await writeTrips(U.dspA, [{ collection: 'trips', id: 'TRP-ACC-BK',
-    record: baseTrip('TRP-ACC-BK', { bookingId: 'BKG-ACC-1', bookingIds: ['BKG-ACC-1'] }) }]);
-  record('A 不能把 B 承接的預約排進自己的行程', otherBooking.status === 400 && /不屬於此機構/.test(otherBooking.error.message), outcome(otherBooking));
+  const otherBooking = await scheduleTrip(U.dspA, baseTrip('TRP-ACC-BK'), 'BKG-ACC-1');
+  record('A 不能把 B 承接的預約排進自己的行程', [403, 404].includes(otherBooking.status) && !(await row('trips', 'TRP-ACC-BK')), outcome(otherBooking));
+  const viaTripWrite = await writeTrips(U.dspA, [{ collection: 'trips', id: 'TRP-ACC-BK2',
+    record: baseTrip('TRP-ACC-BK2', { bookingId: 'BKG-ACC-1', bookingIds: ['BKG-ACC-1'] }) }]);
+  record('行程寫入不能把預約排進行程（排車只走 command）', viaTripWrite.status === 400 && /排車功能/.test(viaTripWrite.error.message), outcome(viaTripWrite));
   const startedNew = await writeTrips(U.dspA, [{ collection: 'trips', id: 'TRP-ACC-S', record: baseTrip('TRP-ACC-S', { status: 'in_progress' }) }]);
   record('新行程不能直接是進行中', startedNew.status === 400, outcome(startedNew));
   const running = await tripRow('TRP-ACC-6');

@@ -32,6 +32,7 @@ const loadFn = require('../../netlify/functions/v2-state-load');
 const authorizationFn = require('../../netlify/functions/v2-benefit-authorization');
 const cancelFn = require('../../netlify/functions/v2-cancel-booking');
 const tripWriteFn = require('../../netlify/functions/v2-trip-write');
+const scheduleFn = require('../../netlify/functions/v2-schedule-trips');
 const executeFn = require('../../netlify/functions/v2-trip-execute');
 const F = require('../../tests/_trip-fixtures');
 
@@ -72,7 +73,8 @@ function booking(id, extra = {}) {
   return { id, state: 'open', claimStatus: 'open', status: 'open', requestedByUserId: U.req, recipientId: RECIPIENT,
     name: '合成需求者', phone: '0911000001', pickupDate: '2099-01-01', pickupTime: '09:00',
     pickupAddress: '新北市板橋區文化路一段188號', destination: '臺北市中正區公園路20號',
-    tripType: '單程', passengerCount: 1, wheelchairSlots: 0, rideshareConsent: true, ...extra };
+    tripType: '單程', passengerCount: 1, wheelchairSlots: 0, rideshareConsent: true,
+    legs: [F.outboundLeg(id)], ...extra };
 }
 
 (async () => {
@@ -243,10 +245,10 @@ function booking(id, extra = {}) {
 
   await call(claimFn.handler, 'POST', U.dsp, { bookingId: 'BKG-BEN-L3', organizationId: ORG });
   const TRIP = 'TRP-BEN-L3';
-  await writeBooking(U.dsp, { ...(await bookingRow('BKG-BEN-L3')), state: 'scheduled', status: 'scheduled', tripId: TRIP });
   const trip = F.makeTrip({ id: TRIP, organizationId: ORG, driverId: DRIVER, vehicleId: 'VEH-BEN-1', bookingId: 'BKG-BEN-L3',
-    startAt: F.addMinutes(new Date().toISOString(), 10), extra: { bookingIds: ['BKG-BEN-L3'] } });
-  const tw = await call(tripWriteFn.handler, 'POST', U.dsp, { changes: [{ collection: 'trips', id: TRIP, record: trip }] });
+    startAt: F.addMinutes(new Date().toISOString(), 10),
+    extra: { bookingIds: ['BKG-BEN-L3'], bookingLegRefs: F.legRefsFor(['BKG-BEN-L3']) } });
+  const tw = await call(scheduleFn.handler, 'POST', U.dsp, { trips: [trip] });
   record('（前提）排車並建立行程', tw.status === 200, outcome(tw));
   const tripState = async () => {
     const r = (await admin.query(`select data, organization_id, revision from app_state where collection = 'trips' and id = $1`, [TRIP])).rows[0];

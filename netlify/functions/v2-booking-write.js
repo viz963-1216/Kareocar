@@ -14,7 +14,7 @@
  *   - 退回公開池、不受理、重大修改需重新承接時，同一交易內撤銷原承接機構
  *     （app.revoke_booking_organization），原機構立即讀不到
  *   - 不能刪除預約；接案與取消有各自的端點
- *   - 進入排車時通知需求者（booking_scheduled）
+ *   - 不能排車：排車只走 v2-schedule-trips（ADR 0003），去程／回程的排車欄位一律沿用資料庫的值
  *
  * 整批在同一筆交易裡，任何一筆不合規則就整批不寫入。
  */
@@ -28,7 +28,6 @@ const { checkBookingWrite } = require('./_booking-rules');
 const benefit = require('./_benefit');
 
 const MAX_CHANGES = 50;
-const SCHEDULED_STATES = new Set(['partially_scheduled', 'scheduled']);
 const text = (v) => String(v === undefined || v === null ? '' : v).trim();
 
 /**
@@ -134,14 +133,6 @@ exports.handler = async (event) => {
           await client.query('select app.reserve_booking_benefit($1, $2)', [id, existing ? 'booking_amended' : 'booking_created']);
         }
 
-        // 排車：從未排車進入（部分）已排車時通知需求者
-        const fromState = existing ? String((existing.data && existing.data.state) || 'open') : null;
-        const toState = String(record.state || 'open');
-        if (existing && SCHEDULED_STATES.has(toState) && !SCHEDULED_STATES.has(fromState)) {
-          await client.query('select app.notify_booking_requester($1, $2, $3::jsonb, $4, $5)', [
-            id, 'booking_scheduled', JSON.stringify({ tripId: record.tripId || null }),
-            'booking_write_endpoint', `scheduled:${id}:${record.tripId || ''}`]);
-        }
         const saved = (await client.query(
           `select organization_id, version, updated_at from app_state where collection = 'bookings' and id = $1`, [id])).rows[0];
         results.push({

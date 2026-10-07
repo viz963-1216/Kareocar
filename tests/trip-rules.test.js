@@ -43,11 +43,14 @@ ok('車輛：有主檔就必須同機構；沒有主檔的舊資料接受', () =
 });
 ok('預約：新關聯的必須屬於此機構且可排車；原本就有的不重查', () => {
   const rec = { ...base, bookingId: 'B1', bookingIds: ['B1'] };
-  throwsCode(() => run({ record: rec }), 'VALIDATION_ERROR', /不屬於/);
-  throwsCode(() => run({ record: rec, scope: scope({ bookings: new Map([['B1', { organization_id: 'ORG-B', state: 'claimed' }]]) }) }), 'VALIDATION_ERROR', /不屬於/);
-  throwsCode(() => run({ record: rec, scope: scope({ bookings: new Map([['B1', { organization_id: ORG, state: 'cancelled' }]]) }) }), 'VALIDATION_ERROR', /不能排車/);
-  assert.ok(run({ record: rec, scope: scope({ bookings: new Map([['B1', { organization_id: ORG, state: 'claimed' }]]) }) }));
-  assert.ok(run({ record: rec, scope: scope({ bookings: new Map([['B1', { organization_id: 'ORG-B', state: 'claimed', leg_organization_ids: [ORG] }]]) }) }));
+  // 只有排車 command 能把預約排進行程（ADR 0003）
+  throwsCode(() => run({ record: rec, scope: scope({ bookings: new Map([['B1', { organization_id: ORG, state: 'claimed' }]]) }) }), 'VALIDATION_ERROR', /排車功能/);
+  const sched = (over) => run({ viaScheduleCommand: true, ...over });
+  throwsCode(() => sched({ record: rec }), 'VALIDATION_ERROR', /不屬於/);
+  throwsCode(() => sched({ record: rec, scope: scope({ bookings: new Map([['B1', { organization_id: 'ORG-B', state: 'claimed' }]]) }) }), 'VALIDATION_ERROR', /不屬於/);
+  throwsCode(() => sched({ record: rec, scope: scope({ bookings: new Map([['B1', { organization_id: ORG, state: 'cancelled' }]]) }) }), 'VALIDATION_ERROR', /不能排車/);
+  assert.ok(sched({ record: rec, scope: scope({ bookings: new Map([['B1', { organization_id: ORG, state: 'claimed' }]]) }) }));
+  assert.ok(sched({ record: rec, scope: scope({ bookings: new Map([['B1', { organization_id: 'ORG-B', state: 'claimed', leg_organization_ids: [ORG] }]]) }) }));
   assert.ok(run({ record: rec, existing: { data: rec } }));
 });
 console.log(`trip-rules: ${pass} passed`);

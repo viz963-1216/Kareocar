@@ -49,14 +49,21 @@ ok('需求者：排車後不能改時間地址，其他欄位可以', () => {
   throwsCode(() => checkBookingWrite({ actorUserId: ME, record: { id: 'B1', state: 'scheduled', pickupTime: '11:00' }, existing: existing('scheduled', {}, 'ORG-A'), roles }), 'VALIDATION_ERROR');
   assert.ok(checkBookingWrite({ actorUserId: ME, record: { id: 'B1', state: 'scheduled', pickupTime: '09:00', note: 'x' }, existing: existing('scheduled', {}, 'ORG-A'), roles }));
 });
-ok('承接機構：退回、不受理、過期都撤銷；排車不撤銷', () => {
+ok('承接機構：退回、不受理、過期都撤銷；一般修改不撤銷', () => {
   const roles = { ...none, opsOfExisting: true };
   for (const s of ['open', 'rejected', 'expired']) {
     assert.equal(checkBookingWrite({ actorUserId: 'D', record: { id: 'B1', state: s }, existing: existing('claimed', {}, 'ORG-A'), roles }).revoke, true, s);
   }
-  const r = checkBookingWrite({ actorUserId: 'D', record: { id: 'B1', state: 'scheduled' }, existing: existing('claimed', {}, 'ORG-A'), roles });
+  const r = checkBookingWrite({ actorUserId: 'D', record: { id: 'B1', state: 'claimed', note: 'x' }, existing: existing('claimed', {}, 'ORG-A'), roles });
   assert.equal(r.revoke, false);
   assert.equal(r.record.organizationId, 'ORG-A');
+});
+ok('承接機構：一般預約寫入不能排車（排車只走 command，ADR 0003）', () => {
+  const roles = { ...none, opsOfExisting: true };
+  for (const s of ['scheduled', 'partially_scheduled']) {
+    throwsCode(() => checkBookingWrite({ actorUserId: 'D', record: { id: 'B1', state: s }, existing: existing('claimed', {}, 'ORG-A'), roles }), 'VALIDATION_ERROR');
+  }
+  throwsCode(() => checkBookingWrite({ actorUserId: 'D', record: { id: 'B1', state: 'scheduled' }, existing: existing('partially_scheduled', {}, 'ORG-A'), roles }), 'VALIDATION_ERROR');
 });
 ok('承接機構：已排車不能退回公開池', () => {
   throwsCode(() => checkBookingWrite({ actorUserId: 'D', record: { id: 'B1', state: 'open' }, existing: existing('scheduled', {}, 'ORG-A'), roles: { ...none, opsOfExisting: true } }), 'VALIDATION_ERROR');

@@ -30,12 +30,14 @@ const bookingWriteFn = require('../../netlify/functions/v2-booking-write');
 const claimFn = require('../../netlify/functions/v2-claim-booking');
 const mutateFn = require('../../netlify/functions/v2-state-mutate');
 const scheduleFn = require('../../netlify/functions/v2-schedule-trips');
+const tripWriteFn = require('../../netlify/functions/v2-trip-write');
 
 const ORG_A = 'ORG-SCH-A';
 const ORG_B = 'ORG-SCH-B';
-const U = { req: 'USR-SCH-REQ', dspA: 'USR-SCH-DSPA', dspB: 'USR-SCH-DSPB', drvA: 'USR-SCH-DRVA', drvB: 'USR-SCH-DRVB' };
+const U = { req: 'USR-SCH-REQ', dspA: 'USR-SCH-DSPA', dspB: 'USR-SCH-DSPB', drvA: 'USR-SCH-DRVA', drvA2: 'USR-SCH-DRVA2', drvB: 'USR-SCH-DRVB', root: 'USR-SCH-ROOT' };
 const DRIVER_A = 'DRV-SCH-A';
 const DRIVER_B = 'DRV-SCH-B';
+const DRIVER_A2 = 'DRV-SCH-A2';
 const VEH_A = 'VEH-SCH-A';
 const VEH_B = 'VEH-SCH-B';
 
@@ -56,7 +58,7 @@ async function call(handler, userId, body) {
 }
 const outcome = (r) => `${r.status} ${r.error ? `${r.error.code} ${r.error.message}` : 'ok'}`;
 const row = async (collection, id) => (await admin.query(
-  'select organization_id, data, version from app_state where collection = $1 and id = $2', [collection, id])).rows[0];
+  'select organization_id, data, version, revision from app_state where collection = $1 and id = $2', [collection, id])).rows[0];
 const count = async (collection, where, params) => Number((await admin.query(
   `select count(*)::int as n from app_state where collection = $1 and ${where}`, [collection, ...params])).rows[0].n);
 const notifications = async (bookingId) => Number((await admin.query(
@@ -99,16 +101,20 @@ const schedule = (userId, body) => call(scheduleFn.handler, userId, body);
       ('${U.dspA}','合成調度 A','+886955000002','none',true),
       ('${U.dspB}','合成調度 B','+886955000003','none',true),
       ('${U.drvA}','合成司機 A','+886955000004','none',true),
-      ('${U.drvB}','合成司機 B','+886955000005','none',true);
+      ('${U.drvB}','合成司機 B','+886955000005','none',true),
+      ('${U.drvA2}','合成司機 A2','+886955000006','none',true),
+      ('${U.root}','合成平台管理者','+886955000009','super_admin',true);
     insert into memberships (id, user_id, organization_id, role, status) values
       ('M-SCH-REQ','${U.req}','ORG-REQ-001','requester','active'),
       ('M-SCH-DSPA','${U.dspA}','${ORG_A}','dispatcher','active'),
       ('M-SCH-DSPB','${U.dspB}','${ORG_B}','dispatcher','active'),
       ('M-SCH-DRVA','${U.drvA}','${ORG_A}','driver','active'),
-      ('M-SCH-DRVB','${U.drvB}','${ORG_B}','driver','active');
+      ('M-SCH-DRVB','${U.drvB}','${ORG_B}','driver','active'),
+      ('M-SCH-DRVA2','${U.drvA2}','${ORG_A}','driver','active');
     insert into drivers (id, user_id, organization_id, duty_status, active) values
       ('${DRIVER_A}','${U.drvA}','${ORG_A}','on_duty',true),
-      ('${DRIVER_B}','${U.drvB}','${ORG_B}','on_duty',true);
+      ('${DRIVER_B}','${U.drvB}','${ORG_B}','on_duty',true),
+      ('${DRIVER_A2}','${U.drvA2}','${ORG_A}','on_duty',true);
   `);
   await call(mutateFn.handler, U.dspA, { changes: [{ collection: 'vehicles', id: VEH_A, record: { id: VEH_A, organizationId: ORG_A, plate: 'A-0001' } }] });
   await call(mutateFn.handler, U.dspB, { changes: [{ collection: 'vehicles', id: VEH_B, record: { id: VEH_B, organizationId: ORG_B, plate: 'B-0001' } }] });
@@ -198,6 +204,88 @@ const schedule = (userId, body) => call(scheduleFn.handler, userId, body);
   console.log('--- 沒有預約的手動行程 ---');
   const manual = await schedule(U.dspA, { trips: [trip('TRP-SCH-M', [])] });
   record('手動行程也走同一個 command', manual.status === 200 && Boolean(await row('trips', 'TRP-SCH-M')), outcome(manual));
+
+  console.log('--- 排車只有一條路（#77）---');
+  await claimedBooking('BKG-SCH-BY1');
+  const by1 = await row('bookings', 'BKG-SCH-BY1');
+  const bypass = await call(bookingWriteFn.handler, U.dspA, { changes: [{ collection: 'bookings', id: 'BKG-SCH-BY1',
+    record: { ...by1.data, state: 'scheduled', status: 'scheduled', tripId: 'TRP-FAKE' } }] });
+  const by1after = await row('bookings', 'BKG-SCH-BY1');
+  record('預約寫入不能把已承接改成已排車', bypass.status === 400 && by1after.data.state === 'claimed' && by1after.version === by1.version, outcome(bypass));
+
+  await claimedBooking('BKG-SCH-BY2', { roundTrip: true });
+  const outOnly = await schedule(U.dspA, { trips: [trip('TRP-SCH-BY2', [{ bookingId: 'BKG-SCH-BY2', legId: 'BKG-SCH-BY2_outbound' }])] });
+  const by2 = await row('bookings', 'BKG-SCH-BY2');
+  const forgedLegs = by2.data.legs.map((l) => (l.direction === 'return'
+    ? { ...l, status: 'scheduled', tripId: 'TRP-FAKE', scheduledOrganizationId: ORG_A, scheduledAt: '2099-01-01T00:00:00.000Z' }
+    : { ...l, status: 'pending', tripId: null }));
+  const legWrite = await call(bookingWriteFn.handler, U.dspA, { changes: [{ collection: 'bookings', id: 'BKG-SCH-BY2',
+    record: { ...by2.data, legs: forgedLegs, note: '調度備註' } }] });
+  const by2after = (await row('bookings', 'BKG-SCH-BY2')).data;
+  const legOf = (b, dir) => b.legs.find((l) => l.direction === dir);
+  record('預約寫入改不了去程／回程的排車欄位（沿用資料庫），其他欄位照常更新',
+    outOnly.status === 200 && legWrite.status === 200 && by2after.note === '調度備註'
+      && legOf(by2after, 'outbound').status === 'scheduled' && legOf(by2after, 'outbound').tripId === 'TRP-SCH-BY2'
+      && legOf(by2after, 'return').status === 'pending' && !legOf(by2after, 'return').tripId,
+    `${outcome(legWrite)} return=${JSON.stringify(legOf(by2after, 'return'))}`);
+
+  await claimedBooking('BKG-SCH-BY3');
+  await claimedBooking('BKG-SCH-BY4');
+  const newWithBooking = await call(tripWriteFn.handler, U.dspA, { changes: [{ collection: 'trips', id: 'TRP-SCH-BY3',
+    record: trip('TRP-SCH-BY3', [{ bookingId: 'BKG-SCH-BY3', legId: 'BKG-SCH-BY3_outbound' }]) }] });
+  record('行程寫入不能建立帶預約的新行程', newWithBooking.status === 400 && !(await row('trips', 'TRP-SCH-BY3'))
+    && (await row('bookings', 'BKG-SCH-BY3')).data.state === 'claimed', outcome(newWithBooking));
+  const plain = await row('trips', 'TRP-SCH-M');
+  const addBooking = await call(tripWriteFn.handler, U.dspA, { changes: [{ collection: 'trips', id: 'TRP-SCH-M',
+    expectedRevision: plain.revision, record: { ...plain.data, bookingId: 'BKG-SCH-BY3', bookingIds: ['BKG-SCH-BY3'] } }] });
+  record('行程寫入不能替既有行程加掛預約', addBooking.status === 400
+    && !((await row('trips', 'TRP-SCH-M')).data.bookingIds || []).includes('BKG-SCH-BY3'), outcome(addBooking));
+  const scheduledTrip = await row('trips', 'TRP-SCH-1');
+  const reassign = await call(tripWriteFn.handler, U.dspA, { changes: [{ collection: 'trips', id: 'TRP-SCH-1',
+    expectedRevision: scheduledTrip.revision, record: { ...scheduledTrip.data, driverId: DRIVER_A2 } }] });
+  const afterReassign = await row('trips', 'TRP-SCH-1');
+  record('行程寫入改派已有預約的行程照常可以', reassign.status === 200 && afterReassign.data.driverId === DRIVER_A2, outcome(reassign));
+  const started = await call(tripWriteFn.handler, U.dspA, { changes: [{ collection: 'trips', id: 'TRP-SCH-1',
+    expectedRevision: afterReassign.revision, record: { ...afterReassign.data, status: 'in_progress' } }] });
+  const running = await row('trips', 'TRP-SCH-1');
+  const interrupted = await call(tripWriteFn.handler, U.dspA, { changes: [{ collection: 'trips', id: 'TRP-SCH-1',
+    expectedRevision: running.revision, record: { ...running.data, status: 'interrupted' } }] });
+  record('行程寫入中斷已有預約的行程照常可以', started.status === 200 && interrupted.status === 200
+    && (await row('trips', 'TRP-SCH-1')).data.status === 'interrupted', `${outcome(started)} / ${outcome(interrupted)}`);
+  const plainTrip = await schedule(U.dspA, { trips: [trip('TRP-SCH-CX', [{ bookingId: 'BKG-SCH-BY4', legId: 'BKG-SCH-BY4_outbound' }])] });
+  const toCancel = await row('trips', 'TRP-SCH-CX');
+  const cancelTrip = await call(tripWriteFn.handler, U.dspA, { changes: [{ collection: 'trips', id: 'TRP-SCH-CX',
+    expectedRevision: toCancel ? toCancel.revision : 0, record: { ...(toCancel ? toCancel.data : {}), status: 'cancelled' } }] });
+  record('行程寫入取消已有預約的行程照常可以', plainTrip.status === 200 && cancelTrip.status === 200, `${outcome(plainTrip)} / ${outcome(cancelTrip)}`);
+
+  // 規格審查找到的漏網路徑
+  await claimedBooking('BKG-SCH-BY5');
+  const by5 = await row('bookings', 'BKG-SCH-BY5');
+  const adminBypass = await call(bookingWriteFn.handler, U.root, { changes: [{ collection: 'bookings', id: 'BKG-SCH-BY5',
+    record: { ...by5.data, state: 'scheduled', status: 'scheduled' } }] });
+  record('平台管理者也不能經預約寫入排車', adminBypass.status === 400 && (await row('bookings', 'BKG-SCH-BY5')).data.state === 'claimed', outcome(adminBypass));
+  const legRefOnly = await call(tripWriteFn.handler, U.dspA, { changes: [{ collection: 'trips', id: 'TRP-SCH-LR',
+    record: { ...trip('TRP-SCH-LR', []), bookingLegRefs: [{ bookingId: 'BKG-SCH-BY5', legId: 'BKG-SCH-BY5_outbound' }] } }] });
+  record('行程寫入不能只用去程／回程引用掛上預約', legRefOnly.status === 400 && !(await row('trips', 'TRP-SCH-LR')), outcome(legRefOnly));
+  const rtTrip = await row('trips', 'TRP-SCH-RT1');
+  const addReturn = await call(tripWriteFn.handler, U.dspA, { changes: [{ collection: 'trips', id: 'TRP-SCH-RT1',
+    expectedRevision: rtTrip.revision, record: { ...rtTrip.data,
+      bookingLegRefs: [...(rtTrip.data.bookingLegRefs || []), { bookingId: 'BKG-SCH-RT', legId: 'BKG-SCH-RT_return' }] } }] });
+  record('行程寫入不能替既有行程加掛同一筆預約的另一段', addReturn.status === 400, outcome(addReturn));
+  const by2now = await row('bookings', 'BKG-SCH-BY2');
+  const dropLeg = await call(bookingWriteFn.handler, U.dspA, { changes: [{ collection: 'bookings', id: 'BKG-SCH-BY2',
+    record: { ...by2now.data, legs: by2now.data.legs.filter((l) => l.direction !== 'outbound') } }] });
+  const renameLeg = await call(bookingWriteFn.handler, U.dspA, { changes: [{ collection: 'bookings', id: 'BKG-SCH-BY2',
+    record: { ...by2now.data, legs: by2now.data.legs.map((l) => (l.direction === 'outbound' ? { ...l, id: 'BKG-SCH-BY2_x' } : l)) } }] });
+  const by2kept = (await row('bookings', 'BKG-SCH-BY2')).data;
+  record('預約寫入不能刪掉或改編號已排車的去程／回程', dropLeg.status === 400 && renameLeg.status === 400
+    && by2kept.legs.some((l) => l.id === 'BKG-SCH-BY2_outbound' && l.status === 'scheduled'), `${outcome(dropLeg)} / ${outcome(renameLeg)}`);
+  const sched1 = await row('bookings', 'BKG-SCH-P1');
+  const unschedule = await call(bookingWriteFn.handler, U.dspA, { changes: [{ collection: 'bookings', id: 'BKG-SCH-P1',
+    record: { ...sched1.data, state: 'partially_scheduled', status: 'partially_scheduled' } }] });
+  record('預約寫入不能把已排車改回部分排車（各段狀態只由排車決定）', unschedule.status === 400
+    && (await row('bookings', 'BKG-SCH-P1')).data.state === 'scheduled', outcome(unschedule));
+
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n結果：${results.length - failed.length} 通過 / ${failed.length} 失敗`);

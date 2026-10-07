@@ -23,17 +23,43 @@ const OWNER_TRANSITIONS = lifecycle.bookingWriteTransitions('owner');
 const OPS_TRANSITIONS = lifecycle.bookingWriteTransitions('ops');
 // 轉到這些狀態時原承接機構失去存取
 const REVOKE_STATES = new Set(lifecycle.BOOKING_REVOKE_STATES);
+const SCHEDULING_STATES = new Set(['partially_scheduled', 'scheduled']);
 
 // 只能由伺服器或專用流程寫的欄位：一律沿用資料庫裡的值
 const SERVER_OWNED = [
   'requestedByUserId', 'claimedByUserId', 'claimedAt', 'previousOrganizationIds',
-  'cancelledAt', 'cancelledByUserId', 'cancelReasonCode', 'cancelReasonText', 'cancelledTripIds'
+  'cancelledAt', 'cancelledByUserId', 'cancelReasonCode', 'cancelReasonText', 'cancelledTripIds',
+  'tripId' // 舊版欄位，由排車寫入
 ];
 // 進入排車後需求者不能改的內容
 const REQUESTER_LOCKED = [
   'pickupDate', 'pickupTime', 'pickupAddress', 'destination', 'returnDate', 'returnTime',
   'tripType', 'passengerCount', 'wheelchairSlots', 'name', 'phone'
 ];
+
+// 去程／回程的排車欄位只由排車 command（v2-schedule-trips）寫入，一般預約寫入一律沿用資料庫的值（ADR 0003）
+// 已排車的段不能被移除或改編號，否則排車紀錄會跟著消失
+function keepLegScheduling(out, before) {
+  if (!Array.isArray(out.legs)) return;
+  const stored = new Map((Array.isArray(before.legs) ? before.legs : []).map((l) => [l && l.id, l]));
+  const sent = new Set(out.legs.map((l) => l && l.id));
+  for (const [id, leg] of stored) {
+    if (leg && leg.status === lifecycle.BOOKING_LEG_STATUS.SCHEDULED && !sent.has(id)) {
+      throw ruleError('VALIDATION_ERROR', `${leg.label || '這一段'}已經排車，不能移除`);
+    }
+  }
+  out.legs = out.legs.map((leg) => {
+    if (!leg || typeof leg !== 'object') return leg;
+    const prev = stored.get(leg.id);
+    const next = { ...leg };
+    for (const k of lifecycle.LEG_SCHEDULING_FIELDS) {
+      if (prev && k in prev) next[k] = prev[k];
+      else if (prev) delete next[k];
+      else next[k] = k === 'status' ? lifecycle.BOOKING_LEG_STATUS.PENDING : null; // 新增的段一律從待排車開始
+    }
+    return next;
+  });
+}
 
 const stateOf = (record) => {
   const s = String((record && record.state) || '').trim();
@@ -89,6 +115,10 @@ function checkBookingWrite({ actorUserId, record, existing, roles }) {
 
   const before = existing.data || {};
   const fromState = stateOf(before);
+  // 不分角色（平台管理者也一樣）：預約的排車狀態只能由排車 command 改變（ADR 0003）
+  if (fromState !== toState && (SCHEDULING_STATES.has(toState) || SCHEDULING_STATES.has(fromState))) {
+    throw ruleError('VALIDATION_ERROR', '排車狀態只能由排車功能改變');
+  }
   if (!roles.admin) {
     const allowed = new Set([
       ...(roles.ownsExisting ? (OWNER_TRANSITIONS[fromState] || [fromState]) : []),
@@ -108,6 +138,7 @@ function checkBookingWrite({ actorUserId, record, existing, roles }) {
   for (const k of SERVER_OWNED) {
     if (k in before) out[k] = before[k]; else delete out[k];
   }
+  keepLegScheduling(out, before);
   const revoke = Boolean(existing.organization_id) && REVOKE_STATES.has(toState);
   out.organizationId = revoke ? null : (existing.organization_id || null);
   if (revoke) {

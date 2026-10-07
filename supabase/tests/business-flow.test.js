@@ -202,6 +202,26 @@ async function fixtureScheduled(bookingId, tripId) {
   } finally { c.release(); }
 }
 
+/**
+ * 狀態 fixture：直接寫入一趟已排車行程（含預約）。排車只能走 v2-schedule-trips（ADR 0003），
+ * 行程端點不再接受新的預約；這裡只是準備取消情境的資料，不驗排車。
+ */
+async function fixtureTrip(trip, organizationId = ORG_A) {
+  const c = await admin.connect();
+  try {
+    await c.query('begin');
+    await c.query(`select set_config('app.state_scope_override','1',true)`);
+    await c.query(
+      `insert into app_state (collection, id, trip_id, booking_id, data, revision)
+         values ('trips', $1, $1, $2, $3, 1)`, [trip.id, trip.bookingId || null, JSON.stringify(trip)]);
+    // 觸發器會清掉 INSERT 的組織；UPDATE 在 override 下才保留
+    await c.query(`update app_state set organization_id = $2, revision = 1 where collection = 'trips' and id = $1`,
+      [trip.id, organizationId]);
+    await c.query('commit');
+  } catch (e) { await c.query('rollback'); throw e; } finally { c.release(); }
+  return { status: 200 };
+}
+
 // ================================================================ 情境 1
 async function scenario1(t) {
   const S = '情境1 接案';
@@ -525,11 +545,8 @@ async function scenario3(t) {
   // 狀態 fixture（非斷言）：刻意不走情境 1 的接案端點，讓本情境只驗取消。
   await fixtureScheduled(bookingId, tripId);
 
-  const tripCreated = await tripWriteAs(t.dspA, [{
-    collection: 'trips', id: tripId,
-    record: scheduledTrip(tripId, DRIVER.a1, { bookingId, bookingIds: [bookingId] })
-  }]);
-  record(S, '調度員 A 為此預約建立行程', tripCreated.status === 200, outcome(tripCreated));
+  const tripCreated = await fixtureTrip(scheduledTrip(tripId, DRIVER.a1, { bookingId, bookingIds: [bookingId] }));
+  record(S, '（資料準備）此預約的已排車行程', tripCreated.status === 200, outcome(tripCreated));
 
   const reqLoad = await loadAs(t.req);
   record(S, '需求者的 state-load 含自己的預約',
@@ -650,11 +667,9 @@ async function scenario3(t) {
   const rt2 = 'TRP-FLOW-S3R-2';
   await bookingWriteAs(t.req, [{ collection: 'bookings', id: rb, record: openBooking(rb) }]);
   await fixtureScheduled(rb, rt1);
-  // 新行程一律從 scheduled 開始，第二趟再由調度改成 in_progress
-  const two = await tripWriteAs(t.dspA, [
-    { collection: 'trips', id: rt1, record: scheduledTrip(rt1, DRIVER.a1, { bookingId: rb, bookingIds: [rb] }) },
-    { collection: 'trips', id: rt2, record: scheduledTrip(rt2, DRIVER.a1, { bookingId: rb, bookingIds: [rb] }) }
-  ]);
+  // 兩趟都從 scheduled 開始，第二趟再由調度改成 in_progress
+  await fixtureTrip(scheduledTrip(rt1, DRIVER.a1, { bookingId: rb, bookingIds: [rb] }));
+  const two = await fixtureTrip(scheduledTrip(rt2, DRIVER.a1, { bookingId: rb, bookingIds: [rb] }));
   const started = await tripWriteAs(t.dspA, [{ collection: 'trips', id: rt2, expectedRevision: 1,
     record: { ...(await row('trips', rt2)).data, status: 'in_progress' } }]);
   record(S, '回滾情境 fixture：一趟 scheduled、一趟 in_progress', two.status === 200 && started.status === 200,
@@ -672,8 +687,7 @@ async function scenario3(t) {
   await bookingWriteAs(t.req2, [{ collection: 'bookings', id: p2, record: openBooking(p2, U.req2) }]);
   await fixtureScheduled(p1, pt);
   await fixtureScheduled(p2, pt);
-  const pooled = await tripWriteAs(t.dspA, [{ collection: 'trips', id: pt,
-    record: scheduledTrip(pt, DRIVER.a1, { bookingIds: [p1, p2], isPooled: true }) }]);
+  const pooled = await fixtureTrip(scheduledTrip(pt, DRIVER.a1, { bookingIds: [p1, p2], isPooled: true }));
   record(S, '共乘 fixture：一趟行程載兩筆預約', pooled.status === 200, outcome(pooled));
   await expectRejected(S, '[待產品決策] 需求者取消共乘中的一筆預約',
     cancelAs(t.req, { bookingId: p1, reasonCode: 'requester_no_longer_needed' }),

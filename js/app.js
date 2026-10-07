@@ -555,7 +555,7 @@ async function authoritativeFlush_(){
     const payload=rows.map(({collection,id,record,deleted,expectedRevision})=>({collection,id,record,deleted,expectedRevision}));
     // 預約走預約端點：伺服器檢查狀態轉換、計算地址欄位、轉手時撤銷原機構存取。
     // 行程走行程端點：檢查機構歸屬、司機、車輛與狀態轉換。
-    // 依序送出：預約 → 行程 → 其他資料，排車時行程才會在預約更新之後寫入。
+    // 依序送出：預約 → 行程 → 其他資料。排車不走這裡，一律送 schedule-trips（ADR 0003）。
     const identityRows=payload.filter(x=>IDENTITY_WRITE_COLLECTIONS.has(x.collection));
     const bookingRows=payload.filter(x=>x.collection==='bookings');
     const tripRows=payload.filter(x=>x.collection==='trips');
