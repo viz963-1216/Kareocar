@@ -26,11 +26,11 @@ ok('一般預約寫入：需求者只能改公開與已承接的預約，重大�
     open: ['expired', 'open']
   });
 });
-ok('一般預約寫入：承接機構可以退回、不受理、逾期，排好的可以退回部分排車', () => {
+ok('一般預約寫入：承接機構可以退回、不受理、逾期；排車狀態只由排車 command 改變', () => {
   assert.deepEqual(sorted(L.bookingWriteTransitions('ops')), {
     claimed: ['claimed', 'expired', 'open', 'rejected'],
     partially_scheduled: ['partially_scheduled'],
-    scheduled: ['partially_scheduled', 'scheduled']
+    scheduled: ['scheduled']
   });
 });
 ok('接案、取消、排車有專用端點，一般預約寫入不接受', () => {

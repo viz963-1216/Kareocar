@@ -19,6 +19,21 @@ const ruleError = (code, message) => Object.assign(new Error(message), { code })
 const text = (v) => String(v === undefined || v === null ? '' : v).trim();
 const statusOf = (r) => text(r && r.status) || 'scheduled';
 
+/**
+ * 行程掛上預約的所有寫法：bookingIds、bookingId、去程／回程引用、停靠點與乘客上的預約。
+ * 回傳「預約」與「預約:段」兩種鍵，用來判斷這次寫入有沒有新掛上預約或新的一段。
+ */
+function bookingRefsOf(record) {
+  const keys = new Set(bookingIdsOf(record));
+  for (const r of (Array.isArray(record && record.bookingLegRefs) ? record.bookingLegRefs : [])) {
+    if (text(r && r.bookingId)) { keys.add(text(r.bookingId)); keys.add(`${text(r.bookingId)}:${text(r.legId)}`); }
+  }
+  for (const list of [record && record.steps, record && record.passengers]) {
+    for (const x of (Array.isArray(list) ? list : [])) if (text(x && x.bookingId)) keys.add(text(x.bookingId));
+  }
+  return keys;
+}
+
 /** 行程關聯的所有預約 ID（bookingId 與 bookingIds）。 */
 function bookingIdsOf(record) {
   const ids = new Set(Array.isArray(record && record.bookingIds) ? record.bookingIds.map(text).filter(Boolean) : []);
@@ -33,10 +48,10 @@ function bookingIdsOf(record) {
  * @param {string}  p.organizationId 行程的機構（新增時取自 record，修改時取自資料庫）
  * @param {boolean} p.canManage   呼叫者是該機構的負責人、調度員或平台管理者
  * @param {object}  p.scope       app.trip_resource_scope 的結果：{ driver, vehicle, bookings: Map }
- * @param {boolean} [p.scheduling] 由排車 command（v2-schedule-trips）呼叫；只有它能把預約排進行程（ADR 0003）
+ * @param {boolean} [p.viaScheduleCommand] 由排車 command（v2-schedule-trips）呼叫；只有它能把預約排進行程（ADR 0003）
  * @returns {object} 要存的行程
  */
-function checkTripWrite({ record, existing, organizationId, canManage, scope, scheduling = false }) {
+function checkTripWrite({ record, existing, organizationId, canManage, scope, viaScheduleCommand = false }) {
   if (!organizationId) throw ruleError('VALIDATION_ERROR', '行程必須屬於一個機構');
   if (!canManage) throw ruleError('FORBIDDEN', '只有行程所屬機構的負責人或調度員可以修改行程');
   const out = { ...record, organizationId };
@@ -69,10 +84,15 @@ function checkTripWrite({ record, existing, organizationId, canManage, scope, sc
     if (v && v.organization_id !== organizationId) throw ruleError('VALIDATION_ERROR', '指派的車輛不屬於此機構');
   }
 
+  if (!viaScheduleCommand) {
+    const had = before ? bookingRefsOf(before) : new Set();
+    for (const key of bookingRefsOf(out)) {
+      if (!had.has(key)) throw ruleError('VALIDATION_ERROR', '把預約排進行程請使用排車功能');
+    }
+  }
   const had = new Set(before ? bookingIdsOf(before) : []);
   for (const id of bookingIdsOf(out)) {
     if (had.has(id)) continue;
-    if (!scheduling) throw ruleError('VALIDATION_ERROR', '把預約排進行程請使用排車功能');
     const b = scope.bookings.get(id);
     const owned = b && (b.organization_id === organizationId || (b.leg_organization_ids || []).includes(organizationId));
     if (!owned) throw ruleError('VALIDATION_ERROR', `預約 ${id} 不屬於此機構，不能排進行程`);

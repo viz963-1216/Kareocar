@@ -61,7 +61,7 @@ const writeTrips = (userId, changes) => call(tripWriteFn.handler, 'POST', userId
 const scheduleFn = require('../../netlify/functions/v2-schedule-trips');
 /** 排車只走 command（ADR 0003）：建立行程並把這筆預約的去程排進去 */
 const scheduleTrip = (userId, trip, bookingId) => call(scheduleFn.handler, 'POST', userId,
-  { trips: [{ ...trip, bookingIds: [bookingId], bookingLegRefs: [{ bookingId, legId: `${bookingId}_outbound` }] }] });
+  { trips: [{ ...trip, bookingIds: [bookingId], bookingLegRefs: F.legRefsFor([bookingId]) }] });
 const claim = (userId, bookingId, organizationId) => call(claimFn.handler, 'POST', userId, { bookingId, organizationId });
 const cancel = (userId, bookingId) => call(cancelFn.handler, 'POST', userId, { bookingId, reasonCode: 'requester_no_longer_needed' });
 const load = (userId) => call(loadFn.handler, 'GET', userId);
@@ -76,8 +76,7 @@ function booking(id, extra = {}) {
     requestedByUserId: U.req, name: '合成需求者', phone: '0911000001',
     pickupDate: '2099-01-01', pickupTime: '09:00', pickupAddress: ADDRESS, destination: '臺北市中正區公園路20號',
     tripType: '單程', passengerCount: 1, wheelchairSlots: 0, rideshareConsent: true,
-    legs: [{ id: `${id}_outbound`, schemaVersion: 1, sequence: 1, direction: 'outbound', label: '去程', status: 'pending',
-      requestedPickupAt: '2099-01-01T01:00:00.000Z', tripId: null, scheduledOrganizationId: null, scheduledAt: null }],
+    legs: [F.outboundLeg(id)],
     ...extra
   };
 }

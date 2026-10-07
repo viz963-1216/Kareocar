@@ -90,8 +90,7 @@ const execute = (userId, request) => call(executeFn.handler, 'POST', userId, req
     id: BOOKING, state: 'open', claimStatus: 'open', status: 'open', requestedByUserId: U.req, name: '合成需求者', phone: '0911000001',
     pickupDate: '2099-01-01', pickupTime: '09:00', pickupAddress: '新北市板橋區文化路一段188號', destination: '臺北市中正區公園路20號',
     tripType: '單程', passengerCount: 1, wheelchairSlots: 0, rideshareConsent: true,
-    legs: [{ id: `${BOOKING}_outbound`, schemaVersion: 1, sequence: 1, direction: 'outbound', label: '去程', status: 'pending',
-      requestedPickupAt: '2099-01-01T01:00:00.000Z', tripId: null, scheduledOrganizationId: null, scheduledAt: null }] } }] });
+    legs: [F.outboundLeg(BOOKING)] } }] });
   record('需求者建立預約', created.status === 200, outcome(created));
   record('建立預約時沒有任何通知', (await ntfs()).length === 0);
 
@@ -105,7 +104,7 @@ const execute = (userId, request) => call(executeFn.handler, 'POST', userId, req
   console.log('--- 排車與指派司機 ---');
   // 排車只走 command（ADR 0003）：一次建立行程並把預約排進去
   const trip = F.makeTrip({ id: TRIP, organizationId: ORG, driverId: DRV.d1, vehicleId: 'VEH-NTF-1', bookingId: BOOKING,
-    startAt: F.addMinutes(nowIso(), 10), extra: { bookingIds: [BOOKING], bookingLegRefs: [{ bookingId: BOOKING, legId: `${BOOKING}_outbound` }] } });
+    startAt: F.addMinutes(nowIso(), 10), extra: { bookingIds: [BOOKING], bookingLegRefs: F.legRefsFor([BOOKING]) } });
   const scheduled = await call(scheduleFn.handler, 'POST', U.dsp, { trips: [trip] });
   const sched = await ntfs(`template = 'booking_scheduled'`);
   record('排車後通知需求者：booking_scheduled', scheduled.status === 200 && sched.length === 1

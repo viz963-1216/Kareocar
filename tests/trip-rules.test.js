@@ -45,7 +45,7 @@ ok('預約：新關聯的必須屬於此機構且可排車；原本就有的不�
   const rec = { ...base, bookingId: 'B1', bookingIds: ['B1'] };
   // 只有排車 command 能把預約排進行程（ADR 0003）
   throwsCode(() => run({ record: rec, scope: scope({ bookings: new Map([['B1', { organization_id: ORG, state: 'claimed' }]]) }) }), 'VALIDATION_ERROR', /排車功能/);
-  const sched = (over) => run({ scheduling: true, ...over });
+  const sched = (over) => run({ viaScheduleCommand: true, ...over });
   throwsCode(() => sched({ record: rec }), 'VALIDATION_ERROR', /不屬於/);
   throwsCode(() => sched({ record: rec, scope: scope({ bookings: new Map([['B1', { organization_id: 'ORG-B', state: 'claimed' }]]) }) }), 'VALIDATION_ERROR', /不屬於/);
   throwsCode(() => sched({ record: rec, scope: scope({ bookings: new Map([['B1', { organization_id: ORG, state: 'cancelled' }]]) }) }), 'VALIDATION_ERROR', /不能排車/);

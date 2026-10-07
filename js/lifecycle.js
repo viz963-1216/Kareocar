@@ -32,7 +32,6 @@
     ['claimed', 'cancelled', 'cancel', 'owner'],
     ['partially_scheduled', 'scheduled', 'schedule', 'ops'],
     ['partially_scheduled', 'cancelled', 'cancel', 'owner'],
-    ['scheduled', 'partially_scheduled', 'unschedule', 'ops'],
     ['scheduled', 'cancelled', 'cancel', 'owner']
   ].map((edge) => Object.freeze(edge)));
 
@@ -68,6 +67,8 @@
 
   // ---------------------------------------------------------------- 預約的去程／回程（leg）排車
   const BOOKING_LEG_STATUS = Object.freeze({ PENDING: 'pending', SCHEDULED: 'scheduled', CANCELLED: 'cancelled' });
+  // 去程／回程裡只由排車（scheduleBookingLeg）寫入的欄位；一般預約寫入一律沿用資料庫的值
+  const LEG_SCHEDULING_FIELDS = Object.freeze(['status', 'tripId', 'scheduledOrganizationId', 'scheduledAt']);
   const legsOf = (booking) => (booking && Array.isArray(booking.legs) ? booking.legs : []);
 
   /** 下一個還沒排車的 leg（依 sequence）。 */
@@ -153,7 +154,7 @@
   return Object.freeze({
     BOOKING_STATES, BOOKING_EDGES, BOOKING_REVOKE_STATES,
     bookingTargets, bookingWriteTransitions,
-    BOOKING_LEG_STATUS, nextPendingLeg, legResponsibleOrganization, scheduleBookingLeg,
+    BOOKING_LEG_STATUS, LEG_SCHEDULING_FIELDS, nextPendingLeg, legResponsibleOrganization, scheduleBookingLeg,
     TRIP_STATUSES, TRIP_STATUS_TRANSITIONS, TRIP_CORRECTION_TRANSITIONS,
     canTripTransition
   });

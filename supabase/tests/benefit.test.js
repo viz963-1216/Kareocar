@@ -74,8 +74,7 @@ function booking(id, extra = {}) {
     name: '合成需求者', phone: '0911000001', pickupDate: '2099-01-01', pickupTime: '09:00',
     pickupAddress: '新北市板橋區文化路一段188號', destination: '臺北市中正區公園路20號',
     tripType: '單程', passengerCount: 1, wheelchairSlots: 0, rideshareConsent: true,
-    legs: [{ id: `${id}_outbound`, schemaVersion: 1, sequence: 1, direction: 'outbound', label: '去程', status: 'pending',
-      requestedPickupAt: '2099-01-01T01:00:00.000Z', tripId: null, scheduledOrganizationId: null, scheduledAt: null }], ...extra };
+    legs: [F.outboundLeg(id)], ...extra };
 }
 
 (async () => {
@@ -248,7 +247,7 @@ function booking(id, extra = {}) {
   const TRIP = 'TRP-BEN-L3';
   const trip = F.makeTrip({ id: TRIP, organizationId: ORG, driverId: DRIVER, vehicleId: 'VEH-BEN-1', bookingId: 'BKG-BEN-L3',
     startAt: F.addMinutes(new Date().toISOString(), 10),
-    extra: { bookingIds: ['BKG-BEN-L3'], bookingLegRefs: [{ bookingId: 'BKG-BEN-L3', legId: 'BKG-BEN-L3_outbound' }] } });
+    extra: { bookingIds: ['BKG-BEN-L3'], bookingLegRefs: F.legRefsFor(['BKG-BEN-L3']) } });
   const tw = await call(scheduleFn.handler, 'POST', U.dsp, { trips: [trip] });
   record('（前提）排車並建立行程', tw.status === 200, outcome(tw));
   const tripState = async () => {

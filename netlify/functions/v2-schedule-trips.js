@@ -129,7 +129,7 @@ exports.handler = async (event) => {
 
         let record;
         try {
-          record = checkTripWrite({ record: trip, existing: null, organizationId, scheduling: true,
+          record = checkTripWrite({ record: trip, existing: null, organizationId, viaScheduleCommand: true,
             canManage: await isOps(organizationId), scope: await resourceScope(client, trip) });
         } catch (error) {
           fail(error.code || 'VALIDATION_ERROR', error.message);
