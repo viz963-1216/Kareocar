@@ -36,8 +36,9 @@
     ['scheduled', 'cancelled', 'cancel', 'owner']
   ].map((edge) => Object.freeze(edge)));
 
-  // 這些動作有專用端點（v2-claim-booking、v2-cancel-booking），一般的預約寫入不接受
-  const DEDICATED_BOOKING_ACTIONS = Object.freeze(['claim', 'cancel']);
+  // 這些動作有專用端點（v2-claim-booking、v2-cancel-booking、v2-schedule-trips），一般的預約寫入不接受。
+  // 排車只能走 command（ADR 0003），否則會寫出「已排車卻沒有行程」的預約
+  const DEDICATED_BOOKING_ACTIONS = Object.freeze(['claim', 'cancel', 'schedule']);
   // 各角色可以「不改狀態、只改內容」的狀態
   const BOOKING_EDITABLE = Object.freeze({
     owner: Object.freeze(['open', 'claimed']),

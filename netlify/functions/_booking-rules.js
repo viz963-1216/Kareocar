@@ -35,6 +35,29 @@ const REQUESTER_LOCKED = [
   'tripType', 'passengerCount', 'wheelchairSlots', 'name', 'phone'
 ];
 
+// 去程／回程的排車欄位只由排車 command（v2-schedule-trips）寫入，一般預約寫入一律沿用資料庫的值（ADR 0003）
+const LEG_SCHEDULING = ['status', 'tripId', 'scheduledOrganizationId', 'scheduledAt'];
+
+function keepLegScheduling(out, before) {
+  if ('tripId' in before) out.tripId = before.tripId; else delete out.tripId;
+  if (!Array.isArray(out.legs)) return;
+  const stored = new Map((Array.isArray(before.legs) ? before.legs : []).map((l) => [l && l.id, l]));
+  // 取消有專用端點；取消後前端把每一段標成已取消，這時接受
+  const cancelled = stateOf(before) === 'cancelled';
+  out.legs = out.legs.map((leg) => {
+    if (!leg || typeof leg !== 'object') return leg;
+    const prev = stored.get(leg.id);
+    const next = { ...leg };
+    for (const k of LEG_SCHEDULING) {
+      if (k === 'status' && cancelled && leg.status === 'cancelled') continue;
+      if (prev && k in prev) next[k] = prev[k];
+      else if (prev) delete next[k];
+      else next[k] = k === 'status' ? 'pending' : null; // 新增的段一律從待排車開始
+    }
+    return next;
+  });
+}
+
 const stateOf = (record) => {
   const s = String((record && record.state) || '').trim();
   return s || 'open';
@@ -108,6 +131,7 @@ function checkBookingWrite({ actorUserId, record, existing, roles }) {
   for (const k of SERVER_OWNED) {
     if (k in before) out[k] = before[k]; else delete out[k];
   }
+  keepLegScheduling(out, before);
   const revoke = Boolean(existing.organization_id) && REVOKE_STATES.has(toState);
   out.organizationId = revoke ? null : (existing.organization_id || null);
   if (revoke) {

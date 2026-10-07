@@ -33,9 +33,10 @@ function bookingIdsOf(record) {
  * @param {string}  p.organizationId 行程的機構（新增時取自 record，修改時取自資料庫）
  * @param {boolean} p.canManage   呼叫者是該機構的負責人、調度員或平台管理者
  * @param {object}  p.scope       app.trip_resource_scope 的結果：{ driver, vehicle, bookings: Map }
+ * @param {boolean} [p.scheduling] 由排車 command（v2-schedule-trips）呼叫；只有它能把預約排進行程（ADR 0003）
  * @returns {object} 要存的行程
  */
-function checkTripWrite({ record, existing, organizationId, canManage, scope }) {
+function checkTripWrite({ record, existing, organizationId, canManage, scope, scheduling = false }) {
   if (!organizationId) throw ruleError('VALIDATION_ERROR', '行程必須屬於一個機構');
   if (!canManage) throw ruleError('FORBIDDEN', '只有行程所屬機構的負責人或調度員可以修改行程');
   const out = { ...record, organizationId };
@@ -71,6 +72,7 @@ function checkTripWrite({ record, existing, organizationId, canManage, scope }) 
   const had = new Set(before ? bookingIdsOf(before) : []);
   for (const id of bookingIdsOf(out)) {
     if (had.has(id)) continue;
+    if (!scheduling) throw ruleError('VALIDATION_ERROR', '把預約排進行程請使用排車功能');
     const b = scope.bookings.get(id);
     const owned = b && (b.organization_id === organizationId || (b.leg_organization_ids || []).includes(organizationId));
     if (!owned) throw ruleError('VALIDATION_ERROR', `預約 ${id} 不屬於此機構，不能排進行程`);

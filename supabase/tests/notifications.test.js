@@ -27,6 +27,7 @@ const admin = new Pool({ host, port: Number(process.env.PGPORT), database: 'care
 const db = require('../../netlify/functions/_db');
 const bookingWriteFn = require('../../netlify/functions/v2-booking-write');
 const tripWriteFn = require('../../netlify/functions/v2-trip-write');
+const scheduleFn = require('../../netlify/functions/v2-schedule-trips');
 const claimFn = require('../../netlify/functions/v2-claim-booking');
 const executeFn = require('../../netlify/functions/v2-trip-execute');
 const loadFn = require('../../netlify/functions/v2-state-load');
@@ -88,7 +89,9 @@ const execute = (userId, request) => call(executeFn.handler, 'POST', userId, req
   const created = await call(bookingWriteFn.handler, 'POST', U.req, { changes: [{ collection: 'bookings', id: BOOKING, record: {
     id: BOOKING, state: 'open', claimStatus: 'open', status: 'open', requestedByUserId: U.req, name: '合成需求者', phone: '0911000001',
     pickupDate: '2099-01-01', pickupTime: '09:00', pickupAddress: '新北市板橋區文化路一段188號', destination: '臺北市中正區公園路20號',
-    tripType: '單程', passengerCount: 1, wheelchairSlots: 0, rideshareConsent: true } }] });
+    tripType: '單程', passengerCount: 1, wheelchairSlots: 0, rideshareConsent: true,
+    legs: [{ id: `${BOOKING}_outbound`, schemaVersion: 1, sequence: 1, direction: 'outbound', label: '去程', status: 'pending',
+      requestedPickupAt: '2099-01-01T01:00:00.000Z', tripId: null, scheduledOrganizationId: null, scheduledAt: null }] } }] });
   record('需求者建立預約', created.status === 200, outcome(created));
   record('建立預約時沒有任何通知', (await ntfs()).length === 0);
 
@@ -100,8 +103,10 @@ const execute = (userId, request) => call(executeFn.handler, 'POST', userId, req
     && claimed.payload.pickupDate === '2099-01-01' && claimed.source === 'claim_booking_endpoint', outcome(claim));
 
   console.log('--- 排車與指派司機 ---');
-  const scheduled = await call(bookingWriteFn.handler, 'POST', U.dsp, { changes: [{ collection: 'bookings', id: BOOKING,
-    record: { ...(await bookingData()), state: 'scheduled', status: 'scheduled', tripId: TRIP } }] });
+  // 排車只走 command（ADR 0003）：一次建立行程並把預約排進去
+  const trip = F.makeTrip({ id: TRIP, organizationId: ORG, driverId: DRV.d1, vehicleId: 'VEH-NTF-1', bookingId: BOOKING,
+    startAt: F.addMinutes(nowIso(), 10), extra: { bookingIds: [BOOKING], bookingLegRefs: [{ bookingId: BOOKING, legId: `${BOOKING}_outbound` }] } });
+  const scheduled = await call(scheduleFn.handler, 'POST', U.dsp, { trips: [trip] });
   const sched = await ntfs(`template = 'booking_scheduled'`);
   record('排車後通知需求者：booking_scheduled', scheduled.status === 200 && sched.length === 1
     && sched[0].recipient_user_id === U.req && sched[0].payload.tripId === TRIP, outcome(scheduled));
@@ -109,11 +114,8 @@ const execute = (userId, request) => call(executeFn.handler, 'POST', userId, req
     record: { ...(await bookingData()), note: '合成備註' } }] });
   record('已排車的預約再修改不重複通知', again.status === 200 && (await ntfs(`template = 'booking_scheduled'`)).length === 1, outcome(again));
 
-  const trip = F.makeTrip({ id: TRIP, organizationId: ORG, driverId: DRV.d1, vehicleId: 'VEH-NTF-1', bookingId: BOOKING,
-    startAt: F.addMinutes(nowIso(), 10), extra: { bookingIds: [BOOKING] } });
-  const tripCreated = await call(tripWriteFn.handler, 'POST', U.dsp, { changes: [{ collection: 'trips', id: TRIP, record: trip }] });
-  record('建立行程後通知被指派的司機一：trip_assigned', tripCreated.status === 200
-    && JSON.stringify(await templatesFor(U.d1)) === JSON.stringify(['trip_assigned']), outcome(tripCreated));
+  record('排車後通知被指派的司機一：trip_assigned', scheduled.status === 200
+    && JSON.stringify(await templatesFor(U.d1)) === JSON.stringify(['trip_assigned']), outcome(scheduled));
   const reassign = await call(tripWriteFn.handler, 'POST', U.dsp, { changes: [{ collection: 'trips', id: TRIP, expectedRevision: 1,
     record: { ...(await tripState()), driverId: DRV.d2 } }] });
   record('改派給司機二：司機一收到 trip_unassigned、司機二收到 trip_assigned', reassign.status === 200
