@@ -764,7 +764,11 @@ async function flowPublicSettings(cdp, baseUrl) {
     await evaluate(page, "(()=>{const c=document.getElementById('loginMethodFacebookInput');if(!c.checked)c.click();return true;})()");
     await typeInto(page, '#supportLineUrlInput', line);
     await typeInto(page, '#supportEmailInput', email);
-    await click(page, '#savePublicSettingsBtn');
+    // 背景同步重畫畫面時捲動位置會回到頂端（輸入的值會保留），按鈕剛好被捲出畫面就再試一次
+    for (let attempt = 1; ; attempt++) {
+      try { await click(page, '#savePublicSettingsBtn'); break; }
+      catch (e) { if (attempt >= 3) throw e; await sleep(800); }
+    }
     const saved = await waitForDb(async () => {
       const { rows } = await admin.query(`select key, value from app_settings where key in ('login_methods','support_contact')`);
       const m = Object.fromEntries(rows.map((r) => [r.key, r.value]));
