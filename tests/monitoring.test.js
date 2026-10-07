@@ -21,8 +21,35 @@ ok('個資清除：手機、市話、Email、身分證號、地址', () => {
   for (const leak of ['0912', '345-678', '886912', '2345-6789', 'a.b@c.tw', 'A123456789', '188號']) assert.ok(!out.includes(leak), `${leak} in ${out}`);
 });
 ok('個資清除：敏感鍵整個拿掉，其他保留', () => {
-  const v = scrubValue({ bookingId: 'B1', name: '王', phone: 'x', nested: { pickupAddress: 'y', note: '0911222333', count: 3 } });
-  assert.deepEqual(v, { bookingId: 'B1', name: '[redacted]', phone: '[redacted]', nested: { pickupAddress: '[redacted]', note: '[phone]', count: 3 } });
+  // 備註等自由文字可能有姓名，文字清除抓不到姓名，所以整個拿掉（#81）；其他字串仍做文字清除
+  const v = scrubValue({ bookingId: 'B1', name: '王', phone: 'x', nested: { pickupAddress: 'y', note: '王小明 0911222333', reason: '0911222333', count: 3 } });
+  assert.deepEqual(v, { bookingId: 'B1', name: '[redacted]', phone: '[redacted]', nested: { pickupAddress: '[redacted]', note: '[redacted]', reason: '[phone]', count: 3 } });
+});
+ok('個資清除（#81）：camelCase、大小寫、鍵名任何位置都算', () => {
+  const v = scrubValue({ primaryPhone: '0911', fullName: '王', receiverName: '李', PickupAddress: 'x', contact_email: 'a',
+    emergencyContacts: [{ relation: '女兒', note: 'ok' }], birthDate: '1940-01-01', userDisplayName: '王', accessToken: 't', SessionCookie: 'c' });
+  for (const k of Object.keys(v)) assert.equal(v[k], '[redacted]', k);
+});
+ok('個資清除（#81）：小寫複合字、複數、身分證號等寫法', () => {
+  const keys = ['telephone', 'phonenumber', 'mobileNumber', 'emailaddress', 'pickuplocation', 'birthday', 'idNumber', 'id_number',
+    'idNo', 'nationalId', 'tokens', 'cookies', 'revoke_sessions', 'latitude', 'longitude', 'coordinates', 'licensePlate', 'dob',
+    'passengerName', 'guardianPhone', 'apiKey'];
+  const v = scrubValue(Object.fromEntries(keys.map((k) => [k, 'x'])));
+  for (const k of keys) assert.equal(v[k], '[redacted]', k);
+});
+ok('個資清除（#81）：巢狀物件與陣列裡的聯絡人', () => {
+  const v = scrubValue({ booking: { legs: [{ requester: { phone: '0911' }, contacts: { requester: { name: '王', phone: '0911' } } }] },
+    recipients: [{ identity: { displayName: '王', birthDate: '1940-01-01' }, contacts: { primaryPhone: '0911' } }] });
+  const j = JSON.stringify(v);
+  assert.ok(!j.includes('王') && !j.includes('0911') && !j.includes('1940'), j);
+});
+ok('個資清除（#81）：一般欄位不誤遮（錯誤代碼、各種 ID、時間、狀態、筆數）', () => {
+  const v = scrubValue({ code: 'VALIDATION_ERROR', tripId: 'T1', bookingId: 'B1', recipientId: 'R1', organizationId: 'O1',
+    pickupAt: '2099-01-01T01:00:00Z', pickupDate: '2099-01-01', status: 'scheduled', contactsCount: 2, eventType: 'claimed',
+    filename: 'app.js', hostname: 'example.org', stateless: true, retentionYears: 5, release: 'v1', latency: 120, lineno: 3, runId: 'R' });
+  assert.deepEqual(v, { code: 'VALIDATION_ERROR', tripId: 'T1', bookingId: 'B1', recipientId: 'R1', organizationId: 'O1',
+    pickupAt: '2099-01-01T01:00:00Z', pickupDate: '2099-01-01', status: 'scheduled', contactsCount: 2, eventType: 'claimed',
+    filename: 'app.js', hostname: 'example.org', stateless: true, retentionYears: 5, release: 'v1', latency: 120, lineno: 3, runId: 'R' });
 });
 ok('DSN 解析', () => {
   assert.deepEqual(sentry.parseDsn(DSN), { publicKey: 'abc123', host: 'o999.ingest.sentry.io', projectId: '4501' });

@@ -64,7 +64,7 @@
 ## 監控
 
 伺服器與前端的未處理錯誤送到 Sentry，前端經本站的 `/api/v2/client-error` 轉送，不直接連外部；
-送出前經 `_scrub.js` 清掉電話、Email、身分證號、地址與敏感欄位。告警送到 Email 與 Discord。
+送出前經 `_scrub.js` 清掉電話、Email、身分證號、地址與敏感欄位（鍵名拆字比對，含 camelCase 與巢狀物件，細節見 DEPLOYMENT.md）；我們自己的錯誤訊息不帶入任何人的姓名。告警送到 Email 與 Discord。
 細節見 DEPLOYMENT.md 的「監控與告警」。
 
 ## 持續驗證
