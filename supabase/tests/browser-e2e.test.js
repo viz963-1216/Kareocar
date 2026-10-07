@@ -699,7 +699,10 @@ async function flowFamily(cdp, baseUrl, tokens) {
     await typeInto(page, '#rqDestination', destination);
     await click(page, '.wizard-next-btn[data-next="3"]');
     await click(page, '.wizard-next-btn[data-next="4"]');
-    record(S, '確認步驟的乘車人是家人', await evaluate(page, `document.getElementById('requesterWizardReview').innerText.includes(${J(fam.name)})`));
+    let reviewed = true;
+    try { await waitFor(page, `document.getElementById('requesterWizardReview').textContent.includes(${J(fam.name)})`, '確認步驟顯示乘車人', 8000); }
+    catch (_) { reviewed = false; }
+    record(S, '確認步驟的乘車人是家人', reviewed, reviewed ? '' : await evaluate(page, "document.getElementById('requesterWizardReview').textContent"));
     await click(page, '#submitRequesterBookingBtn');
     const booking = await waitForDb(async () => {
       const { rows } = await admin.query(`select id, owner_user_id, data from app_state where collection = 'bookings' and data->>'recipientId' = $1`, [recipient.id]);
