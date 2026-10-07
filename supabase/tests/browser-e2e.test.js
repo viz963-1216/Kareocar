@@ -442,6 +442,10 @@ async function flowDriver(cdp, baseUrl, tokens) {
   try {
     await login(page, U.drv);
     await waitFor(page, stepButton('depart'), '「開始出發」按鈕');
+    // 載入時補的歷史基準事件不是司機的操作，不能排進待上傳（以前會一直顯示「還有 2 筆操作等待上傳」）
+    await sleep(1500);
+    const phantom = await evaluate(page, "(document.querySelector('.offline-execution-banner')||{}).innerText||''");
+    record(S, '司機還沒操作前，畫面不顯示等待上傳', !phantom, phantom.replace(/\n/g, ' '));
     const base = (await row('trips', tripId)).revision;
     const rev = (n) => base + n;
 

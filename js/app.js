@@ -2972,7 +2972,7 @@ function tripDataUrlToBlob(dataUrl){const value=String(dataUrl||'');const comma=
 function outboxStatusRank(status){return status==='synced'||status==='rejected'?3:status==='failed'?2:1;}
 function mergeOutboxRows(localRow,idbRow){if(!localRow)return deepClone(idbRow);if(!idbRow)return deepClone(localRow);const winner=outboxStatusRank(idbRow.status)>outboxStatusRank(localRow.status)?idbRow:localRow,other=winner===localRow?idbRow:localRow;return {...deepClone(other),...deepClone(winner),payload:winner.payload??other.payload??null,requestId:winner.requestId||other.requestId||null,dedupeKey:winner.dedupeKey||other.dedupeKey||null};}
 async function hydrateTripOutboxFromIdb(){if(tripOutboxHydrated)return {ok:true,hydrated:true,changed:0};if(tripOutboxHydratePromise)return tripOutboxHydratePromise;tripOutboxHydratePromise=(async()=>{const idbRows=await tripIdbGetAll(TRIP_P2_IDB.stores.queue);if(!idbRows.length){tripOutboxHydrated=true;return {ok:true,hydrated:true,changed:0};}let changed=0;store.mutate(db=>{const local=normalizeTripOfflineQueueInDb(db),byId=new Map(local.map(x=>[x.id,x]));for(const row of idbRows){if(!row?.id)continue;const merged=mergeOutboxRows(byId.get(row.id),row),idx=local.findIndex(x=>x.id===row.id);if(idx>=0)local[idx]=merged;else{local.push(merged);changed++;}byId.set(row.id,merged);}const seen=new Map();for(let i=local.length-1;i>=0;i--){const r=local[i],key=r.requestId||r.id;if(seen.has(key)){local.splice(i,1);changed++;}else seen.set(key,true);}});tripOutboxHydrated=true;return {ok:true,hydrated:true,changed};})().finally(()=>{tripOutboxHydratePromise=null;});return tripOutboxHydratePromise;}
-async function migrateLegacyProofPhotosToIdb(){const candidates=[];for(const trip of store.state.trips||[]){for(const proof of trip.serviceProofs||[]){if(proof?.photo?.dataUrl)candidates.push({tripId:trip.id,proofId:proof.id,photo:deepClone(proof.photo)});}}let migrated=0,failed=0;for(const c of candidates){try{const blob=tripDataUrlToBlob(c.photo.dataUrl),objectKey=`legacy_${c.proofId}`,ref=await persistTripProofBlobP2({proofId:objectKey,tripId:c.tripId,blob,metadata:{name:c.photo.name||'proof.jpg',type:c.photo.type||blob.type||'image/jpeg',size:c.photo.size||blob.size,legacyMigrated:true}});if(!ref){failed++;continue;}store.mutate(db=>{const trip=(db.trips||[]).find(t=>t.id===c.tripId),proof=trip?.serviceProofs?.find(p=>p.id===c.proofId);if(!proof?.photo?.dataUrl)return;proof.photo={name:c.photo.name||'proof.jpg',type:c.photo.type||blob.type||'image/jpeg',size:c.photo.size||blob.size,storage:'indexeddb',objectKey,legacyInline:false,legacyMigratedAt:nowISO()};appendTripEventInDb(db,{tripId:c.tripId,eventType:'trip_proof_photo_migrated',actorUserId:null,reason:'legacy_inline_to_indexeddb',metadata:{proofId:c.proofId,objectKey}});});migrated++;}catch(e){failed++;}}return {ok:failed===0,migrated,failed,total:candidates.length};}
+async function migrateLegacyProofPhotosToIdb(){const candidates=[];for(const trip of store.state.trips||[]){for(const proof of trip.serviceProofs||[]){if(proof?.photo?.dataUrl)candidates.push({tripId:trip.id,proofId:proof.id,photo:deepClone(proof.photo)});}}let migrated=0,failed=0;for(const c of candidates){try{const blob=tripDataUrlToBlob(c.photo.dataUrl),objectKey=`legacy_${c.proofId}`,ref=await persistTripProofBlobP2({proofId:objectKey,tripId:c.tripId,blob,metadata:{name:c.photo.name||'proof.jpg',type:c.photo.type||blob.type||'image/jpeg',size:c.photo.size||blob.size,legacyMigrated:true}});if(!ref){failed++;continue;}store.mutate(db=>{const trip=(db.trips||[]).find(t=>t.id===c.tripId),proof=trip?.serviceProofs?.find(p=>p.id===c.proofId);if(!proof?.photo?.dataUrl)return;proof.photo={name:c.photo.name||'proof.jpg',type:c.photo.type||blob.type||'image/jpeg',size:c.photo.size||blob.size,storage:'indexeddb',objectKey,legacyInline:false,legacyMigratedAt:nowISO()};appendTripEventInDb(db,{queueOffline:false,tripId:c.tripId,eventType:'trip_proof_photo_migrated',actorUserId:null,reason:'legacy_inline_to_indexeddb',metadata:{proofId:c.proofId,objectKey}});});migrated++;}catch(e){failed++;}}return {ok:failed===0,migrated,failed,total:candidates.length};}
 async function cleanupTripP2Storage(){const now=Date.now(),iso=d=>new Date(now-d*86400000).toISOString();const [queueOk,gpsOk,proofResult]=await Promise.all([tripIdbCleanup(TRIP_P2_IDB.stores.queue,iso(TRIP_P2_RETENTION_POLICY.syncedQueueDays),'syncedAt',{predicate:row=>row?.status==='synced'&&!!row?.syncedAt}),tripIdbCleanup(TRIP_P2_IDB.stores.gps,iso(TRIP_P2_RETENTION_POLICY.gpsDays),'at'),cleanupProofBlobStorageP2()]);return {ok:!!queueOk&&!!gpsOk&&proofResult?.ok!==false,queueOk,gpsOk,proof:proofResult};}
 
 const TRIP_LOCATION_SAMPLE_LIMIT=240;
@@ -3323,7 +3323,9 @@ function nextTripEventSequenceInDb(db,tripId){
   let current=Math.max(Number(trip?.eventSequence)||0,observed);
   const next=current+1;if(trip)trip.eventSequence=next;return next;
 }
-function appendTripEventInDb(db,{tripId,eventType,at=nowISO(),actorUserId=null,stepId=null,reason='',metadata=null,targetEventIds=[]}={}){
+// queueOffline=false：載入時在本機補的歷史基準事件。它們不是使用者的操作，伺服器也不收單獨的事件，
+// 排進待上傳的話永遠送不出去，司機畫面會一直顯示「等待上傳」
+function appendTripEventInDb(db,{tripId,eventType,at=nowISO(),actorUserId=null,stepId=null,reason='',metadata=null,targetEventIds=[],queueOffline=true}={}){
   if(!tripId||!eventType)return null;
   db.tripEvents=Array.isArray(db.tripEvents)?db.tripEvents:[];
   const sequence=nextTripEventSequenceInDb(db,tripId);
@@ -3334,7 +3336,7 @@ function appendTripEventInDb(db,{tripId,eventType,at=nowISO(),actorUserId=null,s
     targetEventIds:[...new Set((targetEventIds||[]).filter(Boolean))]
   };
   db.tripEvents.push(event); // append-only：禁止 splice / replace / truncate
-  queueTripOfflineMutationInDb(db,{tripId,mutationType:'trip_event',referenceId:event.id,payload:event,queuedAt:at});
+  if(queueOffline)queueTripOfflineMutationInDb(db,{tripId,mutationType:'trip_event',referenceId:event.id,payload:event,queuedAt:at});
   return event;
 }
 function tripEventHistoryFromDb(db,tripId,{includeCorrected=true}={}){
@@ -4045,15 +4047,15 @@ Trip = {
       for(const t of db.trips||[]){
         if((db.tripEvents||[]).some(e=>e.tripId===t.id))continue;
         normalizeTripRuntime(t);
-        appendTripEventInDb(db,{tripId:t.id,eventType:'trip_history_migrated',at:t.createdAt||t.updatedAt||nowISO(),actorUserId:null,reason:'v12_25_32_baseline',metadata:{status:t.status,currentStepIndex:t.currentStepIndex,runtimeSchemaVersion:t.runtimeSchemaVersion}});
+        appendTripEventInDb(db,{queueOffline:false,tripId:t.id,eventType:'trip_history_migrated',at:t.createdAt||t.updatedAt||nowISO(),actorUserId:null,reason:'v12_25_32_baseline',metadata:{status:t.status,currentStepIndex:t.currentStepIndex,runtimeSchemaVersion:t.runtimeSchemaVersion}});
         for(const step of t.steps||[]){
           normalizeTripStopRuntime(step);
           const runtime=tripStopRuntimeSnapshot(step);
-          if(step.completedAt||step.actualAt)appendTripEventInDb(db,{tripId:t.id,eventType:'trip_step_completed',at:step.completedAt||step.actualAt,actorUserId:null,stepId:step.id,reason:'migration_baseline',metadata:{migrated:true,stopRuntime:runtime}});
-          else if(step.arrivedAt||step.serviceStartedAt||step.passengerBoardedAt||step.passengerDroppedOffAt||step.departedAt)appendTripEventInDb(db,{tripId:t.id,eventType:'trip_stop_runtime_migrated',at:step.departedAt||step.passengerDroppedOffAt||step.passengerBoardedAt||step.serviceStartedAt||step.arrivedAt||t.updatedAt||nowISO(),actorUserId:null,stepId:step.id,reason:'migration_baseline',metadata:{migrated:true,stopRuntime:runtime}});
+          if(step.completedAt||step.actualAt)appendTripEventInDb(db,{queueOffline:false,tripId:t.id,eventType:'trip_step_completed',at:step.completedAt||step.actualAt,actorUserId:null,stepId:step.id,reason:'migration_baseline',metadata:{migrated:true,stopRuntime:runtime}});
+          else if(step.arrivedAt||step.serviceStartedAt||step.passengerBoardedAt||step.passengerDroppedOffAt||step.departedAt)appendTripEventInDb(db,{queueOffline:false,tripId:t.id,eventType:'trip_stop_runtime_migrated',at:step.departedAt||step.passengerDroppedOffAt||step.passengerBoardedAt||step.serviceStartedAt||step.arrivedAt||t.updatedAt||nowISO(),actorUserId:null,stepId:step.id,reason:'migration_baseline',metadata:{migrated:true,stopRuntime:runtime}});
         }
-        if((t.passengers||[]).length)appendTripEventInDb(db,{tripId:t.id,eventType:'trip_passenger_runtime_migrated',at:t.updatedAt||t.createdAt||nowISO(),actorUserId:null,reason:'migration_baseline',metadata:{passengers:deepClone(t.passengers)}});
-        if(t.status!=='scheduled')appendTripEventInDb(db,{tripId:t.id,eventType:'trip_state_migrated',at:t.stateChangedAt||t.updatedAt||nowISO(),actorUserId:null,reason:'migration_baseline',metadata:{status:t.status}});
+        if((t.passengers||[]).length)appendTripEventInDb(db,{queueOffline:false,tripId:t.id,eventType:'trip_passenger_runtime_migrated',at:t.updatedAt||t.createdAt||nowISO(),actorUserId:null,reason:'migration_baseline',metadata:{passengers:deepClone(t.passengers)}});
+        if(t.status!=='scheduled')appendTripEventInDb(db,{queueOffline:false,tripId:t.id,eventType:'trip_state_migrated',at:t.stateChangedAt||t.updatedAt||nowISO(),actorUserId:null,reason:'migration_baseline',metadata:{status:t.status}});
         changed++;
       }
     });
@@ -4062,7 +4064,7 @@ Trip = {
   migratePassengerRuntimeHistory(){
     const pending=(store.state.trips||[]).filter(t=>(t.passengers||[]).length&&!(store.state.tripEvents||[]).some(e=>e.tripId===t.id&&['trip_passenger_runtime_migrated','trip_passenger_state_changed'].includes(e.eventType)));
     if(!pending.length)return {ok:true,changed:0};let changed=0;
-    store.mutate(db=>{for(const t of db.trips||[]){normalizeTripRuntime(t);if(!(t.passengers||[]).length||(db.tripEvents||[]).some(e=>e.tripId===t.id&&['trip_passenger_runtime_migrated','trip_passenger_state_changed'].includes(e.eventType)))continue;appendTripEventInDb(db,{tripId:t.id,eventType:'trip_passenger_runtime_migrated',at:t.updatedAt||t.createdAt||nowISO(),actorUserId:null,reason:'v12_25_33_passenger_baseline',metadata:{passengers:deepClone(t.passengers)}});changed++;}});
+    store.mutate(db=>{for(const t of db.trips||[]){normalizeTripRuntime(t);if(!(t.passengers||[]).length||(db.tripEvents||[]).some(e=>e.tripId===t.id&&['trip_passenger_runtime_migrated','trip_passenger_state_changed'].includes(e.eventType)))continue;appendTripEventInDb(db,{queueOffline:false,tripId:t.id,eventType:'trip_passenger_runtime_migrated',at:t.updatedAt||t.createdAt||nowISO(),actorUserId:null,reason:'v12_25_33_passenger_baseline',metadata:{passengers:deepClone(t.passengers)}});changed++;}});
     return {ok:true,changed};
   },
   migrateRuntimeModel(){
