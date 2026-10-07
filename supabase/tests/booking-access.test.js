@@ -33,7 +33,7 @@ const loadFn = require('../../netlify/functions/v2-state-load');
 
 const ORG_A = 'ORG-ACC-A';
 const ORG_B = 'ORG-ACC-B';
-const U = { req: 'USR-ACC-REQ', dspA: 'USR-ACC-DSPA', dspB: 'USR-ACC-DSPB', drvA: 'USR-ACC-DRVA', drvB: 'USR-ACC-DRVB' };
+const U = { req: 'USR-ACC-REQ', req2: 'USR-ACC-REQ2', dspA: 'USR-ACC-DSPA', dspB: 'USR-ACC-DSPB', drvA: 'USR-ACC-DRVA', drvB: 'USR-ACC-DRVB' };
 const DRIVER_A = 'DRV-ACC-A';
 const DRIVER_B = 'DRV-ACC-B';
 const ADDRESS = '新北市板橋區文化路一段188號';
@@ -98,12 +98,14 @@ async function newClaimed(id) {
       ('${ORG_B}','transport_provider','合成承運 B','87654321','02-3333-4444',true);
     insert into users (id, display_name, phone_e164, platform_role, active) values
       ('${U.req}','合成需求者','+886944000001','none',true),
+      ('${U.req2}','合成需求者二','+886944000006','none',true),
       ('${U.dspA}','合成調度 A','+886944000002','none',true),
       ('${U.dspB}','合成調度 B','+886944000003','none',true),
       ('${U.drvA}','合成司機 A','+886944000004','none',true),
       ('${U.drvB}','合成司機 B','+886944000005','none',true);
     insert into memberships (id, user_id, organization_id, role, status) values
       ('M-ACC-REQ','${U.req}','ORG-REQ-001','requester','active'),
+      ('M-ACC-REQ2','${U.req2}','ORG-REQ-001','requester','active'),
       ('M-ACC-DSPA','${U.dspA}','${ORG_A}','dispatcher','active'),
       ('M-ACC-DSPB','${U.dspB}','${ORG_B}','dispatcher','active'),
       ('M-ACC-DRVA','${U.drvA}','${ORG_A}','driver','active'),
@@ -265,6 +267,58 @@ async function newClaimed(id) {
     || (reqLoad.data.collections.bookings || []).some((b) => b.organizationId === ORG_A));
   const reqBooking = (reqLoad.data.collections.bookings || []).find((b) => b.id === 'BKG-ACC-1');
   record('需求者看到自己的預約已被 B 承接', reqBooking && reqBooking.state === 'claimed' && reqBooking.organizationId === ORG_B);
+
+  console.log('--- 預約上的服務對象（#78）---');
+  // 需求者在前端建立服務對象與關係（走 state-mutate），預約再帶 recipientId
+  const recipient = (id) => ({ collection: 'careRecipients', id, record: { id, status: 'active', name: `合成服務對象 ${id}` } });
+  const relation = (id, userId, recipientId, extra = {}) => ({ collection: 'careRecipientRelations', id,
+    record: { id, userId, recipientId, relationship: 'family', canBook: true, canManageProfile: true, status: 'active', ...extra } });
+  const setup = await mutate(U.req, [
+    recipient('CR-ACC-SELF'), relation('CRR-ACC-SELF', U.req, 'CR-ACC-SELF', { relationship: 'self' }),
+    recipient('CR-ACC-MOM'), relation('CRR-ACC-MOM', U.req, 'CR-ACC-MOM'),
+    recipient('CR-ACC-DAD'), relation('CRR-ACC-DAD', U.req, 'CR-ACC-DAD', { canBook: false }),
+    recipient('CR-ACC-AUNT'), relation('CRR-ACC-AUNT', U.req, 'CR-ACC-AUNT', { status: 'revoked' })
+  ]);
+  record('（前提）需求者建立自己與家人的服務對象', setup.status === 200, outcome(setup));
+  const selfBooking = await writeBooking(U.req, booking('BKG-ACC-R1', { recipientId: 'CR-ACC-SELF' }));
+  record('需求者替自己（本人關係）預約', selfBooking.status === 200, outcome(selfBooking));
+  const familyBooking = await writeBooking(U.req, booking('BKG-ACC-R2', { recipientId: 'CR-ACC-MOM' }));
+  record('需求者替有可預約關係的家人預約', familyBooking.status === 200, outcome(familyBooking));
+  const noBook = await writeBooking(U.req, booking('BKG-ACC-R3', { recipientId: 'CR-ACC-DAD' }));
+  record('關係不可預約：被拒、沒有寫入', noBook.status === 403 && !(await row('bookings', 'BKG-ACC-R3')), outcome(noBook));
+  const revoked = await writeBooking(U.req, booking('BKG-ACC-R4', { recipientId: 'CR-ACC-AUNT' }));
+  record('關係已撤銷：被拒、沒有寫入', revoked.status === 403 && !(await row('bookings', 'BKG-ACC-R4')), outcome(revoked));
+
+  const other = (id, extra = {}) => booking(id, { requestedByUserId: U.req2, name: '合成需求者二', ...extra });
+  const stolen = await writeBooking(U.req2, other('BKG-ACC-R5', { recipientId: 'CR-ACC-MOM' }));
+  record('其他需求者帶入別人的服務對象建立預約：被拒、沒有寫入', stolen.status === 403 && !(await row('bookings', 'BKG-ACC-R5')), outcome(stolen));
+  record('（前提）其他需求者建立自己的預約', (await writeBooking(U.req2, other('BKG-ACC-R6'))).status === 200);
+  const beforeSwap = JSON.stringify((await row('bookings', 'BKG-ACC-R6')).data);
+  const swapped = await writeBooking(U.req2, { ...(await row('bookings', 'BKG-ACC-R6')).data, recipientId: 'CR-ACC-MOM' });
+  record('其他需求者把自己的預約改成別人的服務對象：被拒、資料不變',
+    swapped.status === 403 && JSON.stringify((await row('bookings', 'BKG-ACC-R6')).data) === beforeSwap, outcome(swapped));
+  // 自己寫一筆指向別人服務對象的關係也沒用：服務對象不是自己建立的
+  const forgedRel = await mutate(U.req2, [relation('CRR-ACC-FORGED', U.req2, 'CR-ACC-MOM')]);
+  const viaForged = await writeBooking(U.req2, other('BKG-ACC-R7', { recipientId: 'CR-ACC-MOM' }));
+  record('自己偽造對別人服務對象的關係後預約：被拒、沒有寫入', viaForged.status === 403 && !(await row('bookings', 'BKG-ACC-R7')),
+    `${outcome(forgedRel)} / ${outcome(viaForged)}`);
+
+  record('（前提）A 承接替家人的預約', (await claim(U.dspA, 'BKG-ACC-R2', ORG_A)).status === 200);
+  const opsEdit = await opsUpdate(U.dspA, 'BKG-ACC-R2', { dispatchNote: '合成調度備註' });
+  record('承接機構的調度修改已承接預約：照常成功', opsEdit.status === 200, outcome(opsEdit));
+  const ownerEdit = await writeBooking(U.req, { ...(await row('bookings', 'BKG-ACC-R1')).data, pickupTime: '11:00' });
+  record('需求者修改自己替自己的預約：照常成功', ownerEdit.status === 200, outcome(ownerEdit));
+  const toMom = await writeBooking(U.req, { ...(await row('bookings', 'BKG-ACC-R1')).data, recipientId: 'CR-ACC-MOM' });
+  record('需求者把預約改成自己另一位可預約的服務對象：成功', toMom.status === 200, outcome(toMom));
+  const legacy = await mutate(U.req, [recipient('CR-ACC-UNCLE'), relation('CRR-ACC-UNCLE', U.req, 'CR-ACC-UNCLE', { canBook: undefined })]);
+  const legacyBooking = await writeBooking(U.req, booking('BKG-ACC-R8', { recipientId: 'CR-ACC-UNCLE' }));
+  record('舊資料的關係沒寫 canBook：視為可預約（與前端相同）', legacy.status === 200 && legacyBooking.status === 200, outcome(legacyBooking));
+  await mutate(U.req, [{ ...recipient('CR-ACC-UNCLE'), record: { ...recipient('CR-ACC-UNCLE').record, status: 'archived' } }]);
+  const archived = await writeBooking(U.req, booking('BKG-ACC-R9', { recipientId: 'CR-ACC-UNCLE' }));
+  record('服務對象已封存：被拒、沒有寫入', archived.status === 403 && !(await row('bookings', 'BKG-ACC-R9')), outcome(archived));
+  const opsCreate = await writeBooking(U.dspA, booking('BKG-ACC-R10', { requestedByUserId: null, state: 'claimed', claimStatus: 'claimed',
+    status: 'claimed', organizationId: ORG_A, recipientId: 'CR-ACC-MOM' }));
+  record('機構自行建立（電話預約）帶服務對象：不受需求者關係限制', opsCreate.status === 200, outcome(opsCreate));
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n結果：${results.length - failed.length} 通過 / ${failed.length} 失敗`);

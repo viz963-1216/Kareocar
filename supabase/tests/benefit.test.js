@@ -97,7 +97,10 @@ function booking(id, extra = {}) {
     insert into drivers (id, user_id, organization_id, duty_status, active) values ('${DRIVER}','${U.drv}','${ORG}','on_duty',true);
   `);
   const cr = await call(mutateFn.handler, 'POST', U.req, { changes: [{ collection: 'careRecipients', id: RECIPIENT,
-    record: { id: RECIPIENT, identity: { displayName: '合成長輩' } } }] });
+    record: { id: RECIPIENT, identity: { displayName: '合成長輩' } } },
+  // 預約端點要求需求者對服務對象有可預約的關係（#78）
+  { collection: 'careRecipientRelations', id: `${RECIPIENT}-REL`,
+    record: { id: `${RECIPIENT}-REL`, userId: U.req, recipientId: RECIPIENT, relationship: 'family', canBook: true, status: 'active' } }] });
   record('（前提）需求者建立服務對象', cr.status === 200, outcome(cr));
 
   console.log('--- 規則版本：草稿、核准、取代、駁回 ---');
