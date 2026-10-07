@@ -21,9 +21,11 @@ API 端點與各項業務規則。部署流程與上線檢查清單見 [DEPLOYME
 | `migrations/0012_benefit_fetch.sql` | 福利公告抓取紀錄 `benefit_source_fetches`、自動抓取草稿（origin、內容雜湊、差異）；自動草稿不能手動修改 |
 | `migrations/0013_admin_password_reset.sql` | 後台重設密碼的權限判斷 `app.password_reset_target`：平台管理者可重設自己以外的任何人；負責人只能重設工作身分全在自己機構的調度員、司機 |
 | `migrations/0014_social_logins.sql` | 社群登入對應 `social_logins`（社群帳號 → 使用者）、綁定／解除／刪除帳號時清除的受控函式、Supabase 的 Custom Access Token Hook（`public.custom_access_token_hook`，加上 `app_user_id`） |
+| `migrations/0015_public_settings.sql` | 登入方式開關 `login_methods`、客服聯絡 `support_contact`（`app_settings`），未登入可讀的 `app.public_settings()` |
 | `migrations/0016_anonymize_completeness.sql` | 匿名化補齊：預約修改紀錄的快照、服務證明的自由文字與操作收據、行程的地點座標與執行快照、事件紀錄、所有預約都過期（或從沒預約、建立超過期限）的服務對象；核准刪除帳號每筆寫稽核紀錄 |
 | `migrations/0017_requester_hub_name.sql` | 系統機構 ORG-REQ-001 改名「需求者群組」（畫面用語統一，#83） |
 | `migrations/0018_anonymize_remaining.sql` | 匿名化補齊（#89）：預約去程／回程的地點只留縣市與行政區、執行快照的司機只留 ID、預約與行程的通知內容、到期服務對象的補助試算資料 |
+| `migrations/0019_keep_active_recipients.sql` | 到期匿名化不清掉還在使用的帳號的服務對象（從沒預約的，只有建立的帳號停用或不存在才清） |
 | `rollback/<名稱>.down.sql` | 每支 migration 的回復檔（`0001` 的回復會刪除所有資料，只用在空資料庫或 Staging 重建） |
 | `migrations_archive/` | 壓縮成 baseline 之前的 0001–0008，只供查閱，不再套用 |
 | `seed-test-org.sql` | 建立測試機構與負責人的一次性腳本（`tests/seed-test-org.test.sh` 驗證） |
@@ -161,7 +163,7 @@ SELECT；寫入只經檢查身分與狀態的函式，連有漏洞的 handler �
 | `POST /api/v2/claim-booking` | 接案 |
 | `POST /api/v2/cancel-booking` | 需求者取消 |
 | `POST /api/v2/schedule-trips` | 排車：建立行程並把預約的去程／回程排進去，一筆交易（ADR 0003） |
-| `POST /api/v2/trip-write` | 調度改派、中斷、取消既有行程；不能把預約排進行程 |
+| `POST /api/v2/trip-write` | 調度改派、中斷、取消既有行程；不能把預約排進行程。取消時，排在這趟的去程／回程退回待排車，已排車的預約退回部分排車 |
 | `POST /api/v2/trip-execute` | 司機執行自己的行程 |
 | `POST /api/v2/benefit-ruleset`、`benefit-assess`、`benefit-authorization` | 補助規則、試算、正式核定 |
 | `POST /api/v2/consent` | 同意個資告知與服務條款 |

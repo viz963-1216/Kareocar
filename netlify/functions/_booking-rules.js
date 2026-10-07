@@ -23,7 +23,7 @@ const OWNER_TRANSITIONS = lifecycle.bookingWriteTransitions('owner');
 const OPS_TRANSITIONS = lifecycle.bookingWriteTransitions('ops');
 // 轉到這些狀態時原承接機構失去存取
 const REVOKE_STATES = new Set(lifecycle.BOOKING_REVOKE_STATES);
-const SCHEDULING_STATES = new Set(['partially_scheduled', 'scheduled']);
+const SCHEDULING_STATES = new Set(lifecycle.BOOKING_SCHEDULING_STATES);
 
 // 只能由伺服器或專用流程寫的欄位：一律沿用資料庫裡的值
 const SERVER_OWNED = [

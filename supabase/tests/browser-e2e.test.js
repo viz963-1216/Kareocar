@@ -700,6 +700,8 @@ async function flowFamily(cdp, baseUrl, tokens) {
       await evaluate(page, "document.getElementById('rqPickup').value"));
     await typeInto(page, '#rqDestination', destination);
     await click(page, '.wizard-next-btn[data-next="3"]');
+    // 排到第 3 天，避開其他情境留給同一位司機的行程
+    await evaluate(page, `(()=>{const d=document.getElementById('rqDate');d.value=${J(dayOffset(3))};d.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
     await click(page, '.wizard-next-btn[data-next="4"]');
     let reviewed = true;
     try { await waitFor(page, `document.getElementById('requesterWizardReview').textContent.includes(${J(fam.name)})`, '確認步驟顯示乘車人', 8000); }
@@ -731,6 +733,18 @@ async function flowFamily(cdp, baseUrl, tokens) {
       const text = await evaluate(dsp, "document.querySelector('main').innerText");
       record(S, '調度畫面顯示服務對象（家人）的姓名與需求，需求者為聯絡人',
         shown && text.includes(fam.aid) && text.includes(`聯絡人：${U.req.name}`), shown ? '' : text.slice(0, 400));
+      // 排車後，司機看到的停靠點：乘車人是家人，需求者是聯絡人（#76 故事 13）
+      await click(dsp, `.booking-create-trip-btn[data-booking=${J(booking.id)}]`);
+      await waitFor(dsp, "document.getElementById('createTripModal').classList.contains('open')&&!!document.getElementById('newDriver').value&&!!document.getElementById('newVehicle').value",
+        '排車視窗帶入司機與車輛');
+      await click(dsp, '#saveTripBtn');
+      const scheduled = await waitForDb(async () => { const r = await row('bookings', booking.id); return r && r.data.state === 'scheduled' ? r : null; }, '家人的預約已排車');
+      const trip = await row('trips', scheduled.data.legs[0].tripId);
+      const pickup = (trip.data.steps || []).find((st) => st.type === 'pickup') || {};
+      const contacts = pickup.contacts || [];
+      record(S, '司機的停靠點：乘車人是家人（姓名、電話），需求者是聯絡人',
+        pickup.name === fam.name && contacts.some((c) => c.name === fam.name && c.phone === fam.phone)
+          && contacts.some((c) => c.name === `聯絡人 ${U.req.name}` && c.phone === U.req.phone), J(contacts));
     } finally {
       await finishPage(dsp, S);
     }

@@ -2576,7 +2576,7 @@ function poolRouteQuality(route){
   const pickups=route.stops.filter(s=>s.type==='pickup');
   for(let i=1;i<pickups.length;i++){
     const drive=estimateDriveMinutes(pickups[i-1].address,pickups[i].address,{departureAt:new Date(pickups[i-1].at)});
-    if(drive>rules.maxPickupDriveMin)violations.push(`案家 ${pickups[i-1].name} → ${pickups[i].name} 轉場 ${drive} 分超過 ${rules.maxPickupDriveMin} 分`);
+    if(drive>rules.maxPickupDriveMin)violations.push(`上車點 ${pickups[i-1].name} → ${pickups[i].name} 轉場 ${drive} 分超過 ${rules.maxPickupDriveMin} 分`);
   }
   const duration=Math.max(0,(new Date(route.endAt)-new Date(route.startAt))/60000),penalty=violations.length*100000+pickupDelayTotal*500+detourTotal*120+rideRatioExcess*1000;
   const cost=penalty+duration*4+route.loadedKm*8+route.interStopEmptyKm*20;
@@ -2728,7 +2728,7 @@ function marketFitScore(booking,organizationId,actorUserId){
   const nearPool=ownPending.filter(b=>b.id!==raw.id).map(b=>{const other=Booking.dispatchView(b)||b,dt=Booking.dateTime(other);if(!dt)return null;const law=validatePoolPair(view,other,organizationId);return law.ok?{b:other,timeGap:Math.abs(dt-pickupAt)/60000,pickup:estimateDriveMinutes(other.pickupAddress,view.pickupAddress,{departureAt:pickupAt}),dest:estimateDriveMinutes(other.destination,view.destination,{departureAt:pickupAt})}:null;}).filter(x=>x&&x.timeGap<=45&&x.pickup<=15&&x.dest<=25).sort((a,b)=>(a.pickup+a.dest+a.timeGap/3)-(b.pickup+b.dest+b.timeGap/3))[0];
   const pooling=nearPool?15:0,dayLoads=drivers.map(d=>driverTimeline(d.id,view.pickupDate).length),minLoad=dayLoads.length?Math.min(...dayLoads):0,balance=Math.max(3,10-Math.min(7,minLoad)),feasibility=bestExact?35:20;
   const breakdown={feasibility,deadhead,area:areaScore,pooling,balance},score=Math.max(0,Math.min(100,Object.values(breakdown).reduce((a,b)=>a+b,0))),grade=score>=80?'非常適合':score>=65?'適合':score>=50?'可考慮':'低適配';
-  const reasons=[bestExact?`目前已有可執行組合：${best.driver.name}／${best.vehicle?.plate||'可用車輛'}`:'資源規格可承接，但目前執勤／時段需再由調度確認',`預估空車至案家 ${best.route.durationMinutes} 分`,area.label?`待命區域：${area.label}`:'待命區域距離較遠',nearPool?'已有符合法規且相近的承接需求，可評估共乘／順路安排':'目前沒有明顯合法共乘候選'];
+  const reasons=[bestExact?`目前已有可執行組合：${best.driver.name}／${best.vehicle?.plate||'可用車輛'}`:'資源規格可承接，但目前執勤／時段需再由調度確認',`預估空車到上車地點 ${best.route.durationMinutes} 分`,area.label?`待命區域：${area.label}`:'待命區域距離較遠',nearPool?'已有符合法規且相近的承接需求，可評估共乘／順路安排':'目前沒有明顯合法共乘候選'];
   return {score,grade,hardBlocked:false,reasons,breakdown,bestDriverId:best.driver.id,bestVehicleId:best.vehicle?.id||capableVehicles[0]?.id||null,activeLegId:view.activeLegId,activeLegLabel:view.activeLegLabel||null};
 }
 
@@ -5924,7 +5924,7 @@ function renderCompactTrips(rows){ if(!rows.length)return '<div class="empty">�
 function renderRecommendation(b){
   const ranked=Dispatch.recommendDrivers(b,orgId(),Identity.currentUser()?.id),best=ranked.find(x=>x.feasible),pool=Dispatch.poolCandidates(b,orgId(),Identity.currentUser()?.id).slice(0,3);
   if(!best) return `<div class="smart-assign" style="border-color:#f1c4c4;background:#fff3f3"><div class="smart-assign-head"><span class="smart-assign-title" style="color:#a32626">目前沒有可用的司機或車輛</span><span class="efficiency-score" style="background:#ba2d2d">無法排車</span></div><div class="smart-reasons">${ranked[0]?.reasons?.map(r=>`• ${escapeHTML(r)}`).join('<br>')||'目前沒有可用司機'}</div></div>`;
-  return `<div class="smart-assign"><div class="smart-assign-head"><span class="smart-assign-title">建議司機</span><span class="efficiency-score">效率 ${best.score}/100</span></div><div class="smart-assign-main">${escapeHTML(best.driver.name)}｜建議車輛 ${escapeHTML(best.vehicle?.plate||'無可用車輛')}</div><div class="smart-reasons">${best.reasons.map(r=>`• ${escapeHTML(r)}`).join('<br>')}</div>${pool.length?`<div class="pool-candidate-list">${pool.map(p=>`<div class="pool-candidate-row"><strong>可共乘｜${escapeHTML(p.booking.name)}</strong><br>案家間估算 ${p.pickupDrive} 分・時間差 ${p.timeGap} 分・最大繞路 ${p.maxDetour} 分</div>`).join('')}</div>`:''}</div>`;
+  return `<div class="smart-assign"><div class="smart-assign-head"><span class="smart-assign-title">建議司機</span><span class="efficiency-score">效率 ${best.score}/100</span></div><div class="smart-assign-main">${escapeHTML(best.driver.name)}｜建議車輛 ${escapeHTML(best.vehicle?.plate||'無可用車輛')}</div><div class="smart-reasons">${best.reasons.map(r=>`• ${escapeHTML(r)}`).join('<br>')}</div>${pool.length?`<div class="pool-candidate-list">${pool.map(p=>`<div class="pool-candidate-row"><strong>可共乘｜${escapeHTML(p.booking.name)}</strong><br>上車地點間估算 ${p.pickupDrive} 分・時間差 ${p.timeGap} 分・最大繞路 ${p.maxDetour} 分</div>`).join('')}</div>`:''}</div>`;
 }
 function renderOptimizer(date=selectedTripDate,pendingCount=null){
   const actorUserId=Identity.currentUser()?.id,canSchedule=Identity.can('booking.schedule'),plan=Dispatch.latestDraft(date,orgId()),pending=pendingCount??Booking.pending(orgId(),date,actorUserId).length,routing=Dispatch.routing.status(),affected=canSchedule?Dispatch.detectAffectedScheduledTrips(date,orgId()).length:0;
