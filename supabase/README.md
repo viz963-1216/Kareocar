@@ -21,6 +21,7 @@ API 端點與各項業務規則。部署流程與上線檢查清單見 [DEPLOYME
 | `migrations/0012_benefit_fetch.sql` | 福利公告抓取紀錄 `benefit_source_fetches`、自動抓取草稿（origin、內容雜湊、差異）；自動草稿不能手動修改 |
 | `migrations/0013_admin_password_reset.sql` | 後台重設密碼的權限判斷 `app.password_reset_target`：平台管理者可重設自己以外的任何人；負責人只能重設工作身分全在自己機構的調度員、司機 |
 | `migrations/0014_social_logins.sql` | 社群登入對應 `social_logins`（社群帳號 → 使用者）、綁定／解除／刪除帳號時清除的受控函式、Supabase 的 Custom Access Token Hook（`public.custom_access_token_hook`，加上 `app_user_id`） |
+| `migrations/0016_anonymize_completeness.sql` | 匿名化補齊：預約修改紀錄的快照、服務證明的自由文字、行程執行快照的乘客個資、所有預約都過期的服務對象 |
 | `rollback/<名稱>.down.sql` | 每支 migration 的回復檔（`0001` 的回復會刪除所有資料，只用在空資料庫或 Staging 重建） |
 | `migrations_archive/` | 壓縮成 baseline 之前的 0001–0008，只供查閱，不再套用 |
 | `seed-test-org.sql` | 建立測試機構與負責人的一次性腳本（`tests/seed-test-org.test.sh` 驗證） |
@@ -296,10 +297,12 @@ context 沒設定這個變數時，建置會失敗，因為無從判斷。
   （`CONSENT_REQUIRED`），前端會跳出同意視窗，經 `/api/v2/consent` 記錄版本與時間。
 - 保存期限 `app_settings.retention_years`，預設 5 年，可設定 1–30 年。
 - 每日排程 `retention-anonymize`（netlify.toml）把行程日期超過保存期限的預約與行程匿名化：
-  清除姓名、電話、完整地址、座標、自由文字、定位軌跡、服務證明的收受人與照片；保留行政區、
-  日期、距離、車程、金額。每筆都寫稽核紀錄 `retention.anonymized`。平台管理者也能手動執行。
+  清除姓名、電話、完整地址、座標、自由文字、定位軌跡、服務證明的收受人、照片與備註、執行快照的乘客個資；
+  保留行政區、日期、距離、車程、金額。預約匿名化後一併清除它的修改紀錄快照；服務對象在所有預約都已
+  匿名化後清除姓名、電話、地址、生日與需求文字（只留行政區與統計欄位），還有未到期預約的不動（0016）。
+  每筆都寫稽核紀錄 `retention.anonymized`。平台管理者也能手動執行。
 - 刪除帳號與個資：使用者在「我的帳戶」經 `/api/v2/account-deletion` 申請或撤回；平台超級管理者在
-  「組織管理」核准或駁回（駁回要填原因）。核准時同一交易內匿名化他的預約與行程、清除服務對象與補助
+  「組織管理」核准或駁回（駁回要填原因）。核准時同一交易內匿名化他的預約（含修改紀錄）與行程（含服務證明）、清除服務對象與補助
   試算的事實資料、刪除寄給他的通知、撤銷成員資格、停用帳號並清除姓名電話，最後刪除 Supabase Auth
   帳號（失敗就整筆回滾）。同意紀錄與稽核紀錄保留。有未結束的預約或是機構負責人時不能核准。
 
