@@ -19,7 +19,7 @@
 
 const auth = require('./_auth-pg');
 const { runAuthenticated, writeAudit } = require('./_business-rpc');
-const { legalDocuments, retentionYears } = require('./_consent');
+const { legalDocuments, retentionYears, anonymizedSummary } = require('./_consent');
 const { sendAlert } = require('./_alerts');
 const { publicSettings } = require('./_public-settings');
 
@@ -79,7 +79,7 @@ exports.handler = (event) => runAuthenticated(event, async (client, body, claims
   }
   if (action === 'run_retention') {
     const rows = (await client.query('select * from app.anonymize_expired_records()')).rows;
-    return { anonymized: { bookings: rows.filter((r) => r.kind === 'booking').length, trips: rows.filter((r) => r.kind === 'trip').length } };
+    return { anonymized: anonymizedSummary(rows) };
   }
   // 驗收監控用（#17）：送出一則測試告警到 Email 與 Discord；或刻意產生一次伺服器錯誤送到 Sentry
   if (action === 'test_alert') {
