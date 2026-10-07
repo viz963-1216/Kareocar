@@ -881,6 +881,14 @@ CareRecipient = {
   relationsForRecipient(recipientId,{includeRevoked=false}={}){ return (store.state.careRecipientRelations||[]).filter(x=>x.recipientId===recipientId&&(includeRevoked||x.status!=='revoked')); },
   relationForUser(userId,recipientId){ return (store.state.careRecipientRelations||[]).find(x=>x.userId===userId&&x.recipientId===recipientId&&x.status!=='revoked')||null; },
   selfForUser(userId){ const rel=selfRelationsForUser(userId)[0],recipient=rel?this.get(rel.recipientId):null;return recipient?.status==='active'?recipient:null; },
+  /** 需求者在「我的家人」建立的服務對象（試營運期間只有建立的人能管理、替他預約） */
+  familyForUser(userId,{includeArchived=false}={}){ const ids=new Set((store.state.careRecipientRelations||[]).filter(x=>x.userId===userId&&x.status!=='revoked'&&x.relationship!=='self'&&x.canManageProfile).map(x=>x.recipientId));return this.list({includeArchived}).filter(r=>ids.has(r.id)); },
+  /** 預約時可選的乘車人：本人在前，接著是可預約的家人 */
+  bookableForUser(userId){ const self=this.selfForUser(userId),family=this.familyForUser(userId).filter(r=>this.relationForUser(userId,r.id)?.canBook!==false);return [...(self?[self]:[]),...family]; },
+  createFamily(input={},{actorUserId=null}={}){
+    if(!actorUserId||!activeOrganizationMembership(actorUserId,APP_CONFIG.requesterOrganizationId,['requester']))return {ok:false,error:'只有需求者可以新增家人'};
+    return this.create(input,{actorUserId,linkUserId:actorUserId,relationship:'family',source:'requester_family',allowPotentialMatch:true,_internalToken:CARE_RECIPIENT_INTERNAL_TOKEN});
+  },
   listForUser(userId,{includeArchived=false,bookableOnly=false}={}){ const relations=(store.state.careRecipientRelations||[]).filter(x=>x.userId===userId&&x.status!=='revoked'&&(!bookableOnly||x.canBook!==false)),ids=new Set(relations.map(x=>x.recipientId));return this.list({includeArchived}).filter(r=>ids.has(r.id)); },
   listServedByOrganization(organizationId,{includeArchived=false,actorUserId=null,_internalToken=null}={}){ const internal=_internalToken===CARE_RECIPIENT_INTERNAL_TOKEN;if(!internal&&!activeOrganizationMembership(actorUserId,organizationId,['owner','dispatcher']))return [];const ids=new Set(Booking?.recipientIdsForOrganization?.(organizationId)||[]);return this.list({includeArchived}).filter(r=>ids.has(r.id)||r.governance?.sourceOrganizationId===organizationId); },
   canRead(recipientId,context={}){ return recipientAccessMode(recipientId,context)!=='none'; },
@@ -1760,7 +1768,8 @@ Booking = {
       state:initialState,status:'pending',claimStatus:organizationId?'claimed':'open',tripId:null,
       version:1,revisionNo:0,stateChangedAt:submittedAt,updatedAt:submittedAt,serviceNeeds,locations,
       marketExpiresAt:sharedBookingMarketExpiryISO(safeInput,submittedAt),expiryPolicyVersion:BOOKING_EXPIRY_POLICY.policyVersion,expiredAt:null,expiryReason:null,
-      legs:bookingLegsFromLegacy(bookingId,safeInput,locations),commercialSnapshots:[],activeCommercialSnapshotId:null
+      legs:bookingLegsFromLegacy(bookingId,safeInput,locations),commercialSnapshots:[],activeCommercialSnapshotId:null,
+      ...(ctx.contacts?{contacts:deepClone(ctx.contacts)}:{})
     };
     applyServiceJurisdictionSnapshot(booking,recipient,{explicit:safeInput.serviceJurisdiction||null,source:'booking_create'});
     syncBookingLegacyLifecycleFields(booking);
@@ -1775,6 +1784,14 @@ Booking = {
     const phone=String(user.phone||'').replace(/\D/g,''); if(phone.length<9)return {ok:false,error:'請先在我的帳戶補齊正確手機號碼'};
     const profileSync=CareRecipient.syncRequesterIdentityForBooking(userId,{name:user.name||'需求者',phone}); if(!profileSync.ok)return profileSync;
     const selfRecipient=profileSync.recipient||CareRecipient.selfForUser(userId);
+    if(input?.recipientId&&input.recipientId!==selfRecipient?.id){
+      // 替家人預約：乘車人是家人，需求者是聯絡人（#82）
+      const family=CareRecipient.bookableForUser(userId).find(r=>r.id===input.recipientId);
+      if(!family)return {ok:false,error:'不能替這位家人預約'};
+      const contacts={requester:{userId,name:user.name||'需求者',phone}};
+      const booking=this.create({...input,recipientId:family.id,name:CareRecipient.displayName(family),phone:CareRecipient.primaryPhone(family),consent:'同意'},{organizationId:null,requestedByUserId:userId,source:'requester_app',contacts});
+      return booking?.ok===false?booking:{ok:true,booking};
+    }
     const booking=this.create({...input,recipientId:selfRecipient?.id||null,name:user.name||'需求者',phone,consent:'同意'},{organizationId:null,requestedByUserId:userId,source:'requester_app'});
     return booking?.ok===false?booking:{ok:true,booking};
   },
@@ -3637,7 +3654,7 @@ function completeStopCompatInDb(trip,step,at){
 function buildTripStepsFromItem(tripId,item,bookings){
   const start=new Date(item.startAt),steps=[],dispatchStops=Array.isArray(item.stops)&&item.stops.length?item.stops:[...(item.pickups||[]).map(p=>({...p,type:'pickup'})),...(item.dropoffs||[]).map(p=>({...p,type:'dropoff'}))],firstStop=dispatchStops[0]||item.pickups?.[0],legByBooking=new Map((item.bookingLegRefs||[]).map(r=>[r.bookingId,r.legId||null]));
   steps.push(makeTripStop({id:`${tripId}_depart`,type:'depart',sequence:1,scheduledAt:addMinutes(start,-20).toISOString(),title:`準備下一趟｜${bookings.map(b=>b.name).join('＋')}`,name:`出發前往${firstStop?.name||'第一站'}`,destination:firstStop?.address||item.firstPickupAddress,contacts:firstStop?[{name:firstStop.name,phone:Booking.get(firstStop.bookingId)?.phone||''}]:[],note:'依調度方案出發'}));
-  dispatchStops.forEach((stop,i)=>{const isPickup=stop.type==='pickup',isLast=i===dispatchStops.length-1,b=Booking.get(stop.bookingId),bookingLegId=stop.legId||stop.bookingLegId||legByBooking.get(stop.bookingId)||null,passengerId=tripPassengerRuntimeId(tripId,stop.bookingId,i);steps.push(makeTripStop({id:`${tripId}_${isPickup?'pickup':'dropoff'}_${i}`,type:isPickup?'pickup':'dropoff',sequence:i+2,scheduledAt:stop.at,title:`${isPickup?'接送':'送達'}｜${stop.name}`,name:isPickup?stop.name:`送達${stop.name}`,destination:stop.address,contacts:[{name:stop.name,phone:b?.phone||''}],note:isPickup?Booking.needsText(b):(isLast?'完成最後送達後，完整趟次才 +1。':'完成此乘客送達後繼續下一站。'),bookingId:stop.bookingId||null,bookingLegId,passengerId}));});
+  dispatchStops.forEach((stop,i)=>{const isPickup=stop.type==='pickup',isLast=i===dispatchStops.length-1,b=Booking.get(stop.bookingId),bookingLegId=stop.legId||stop.bookingLegId||legByBooking.get(stop.bookingId)||null,passengerId=tripPassengerRuntimeId(tripId,stop.bookingId,i);steps.push(makeTripStop({id:`${tripId}_${isPickup?'pickup':'dropoff'}_${i}`,type:isPickup?'pickup':'dropoff',sequence:i+2,scheduledAt:stop.at,title:`${isPickup?'接送':'送達'}｜${stop.name}`,name:isPickup?stop.name:`送達${stop.name}`,destination:stop.address,contacts:[{name:stop.name,phone:b?.phone||''},...(isPickup&&b?.contacts?.requester?.name?[{name:`聯絡人 ${b.contacts.requester.name}`,phone:b.contacts.requester.phone||''}]:[])],note:isPickup?Booking.needsText(b):(isLast?'完成最後送達後，完整趟次才 +1。':'完成此乘客送達後繼續下一站。'),bookingId:stop.bookingId||null,bookingLegId,passengerId}));});
   return {steps,dispatchStops};
 }
 function tripMutationHash(value=''){let h=2166136261,text=String(value);for(let i=0;i<text.length;i++){h^=text.charCodeAt(i);h=Math.imul(h,16777619);}return (h>>>0).toString(36);}
@@ -3869,7 +3886,7 @@ Trip = {
   async createManual(input,organizationId,actorUserId){
     const creationMutationKey=String(input?.clientMutationKey||'').trim();
     if(creationMutationKey){store.refreshFromStorage?.();const existing=(store.state.trips||[]).find(t=>t.creationMutationKey===creationMutationKey);if(existing)return {ok:true,duplicate:true,trip:this.get(existing.id)};}
-    const pickupAt=new Date(input.pickupAt),endAt=addMinutes(pickupAt,Math.max(8,Dispatch.estimateDriveMinutes(input.pickupAddress,input.destination,{departureAt:pickupAt})+(Dispatch.policy?.routingServiceBufferMin||4))),id=uid('trip'),contact=[{name:input.name,phone:input.phone}],code=`CR-${dateKey(pickupAt).slice(5).replace('-','')}-${String(store.state.trips.length+1).padStart(3,'0')}`;
+    const pickupAt=new Date(input.pickupAt),endAt=addMinutes(pickupAt,Math.max(8,Dispatch.estimateDriveMinutes(input.pickupAddress,input.destination,{departureAt:pickupAt})+(Dispatch.policy?.routingServiceBufferMin||4))),id=uid('trip'),requesterContact=input.bookingId?Booking.get(input.bookingId)?.contacts?.requester:null,contact=[{name:input.name,phone:input.phone},...(requesterContact?.name?[{name:`聯絡人 ${requesterContact.name}`,phone:requesterContact.phone||''}]:[])],code=`CR-${dateKey(pickupAt).slice(5).replace('-','')}-${String(store.state.trips.length+1).padStart(3,'0')}`;
     const resource=Organization.validateTripResourceAssignment({organizationId,driverId:input.driverId,vehicleId:input.vehicleId,startAt:addMinutes(pickupAt,-20),endAt,needs:input.needs||'',passengerUnits:1,wheelchairUnits:/輪椅/.test(input.needs||'')?1:0,actorUserId,requireActor:true});
     if(!resource.ok) return resource;
     if(input.bookingId){ const bookingCheck=Booking.canScheduleLegForTrip(input.bookingId,input.bookingLegId,{tripId:id,organizationId,userId:actorUserId}); if(!bookingCheck.ok) return bookingCheck; }
@@ -4275,7 +4292,7 @@ const ROLE_PERMISSIONS = Object.freeze({
   ]),
   requester:Object.freeze([
     'requester.dashboard.read','booking.create_own','booking.read_own','booking.edit_own','booking.cancel_own','booking.audit.read_own',
-    'care_recipient.self.read','care_recipient.self.update',
+    'care_recipient.self.read','care_recipient.self.update','care_recipient.family.manage',
     'benefit.dashboard.read','benefit.ruleset.read','benefit.assessment.read_own','benefit.assessment.create_own','benefit.authorization.read_own','benefit.ledger.read_own','account.read_own','system_report.create'
   ])
 });
@@ -4869,6 +4886,8 @@ let selectedCalendarMonth=dateKey().slice(0,7);
 let demandMarketDate='';
 let editingRequesterBookingId='';
 let requesterWizardStep=1;
+// 預約的乘車人（本人或家人的服務對象 ID）；空字串代表沿用草稿或本人
+let requesterRecipientChoice='';
 let requesterDraftDirty=false;
 let dispatchTripFilters={quick:'all',driver:'all',vehicle:'all',query:''};
 let selectedCareRecipientId='';
@@ -5368,12 +5387,17 @@ function careRecipientsView(){
   <div class="metric-grid"><div class="metric"><span>有效</span><strong>${active.length}</strong></div><div class="metric"><span>已封存</span><strong>${archived.length}</strong></div></div>
   <div class="list">${rows.map(r=>{const rel=CareRecipient.relationForUser(userId,r.id),canManage=CareRecipient.canManage(r.id,{actorUserId:userId}),n=careRecipientFixedNeedsText(r);return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(CareRecipient.displayName(r))}</h4><p>${formatPhone(CareRecipient.primaryPhone(r)||'')||'未填手機'}・${escapeHTML(CareRecipient.primaryAddress(r)||'未填地址')}<br>固定需求：${escapeHTML(n)}${rel?`<br>你的關係：${escapeHTML(careRecipientRoleLabel(rel))}${rel.canBook?'・可預約':''}${rel.canManageProfile?'・可編輯':''}`:''}</p></div><span class="pill ${r.status==='active'?'green':'gray'}">${r.status==='active'?'有效':'已封存'}</span></div><div class="item-actions"><button type="button" class="btn outline sm care-recipient-detail-btn" data-recipient="${r.id}">查看</button>${canManage?`<button type="button" class="btn primary sm care-recipient-edit-btn" data-recipient="${r.id}">編輯</button>${r.status==='active'?`<button type="button" class="btn danger sm care-recipient-archive-btn" data-recipient="${r.id}">封存</button>`:`<button type="button" class="btn success sm care-recipient-restore-btn" data-recipient="${r.id}">恢復</button>`}`:''}</div></div>`;}).join('')||'<div class="empty">還沒有服務對象</div>'}</div>`;
 }
+// 需求者新增家人後要做的事（例如預約流程裡直接選這位家人）；關閉視窗或改用其他用途時清掉
+let careRecipientEditorAfterSave=null;
+function openFamilyEditor(recipientId='',afterSave=null){ openCareRecipientEditor(recipientId);careRecipientEditorAfterSave=afterSave; }
 function openCareRecipientEditor(recipientId=''){
+  careRecipientEditorAfterSave=null;
   clearFieldErrors($('careRecipientEditModal'));
   const userId=Identity.currentUser()?.id||'',readResult=recipientId?CareRecipient.read(recipientId,{actorUserId:userId,organizationId:Identity.membershipOrganizationId()}):null,r=readResult?.ok?readResult.recipient:null;
   if(r&&!CareRecipient.canManage(r.id,{actorUserId:userId})){showToast('你沒有修改此服務對象的權限');return;}
-  if(!r&&!Identity.can('care_recipient.create')){showToast('你沒有新增服務對象權限');return;}
-  selectedCareRecipientId=r?.id||'';$('careRecipientEditId').value=r?.id||'';const selfRecipient=role()==='requester'&&r&&CareRecipient.selfForUser(userId)?.id===r.id;$('careRecipientEditTitle').textContent=selfRecipient?'編輯我的接送資料':(r?'編輯服務對象':'新增服務對象');
+  const familyMode=role()==='requester';
+  if(!r&&!Identity.can(familyMode?'care_recipient.family.manage':'care_recipient.create')){showToast('你沒有新增服務對象權限');return;}
+  selectedCareRecipientId=r?.id||'';$('careRecipientEditId').value=r?.id||'';const selfRecipient=role()==='requester'&&r&&CareRecipient.selfForUser(userId)?.id===r.id;$('careRecipientEditTitle').textContent=selfRecipient?'編輯我的接送資料':familyMode?(r?'編輯家人':'新增家人'):(r?'編輯服務對象':'新增服務對象');$('saveCareRecipientBtn').textContent=familyMode?'儲存':'儲存主檔';
   $('crNameInput').readOnly=!!selfRecipient;$('crPhoneInput').readOnly=!!selfRecipient;
   $('crNameInput').value=selfRecipient?(Identity.currentUser()?.name||''):(r?.identity?.displayName||'');$('crPhoneInput').value=selfRecipient?(Identity.currentUser()?.phone||''):(r?.contacts?.primaryPhone||'');$('crBirthDateInput').value=r?.identity?.birthDate||'';$('crGenderInput').value=r?.identity?.gender||'unspecified';$('crAddressInput').value=r?.addresses?.primary||'';$('crEmergencyNameInput').value=r?.contacts?.emergencyContacts?.[0]?.name||'';$('crEmergencyPhoneInput').value=r?.contacts?.emergencyContacts?.[0]?.phone||'';
   $('crWalkingInput').value=r?.mobility?.walkingAbility||'unknown';$('crWheelchairInput').value=r?.mobility?.wheelchairType||'none';$('crAccessibleInput').value=String(!!r?.mobility?.requiresAccessibleVehicle);$('crEscortInput').value=String(!!r?.mobility?.requiresEscort);$('crTransferInput').value=r?.mobility?.transferAssistance||'unknown';$('crDefaultCompanionsInput').value=Number(r?.servicePreferences?.defaultCompanions||0)||0;$('crDefaultAidInput').value=r?.mobility?.defaultAidNeed||'';$('crDefaultSpecialInput').value=r?.mobility?.defaultSpecialNeeds||'';$('crNotesInput').value=r?.servicePreferences?.notes||'';openModal('careRecipientEditModal');
@@ -5382,8 +5406,8 @@ function saveCareRecipient(){
   const scope=$('careRecipientEditModal'),emergencyPhoneRaw=String($('crEmergencyPhoneInput').value||'').replace(/\D/g,'');if(!validateFieldRules(scope,[{id:'crNameInput',message:'請輸入姓名'},{id:'crPhoneInput',message:'請輸入有效主要聯絡手機',test:f=>/^09\d{8}$/.test(f.value.replace(/\D/g,''))},{id:'crAddressInput',message:'請輸入主要／常用上車地址'},...(emergencyPhoneRaw?[{id:'crEmergencyPhoneInput',message:'緊急聯絡電話格式不正確',test:f=>f.value.replace(/\D/g,'').length>=9}]:[])]))return;
   const actorUserId=Identity.currentUser()?.id||null,editingId=$('careRecipientEditId').value,existingRaw=editingId?CareRecipient.get(editingId):null,emergencyName=$('crEmergencyNameInput').value.trim(),emergencyPhone=String($('crEmergencyPhoneInput').value||'').replace(/\D/g,''),existingExtraContacts=(existingRaw?.contacts?.emergencyContacts||[]).slice(1),firstEmergency=(emergencyName||emergencyPhone)?[{id:existingRaw?.contacts?.emergencyContacts?.[0]?.id||undefined,name:emergencyName||'緊急聯絡人',relationship:existingRaw?.contacts?.emergencyContacts?.[0]?.relationship||'other',phone:emergencyPhone,priority:1}]:[],input={name:$('crNameInput').value.trim(),phone:$('crPhoneInput').value.trim(),birthDate:$('crBirthDateInput').value||null,gender:$('crGenderInput').value,address:$('crAddressInput').value.trim(),emergencyContacts:[...firstEmergency,...existingExtraContacts],mobility:{walkingAbility:$('crWalkingInput').value,wheelchairType:$('crWheelchairInput').value,requiresAccessibleVehicle:$('crAccessibleInput').value==='true',requiresEscort:$('crEscortInput').value==='true',transferAssistance:$('crTransferInput').value,defaultAidNeed:$('crDefaultAidInput').value.trim(),defaultSpecialNeeds:$('crDefaultSpecialInput').value.trim()},servicePreferences:{defaultPickupAddress:$('crAddressInput').value.trim(),defaultCompanions:Math.max(0,Number($('crDefaultCompanionsInput').value)||0),notes:$('crNotesInput').value.trim()}};
   const selfEditing=role()==='requester'&&editingId&&CareRecipient.selfForUser(actorUserId)?.id===editingId;if(selfEditing){input.name=Identity.currentUser()?.name||input.name;input.phone=Identity.currentUser()?.phone||input.phone;}
-  let result;if($('careRecipientEditId').value){result=CareRecipient.update($('careRecipientEditId').value,{identity:{displayName:input.name,birthDate:input.birthDate,gender:input.gender},contacts:{primaryPhone:String(input.phone||'').replace(/\D/g,''),emergencyContacts:input.emergencyContacts},addresses:{primary:input.address,commonPickup:input.address},mobility:input.mobility,servicePreferences:input.servicePreferences},{actorUserId});}else result=CareRecipient.create(input,{actorUserId,organizationId:Identity.isSuperAdmin()?null:Identity.membershipOrganizationId(),linkUserId:null,relationship:'family',source:Identity.isSuperAdmin()?'platform_manual':'organization_owner_manual'});
-  if(!result?.ok){routeFieldError(result?.error||'服務對象儲存失敗',[['姓名','crNameInput'],['手機','crPhoneInput'],['電話','crPhoneInput'],['地址','crAddressInput'],['緊急聯絡','crEmergencyPhoneInput'],['輪椅','crWheelchairInput']]);return;}closeModal('careRecipientEditModal');render();showToast($('careRecipientEditId').value?'服務對象主檔已更新':'服務對象已建立');
+  let result;if($('careRecipientEditId').value){result=CareRecipient.update($('careRecipientEditId').value,{identity:{displayName:input.name,birthDate:input.birthDate,gender:input.gender},contacts:{primaryPhone:String(input.phone||'').replace(/\D/g,''),emergencyContacts:input.emergencyContacts},addresses:{primary:input.address,commonPickup:input.address},mobility:input.mobility,servicePreferences:input.servicePreferences},{actorUserId});}else if(role()==='requester')result=CareRecipient.createFamily(input,{actorUserId});else result=CareRecipient.create(input,{actorUserId,organizationId:Identity.isSuperAdmin()?null:Identity.membershipOrganizationId(),linkUserId:null,relationship:'family',source:Identity.isSuperAdmin()?'platform_manual':'organization_owner_manual'});
+  if(!result?.ok){routeFieldError(result?.error||'服務對象儲存失敗',[['姓名','crNameInput'],['手機','crPhoneInput'],['電話','crPhoneInput'],['地址','crAddressInput'],['緊急聯絡','crEmergencyPhoneInput'],['輪椅','crWheelchairInput']]);return;}const afterSave=careRecipientEditorAfterSave;careRecipientEditorAfterSave=null;closeModal('careRecipientEditModal');if(afterSave)afterSave(result.recipient);render();showToast(role()==='requester'?($('careRecipientEditId').value?'家人資料已更新':'已新增家人'):($('careRecipientEditId').value?'服務對象主檔已更新':'服務對象已建立'));
 }
 function openCareRecipientDetail(recipientId){
   const userId=Identity.currentUser()?.id||'',organizationId=Identity.membershipOrganizationId();if(!CareRecipient.canRead(recipientId,{actorUserId:userId,organizationId})){showToast('你沒有查看此服務對象完整資料的權限');return;}
@@ -5407,6 +5431,8 @@ function saveCareRecipientRelation(){
   const recipientId=$('crRelationRecipientId').value,phone=String($('crRelationPhoneInput').value||'').replace(/\D/g,''),user=(store.state.users||[]).find(u=>String(u.phone||'').replace(/\D/g,'')===phone&&u.active!==false);if(!user){showToast('找不到此手機的有效使用者；請先完成帳號建立');return;}if(CareRecipient.relationForUser(user.id,recipientId)){showToast('這個使用者已經是此服務對象的關係人');return;}
   const rel=CareRecipient.linkUser(user.id,recipientId,{relationship:$('crRelationshipInput').value,isPrimaryContact:false,canBook:$('crRelationCanBookInput').checked,canManageProfile:$('crRelationCanManageInput').checked,actorUserId:Identity.currentUser()?.id});if(!rel){showToast('建立關係失敗');return;}closeModal('careRecipientRelationModal');openCareRecipientDetail(recipientId);showToast('關係人已新增');
 }
+/** 替家人預約時的聯絡人（需求者）；替自己預約時沒有 */
+function bookingContactText(b){ const c=b?.contacts?.requester;return c?.name?`聯絡人：${c.name} ${formatPhone(c.phone||'')}`.trim():''; }
 function requesterBookingsRows(){ return Booking.listForRequesterUser(Identity.currentUser()?.id||''); }
 function bookingLegSummary(b){
   const legs=b?.legs||[]; if(!legs.length)return `${escapeHTML(b.pickupDate||'')} ${escapeHTML(b.pickupTime||'')}｜${escapeHTML(b.pickupAddress||'')} → ${escapeHTML(b.destination||'')}`;
@@ -5434,14 +5460,14 @@ function requesterDraftMeaningful(d){
 function collectRequesterDraftFromDom(){
   if(editingRequesterBookingId)return null;
   const get=id=>$(id)?.value??'';
-  return {step:Math.max(1,Math.min(4,Number(requesterWizardStep)||1)),pickupAddress:get('rqPickup').trim(),pickupAccessNote:get('rqPickupAccessNote').trim(),destination:get('rqDestination').trim(),destinationAccessNote:get('rqDestinationAccessNote').trim(),pickupDate:get('rqDate'),pickupTime:get('rqTime'),tripType:get('rqTripType')||'單程',returnDate:get('rqReturnDate'),returnTime:get('rqReturnTime'),aidNeed:get('rqAidNeed'),companions:get('rqCompanions'),specialNeed:get('rqSpecialNeed').trim(),poolingConsent:get('rqPoolingConsent')||'no',note:get('rqNote').trim(),updatedAt:nowISO()};
+  return {step:Math.max(1,Math.min(4,Number(requesterWizardStep)||1)),recipientId:requesterRecipientChoice||null,pickupAddress:get('rqPickup').trim(),pickupAccessNote:get('rqPickupAccessNote').trim(),destination:get('rqDestination').trim(),destinationAccessNote:get('rqDestinationAccessNote').trim(),pickupDate:get('rqDate'),pickupTime:get('rqTime'),tripType:get('rqTripType')||'單程',returnDate:get('rqReturnDate'),returnTime:get('rqReturnTime'),aidNeed:get('rqAidNeed'),companions:get('rqCompanions'),specialNeed:get('rqSpecialNeed').trim(),poolingConsent:get('rqPoolingConsent')||'no',note:get('rqNote').trim(),updatedAt:nowISO()};
 }
 function saveRequesterDraftFromDom({markDirty=true}={}){
   if(editingRequesterBookingId)return null;const d=collectRequesterDraftFromDom(),key=requesterDraftKey();if(!d||!key)return null;
   try{if(requesterDraftMeaningful(d))LocalStore.setItem(key,JSON.stringify(d));else LocalStore.removeItem(key);}catch(e){}
   if(markDirty)requesterDraftDirty=requesterDraftMeaningful(d);return d;
 }
-function clearRequesterDraft(){const key=requesterDraftKey();if(key){try{LocalStore.removeItem(key);}catch(e){}}requesterDraftDirty=false;}
+function clearRequesterDraft(){const key=requesterDraftKey();if(key){try{LocalStore.removeItem(key);}catch(e){}}requesterDraftDirty=false;requesterRecipientChoice='';}
 function requesterDraftSummary(d){
   if(!d)return '';
   const route=[d.pickupAddress||'尚未填上車地址',d.destination||'尚未填目的地'].join(' → '),time=[d.pickupDate||'日期未填',d.pickupTime||'時間未填'].join(' ');
@@ -5493,8 +5519,15 @@ function requesterNew(){
   const editing=editingRequesterBookingId?Booking.get(editingRequesterBookingId):null;
   if(editing&&(!Booking.canEditOwn(editing.id,u?.id).ok||editing.requestedByUserId!==u?.id))editingRequesterBookingId='';
   const b=editingRequesterBookingId?Booking.get(editingRequesterBookingId):null,draft=b?null:loadRequesterDraft();
-  const fixed=selfRecipient?careRecipientFixedNeedsText(selfRecipient):'無';
-  const defaultPickup=b?.pickupAddress??(draft&&Object.prototype.hasOwnProperty.call(draft,'pickupAddress')?draft.pickupAddress:(selfRecipient?CareRecipient.defaultPickupAddress(selfRecipient):''));
+  // 乘車人：修改時沿用預約的服務對象；新預約依目前選擇、草稿、本人的順序
+  const choices=CareRecipient.bookableForUser(u?.id||'');
+  const wanted=b?b.recipientId:(requesterRecipientChoice||draft?.recipientId||selfRecipient?.id||'');
+  const rider=b?(CareRecipient.get(b.recipientId)||null):(choices.find(r=>r.id===wanted)||selfRecipient||null);
+  if(!b)requesterRecipientChoice=rider?.id||'';
+  const riderIsSelf=!rider||rider.id===selfRecipient?.id,riderName=b?b.name:(riderIsSelf?(u?.name||''):CareRecipient.displayName(rider));
+  const fixed=rider?careRecipientFixedNeedsText(rider):'無';
+  const draftPickupFits=draft&&Object.prototype.hasOwnProperty.call(draft,'pickupAddress')&&(draft.recipientId||selfRecipient?.id||'')===(rider?.id||'');
+  const defaultPickup=b?.pickupAddress??(draftPickupFits?draft.pickupAddress:(rider?CareRecipient.defaultPickupAddress(rider):''));
   const tripType=b?.tripType||draft?.tripType||'單程',date=b?.pickupDate||draft?.pickupDate||tomorrow,time=b?.pickupTime||draft?.pickupTime||'09:00',returnDate=b?.returnDate||draft?.returnDate||date,returnTime=b?.returnTime||draft?.returnTime||'13:00';
   const aid=b?.aidNeed??draft?.aidNeed??'',companions=b?.companions===undefined||b?.companions===null?(draft?.companions??''):String(b.companions),title=b?'修改預約':'預約接送',submitLabel=b?'儲存修改':'送出預約';
   const step=Math.max(1,Math.min(4,Number(b?requesterWizardStep:(requesterWizardStep>1?requesterWizardStep:(draft?.step||1)))||1));
@@ -5506,7 +5539,7 @@ function requesterNew(){
   <div class="booking-wizard" aria-label="預約接送四步驟">
     <div class="wizard-progress" aria-label="預約進度">${indicator(1,'乘車人')}${indicator(2,'地點')}${indicator(3,'時間與需求')}${indicator(4,'確認')}</div>
     <section class="wizard-panel ${step===1?'active':''}" data-wizard-panel="1">
-      <section class="card"><div class="card-head"><div><h3>乘車人</h3></div><span class="pill blue">本人</span></div><div class="meta">${escapeHTML(u?.name||'')}・${formatPhone(u?.phone||'')||'未設定手機'}${selfRecipient?`<br>固定需求：${escapeHTML(fixed)}`:''}</div><div class="wizard-actions"><span></span><div class="right"><button class="btn primary wizard-next-btn" data-next="2" type="button">下一步</button></div></div></section>
+      <section class="card"><div class="card-head"><div><h3>這次載誰？</h3></div>${b?'':'<button type="button" class="btn outline sm" id="rqAddFamilyBtn">＋ 新增家人</button>'}</div>${b?`<div class="meta">${escapeHTML(riderName)}${rider?`<br>固定需求：${escapeHTML(fixed)}`:''}</div>`:`<div class="recipient-choices" role="radiogroup" aria-label="乘車人">${(choices.length?choices:[null]).map(r=>{const isSelf=!r||r.id===selfRecipient?.id,on=(r?.id||'')===(rider?.id||'');return `<button type="button" class="recipient-choice ${on?'active':''}" role="radio" aria-checked="${on}" data-recipient-choice="${escapeHTML(r?.id||'')}"><strong>${escapeHTML(isSelf?(u?.name||''):CareRecipient.displayName(r))}</strong><span class="pill ${isSelf?'blue':'gray'}">${isSelf?'本人':'家人'}</span>${r?`<span class="muted small">固定需求：${escapeHTML(careRecipientFixedNeedsText(r))}</span>`:''}</button>`;}).join('')}</div>`}<div class="wizard-actions"><span></span><div class="right"><button class="btn primary wizard-next-btn" data-next="2" type="button">下一步</button></div></div></section>
     </section>
     <section class="wizard-panel ${step===2?'active':''}" data-wizard-panel="2">
       <section class="card"><div class="card-head"><div><h3>上下車地點</h3></div></div><div class="form-grid">
@@ -5521,7 +5554,7 @@ function requesterNew(){
         <div class="form-2"><div class="form-field"><label for="rqDate">去程日期</label><input id="rqDate" type="date" min="${dateKey()}" value="${escapeHTML(date)}" /></div><div class="form-field"><label for="rqTime">去程時間</label><input id="rqTime" type="time" value="${escapeHTML(time)}" /></div></div>
         <div class="form-field"><label for="rqTripType">行程類型</label><select id="rqTripType"><option value="單程" ${tripType==='單程'?'selected':''}>單程</option><option value="來回" ${tripType==='來回'?'selected':''}>來回</option></select></div>
         <div class="form-2 ${tripType==='來回'?'':'hidden'}" id="rqReturnFields"><div class="form-field"><label for="rqReturnDate">回程日期</label><input id="rqReturnDate" type="date" min="${dateKey()}" value="${escapeHTML(returnDate)}" /></div><div class="form-field"><label for="rqReturnTime">回程時間</label><input id="rqReturnTime" type="time" value="${escapeHTML(returnTime)}" /></div></div>
-        <div class="form-2"><div class="form-field"><label for="rqAidNeed">輪椅／輔具</label><select id="rqAidNeed"><option value="" ${aid===''?'selected':''}>${selfRecipient?'同平常':'無'}</option><option value="手動輪椅" ${aid==='手動輪椅'?'selected':''}>手動輪椅</option><option value="電動輪椅" ${aid==='電動輪椅'?'selected':''}>電動輪椅</option><option value="助行器" ${aid==='助行器'?'selected':''}>助行器</option><option value="其他輔具" ${aid==='其他輔具'?'selected':''}>其他輔具</option></select></div><div class="form-field"><label for="rqCompanions">陪同人數</label><select id="rqCompanions"><option value="" ${companions===''?'selected':''}>${selfRecipient?'同平常':'無'}</option>${(selfRecipient?[0,1,2,3,4,5,6]:[1,2,3,4,5,6]).map(n=>`<option value="${n}" ${companions===String(n)?'selected':''}>${n?`${n} 人`:'這次沒有'}</option>`).join('')}</select></div></div>
+        <div class="form-2"><div class="form-field"><label for="rqAidNeed">輪椅／輔具</label><select id="rqAidNeed"><option value="" ${aid===''?'selected':''}>${rider?'同平常':'無'}</option><option value="手動輪椅" ${aid==='手動輪椅'?'selected':''}>手動輪椅</option><option value="電動輪椅" ${aid==='電動輪椅'?'selected':''}>電動輪椅</option><option value="助行器" ${aid==='助行器'?'selected':''}>助行器</option><option value="其他輔具" ${aid==='其他輔具'?'selected':''}>其他輔具</option></select></div><div class="form-field"><label for="rqCompanions">陪同人數</label><select id="rqCompanions"><option value="" ${companions===''?'selected':''}>${rider?'同平常':'無'}</option>${(rider?[0,1,2,3,4,5,6]:[1,2,3,4,5,6]).map(n=>`<option value="${n}" ${companions===String(n)?'selected':''}>${n?`${n} 人`:'這次沒有'}</option>`).join('')}</select></div></div>
         <div class="form-field"><label for="rqSpecialNeed">特殊需求 <span class="field-optional">選填</span></label><input id="rqSpecialNeed" value="${escapeHTML(b?.specialNeed??draft?.specialNeed??'')}" placeholder="例如：需要協助上下車、不可久候" /></div>
         <div class="form-field"><label for="rqPoolingConsent">共乘</label><select id="rqPoolingConsent"><option value="no" ${(b?.poolingConsent??draft?.poolingConsent??'no')==='no'?'selected':''}>不共乘</option><option value="yes" ${(b?.poolingConsent??draft?.poolingConsent??'no')==='yes'?'selected':''}>可以共乘</option></select></div>
         <div class="form-field"><label for="rqNote">備註 <span class="field-optional">選填</span></label><textarea id="rqNote" placeholder="其他要告訴司機的事">${escapeHTML(b?.note??draft?.note??'')}</textarea></div>
@@ -5529,7 +5562,7 @@ function requesterNew(){
     </section>
     <section class="wizard-panel ${step===4?'active':''}" data-wizard-panel="4">
       <section class="card"><div class="card-head"><div><h3>確認並送出</h3></div></div>
-                <div class="wizard-review" id="requesterWizardReview"><div class="wizard-review-row"><span>乘車人</span><strong>${escapeHTML(u?.name||'')}</strong></div><div class="wizard-review-row"><span>地點</span><strong id="wizardReviewRoute">${escapeHTML(reviewRoute)}</strong></div><div class="wizard-review-row"><span>時間</span><strong id="wizardReviewTime">${escapeHTML(date)} ${escapeHTML(time)}・${escapeHTML(tripType)}</strong></div>${selfRecipient?`<div class="wizard-review-row"><span>固定需求</span><strong>${escapeHTML(fixed)}</strong></div>`:''}${b?`<div class="wizard-review-row"><span>費用／補助</span><strong>${escapeHTML(Booking.commercialSummary(b))}</strong></div>`:''}</div>
+                <div class="wizard-review" id="requesterWizardReview"><div class="wizard-review-row"><span>乘車人</span><strong>${escapeHTML(riderName)}${riderIsSelf?'':'（家人）'}</strong></div><div class="wizard-review-row"><span>地點</span><strong id="wizardReviewRoute">${escapeHTML(reviewRoute)}</strong></div><div class="wizard-review-row"><span>時間</span><strong id="wizardReviewTime">${escapeHTML(date)} ${escapeHTML(time)}・${escapeHTML(tripType)}</strong></div>${rider?`<div class="wizard-review-row"><span>固定需求</span><strong>${escapeHTML(fixed)}</strong></div>`:''}${b?`<div class="wizard-review-row"><span>費用／補助</span><strong>${escapeHTML(Booking.commercialSummary(b))}</strong></div>`:''}</div>
         <div class="wizard-actions"><button class="btn outline wizard-prev-btn" data-prev="3" type="button">上一步</button><div class="right"><button class="btn primary" id="submitRequesterBookingBtn" type="button">${submitLabel}</button></div></div>
       </section>
     </section>
@@ -5538,7 +5571,7 @@ function requesterNew(){
 function requesterBookings(){
   const rows=requesterBookingsRows(),userId=Identity.currentUser()?.id;
   return `<div class="page-head"><div><h2>我的預約</h2></div><div class="page-actions"><button type="button" class="btn primary" id="requesterNewBookingBtn">＋ 預約接送</button></div></div>
-  <div class="list">${rows.map(b=>{const canCancel=Identity.can('booking.cancel_own')&&Booking.canCancelOwn(b.id,userId).ok,canEdit=Identity.can('booking.edit_own')&&Booking.canEditOwn(b.id,userId).ok;return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(b.pickupDate)} ${escapeHTML(b.pickupTime)}｜${escapeHTML(b.name)}</h4><p>承接單位：${escapeHTML(bookingServiceOrgName(b))}<br>${bookingLegSummary(b)}<br>${escapeHTML(Booking.needsText(b))}・${Dispatch.bookingPoolingConsented(b)?'可共乘':'不共乘'}<br><span class="muted small">${escapeHTML(Booking.commercialSummary(b))}</span></p></div>${bookingStatusPill(b.status)}</div><div class="item-actions">${canEdit?`<button type="button" class="btn primary sm requester-edit-booking-btn" data-booking="${b.id}">修改預約</button>`:''}${canCancel?`<button type="button" class="btn danger sm requester-cancel-booking-btn" data-booking="${b.id}">取消預約</button>`:''}<button type="button" class="btn outline sm booking-history-btn" data-booking="${b.id}">異動紀錄</button>${['partially_scheduled','scheduled'].includes(b.status)&&!canCancel?'<span class="muted small">要更改請聯絡承接單位</span>':''}</div></div>`;}).join('')||'<div class="empty">還沒有預約</div>'}</div>`;
+  <div class="list">${rows.map(b=>{const canCancel=Identity.can('booking.cancel_own')&&Booking.canCancelOwn(b.id,userId).ok,canEdit=Identity.can('booking.edit_own')&&Booking.canEditOwn(b.id,userId).ok;return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(b.pickupDate)} ${escapeHTML(b.pickupTime)}｜${escapeHTML(b.name)}${b.contacts?.requester?' <span class="pill gray">家人</span>':''}</h4><p>承接單位：${escapeHTML(bookingServiceOrgName(b))}<br>${bookingLegSummary(b)}<br>${escapeHTML(Booking.needsText(b))}・${Dispatch.bookingPoolingConsented(b)?'可共乘':'不共乘'}<br><span class="muted small">${escapeHTML(Booking.commercialSummary(b))}</span></p></div>${bookingStatusPill(b.status)}</div><div class="item-actions">${canEdit?`<button type="button" class="btn primary sm requester-edit-booking-btn" data-booking="${b.id}">修改預約</button>`:''}${canCancel?`<button type="button" class="btn danger sm requester-cancel-booking-btn" data-booking="${b.id}">取消預約</button>`:''}<button type="button" class="btn outline sm booking-history-btn" data-booking="${b.id}">異動紀錄</button>${['partially_scheduled','scheduled'].includes(b.status)&&!canCancel?'<span class="muted small">要更改請聯絡承接單位</span>':''}</div></div>`;}).join('')||'<div class="empty">還沒有預約</div>'}</div>`;
 }
 function demandMarket(){
   const userId=Identity.currentUser()?.id,rows=Booking.openDemand(demandMarketDate||null,userId),membershipOrgId=Identity.membershipOrganizationId(),canClaim=Identity.can('booking.market.claim')&&!!membershipOrgId;
@@ -5633,7 +5666,12 @@ function appVersionNote(){ return `<div class="app-version-note" aria-label="應
 function requesterAccount(){
   const u=Identity.currentUser(),selfRecipient=CareRecipient.selfForUser(u?.id||'');
   const selfCard=selfRecipient?`<section class="card"><div class="card-head"><h3>我的接送資料</h3><button type="button" class="btn outline sm" id="editRequesterSelfProfileBtn" data-recipient="${selfRecipient.id}">編輯</button></div><div class="meta">常用上車地址：${escapeHTML(CareRecipient.primaryAddress(selfRecipient)||'未填')}<br>固定需求：${escapeHTML(careRecipientFixedNeedsText(selfRecipient))}</div></section>`:'';
-  return `<div class="page-head"><div><h2>我的帳戶</h2></div></div>${accountSummaryCard_(u,'☺','需求者')}${accountSettingsCard_(u)}${identityMembershipCard()}${selfCard}`;
+  return `<div class="page-head"><div><h2>我的帳戶</h2></div></div>${accountSummaryCard_(u,'☺','需求者')}${accountSettingsCard_(u)}${identityMembershipCard()}${selfCard}${requesterFamilyCard(u)}`;
+}
+function requesterFamilyCard(u){
+  const rows=CareRecipient.familyForUser(u?.id||'',{includeArchived:true});
+  const item=r=>{const active=r.status==='active';return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(CareRecipient.displayName(r))}${active?'':' <span class="pill gray">已封存</span>'}</h4><p>${formatPhone(CareRecipient.primaryPhone(r)||'')||'未填電話'}・${escapeHTML(CareRecipient.primaryAddress(r)||'未填住址')}<br>固定需求：${escapeHTML(careRecipientFixedNeedsText(r))}</p></div></div><div class="item-actions">${active?`<button type="button" class="btn outline sm care-recipient-edit-btn" data-recipient="${r.id}">編輯</button><button type="button" class="btn outline sm care-recipient-archive-btn" data-recipient="${r.id}">封存</button>`:`<button type="button" class="btn outline sm care-recipient-restore-btn" data-recipient="${r.id}">恢復</button>`}</div></div>`;};
+  return `<section class="card"><div class="card-head"><h3>我的家人</h3><button type="button" class="btn outline sm" id="addFamilyBtn">＋ 新增家人</button></div><div class="list" id="familyList">${rows.map(item).join('')||'<div class="empty">替家人預約前，先在這裡新增家人</div>'}</div></section>`;
 }
 // 送出前先請伺服器檢查兩個地址找不找得到，找不到就標在對應的輸入框。
 // 寫入時伺服器會再算一次，這裡只是讓需求者立即知道。
@@ -5658,7 +5696,7 @@ async function submitRequesterBooking(){
     {id:'rqDate',message:'請選擇接送日期'},{id:'rqTime',message:'請選擇接送時間'},{id:'rqPickup',message:'請輸入上車地址'},{id:'rqDestination',message:'請輸入目的地'},
     ...(roundTrip?[{id:'rqReturnDate',message:'來回預約需要回程日期'},{id:'rqReturnTime',message:'來回預約需要回程時間'}]:[])
   ]))return;
-  const input={pickupDate:$('rqDate').value,pickupTime:$('rqTime').value,pickupAddress:$('rqPickup').value.trim(),pickupAccessNote:$('rqPickupAccessNote').value.trim(),destination:$('rqDestination').value.trim(),destinationAccessNote:$('rqDestinationAccessNote').value.trim(),tripType:$('rqTripType').value,returnDate:roundTrip?$('rqReturnDate').value:'',returnTime:roundTrip?$('rqReturnTime').value:'',aidNeed:$('rqAidNeed').value,companions:$('rqCompanions').value,specialNeed:$('rqSpecialNeed').value.trim(),poolingConsent:$('rqPoolingConsent').value,note:$('rqNote').value.trim()};
+  const input={pickupDate:$('rqDate').value,pickupTime:$('rqTime').value,pickupAddress:$('rqPickup').value.trim(),pickupAccessNote:$('rqPickupAccessNote').value.trim(),destination:$('rqDestination').value.trim(),destinationAccessNote:$('rqDestinationAccessNote').value.trim(),tripType:$('rqTripType').value,returnDate:roundTrip?$('rqReturnDate').value:'',returnTime:roundTrip?$('rqReturnTime').value:'',aidNeed:$('rqAidNeed').value,companions:$('rqCompanions').value,specialNeed:$('rqSpecialNeed').value.trim(),poolingConsent:$('rqPoolingConsent').value,note:$('rqNote').value.trim(),...(editing?{}:{recipientId:requesterRecipientChoice||null})};
   if(!editing||editing.pickupAddress!==input.pickupAddress||editing.destination!==input.destination){
     const checked=await checkBookingAddresses_(input.pickupAddress,input.destination);
     if(!checked.ok){if(checked.toast)showToast(checked.error);else routeFieldError(checked.error,[['上車','rqPickup'],['目的地','rqDestination']]);return;}
@@ -5833,7 +5871,7 @@ function renderSchedulingWorkspace(date=selectedTripDate,rows=null){
   const actorUserId=Identity.currentUser()?.id,schedulingRows=rows||bookingSchedulingRows(date),syncDetails=store.state.integration.lastSyncDetails||[];
   return `<section class="card"><div class="card-head"><div><h3>待排預約</h3></div><span class="pill blue">${schedulingRows.length} 筆</span></div>
     ${syncDetails.length?`<div class="feasibility-box blocked" style="margin-top:10px"><div class="feasibility-title">同步有問題</div>${syncDetails.slice(0,6).map(x=>`• ${escapeHTML(x)}`).join('<br>')}</div>`:''}
-  <div class="list">${schedulingRows.map(b=>{const state=Booking.stateOf(b),view=Booking.dispatchView(b);return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(b.name)}｜${escapeHTML(view?.pickupDate||b.pickupDate)} ${escapeHTML(view?.pickupTime||b.pickupTime)}</h4><p>${formatPhone(b.phone)}・${escapeHTML(view?.activeLegLabel||bookingNextLegLabel(b))}<br>${escapeHTML(view?.pickupAddress||b.pickupAddress)} → ${escapeHTML(view?.destination||b.destination)}</p></div>${bookingStatusPill(b.status)}</div><div class="address" style="margin-top:10px">${bookingLegSummary(b)}<br>需求：${escapeHTML(Booking.needsText(b))}<br><span class="dispatch-benefit">${escapeHTML(Booking.commercialSummary(b))}</span></div>${['claimed','partially_scheduled'].includes(state)?renderRecommendation(view):''}<div class="item-actions">${['claimed','partially_scheduled'].includes(state)&&Identity.can('booking.schedule')?`<button type="button" class="btn primary sm booking-create-trip-btn" data-booking="${b.id}">建立${escapeHTML(bookingNextLegLabel(b))}行程</button>`:''}${state==='claimed'&&Identity.can('booking.release')?`<button type="button" class="btn warning sm booking-release-btn" data-booking="${b.id}">放棄接案</button>`:''}${state==='claimed'&&Identity.can('booking.reject')?`<button type="button" class="btn outline sm booking-reject-btn" data-booking="${b.id}">不受理</button>`:''}${bookingLegOrganizationAssignmentControl(b)}${Booking.canReadEvents(b.id,actorUserId)?`<button type="button" class="btn outline sm booking-history-btn" data-booking="${b.id}">異動紀錄</button>`:''}</div></div>`;}).join('')||'<div class="empty">這一天沒有待排預約</div>'}</div></section>${schedulingRows.length?renderOptimizer(date,schedulingRows.length):''}`;
+  <div class="list">${schedulingRows.map(b=>{const state=Booking.stateOf(b),view=Booking.dispatchView(b);return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(b.name)}｜${escapeHTML(view?.pickupDate||b.pickupDate)} ${escapeHTML(view?.pickupTime||b.pickupTime)}</h4><p>${formatPhone(b.phone)}・${escapeHTML(view?.activeLegLabel||bookingNextLegLabel(b))}${bookingContactText(b)?`<br>${escapeHTML(bookingContactText(b))}`:''}<br>${escapeHTML(view?.pickupAddress||b.pickupAddress)} → ${escapeHTML(view?.destination||b.destination)}</p></div>${bookingStatusPill(b.status)}</div><div class="address" style="margin-top:10px">${bookingLegSummary(b)}<br>需求：${escapeHTML(Booking.needsText(b))}<br><span class="dispatch-benefit">${escapeHTML(Booking.commercialSummary(b))}</span></div>${['claimed','partially_scheduled'].includes(state)?renderRecommendation(view):''}<div class="item-actions">${['claimed','partially_scheduled'].includes(state)&&Identity.can('booking.schedule')?`<button type="button" class="btn primary sm booking-create-trip-btn" data-booking="${b.id}">建立${escapeHTML(bookingNextLegLabel(b))}行程</button>`:''}${state==='claimed'&&Identity.can('booking.release')?`<button type="button" class="btn warning sm booking-release-btn" data-booking="${b.id}">放棄接案</button>`:''}${state==='claimed'&&Identity.can('booking.reject')?`<button type="button" class="btn outline sm booking-reject-btn" data-booking="${b.id}">不受理</button>`:''}${bookingLegOrganizationAssignmentControl(b)}${Booking.canReadEvents(b.id,actorUserId)?`<button type="button" class="btn outline sm booking-history-btn" data-booking="${b.id}">異動紀錄</button>`:''}</div></div>`;}).join('')||'<div class="empty">這一天沒有待排預約</div>'}</div></section>${schedulingRows.length?renderOptimizer(date,schedulingRows.length):''}`;
 }
 function dispatchHome(){
   const operationDate=selectedTripDate||preferredOperationalDate(),bookings=bookingSchedulingRows(operationDate),trips=Trip.list(orgId(),operationDate),issues=Trip.issues(orgId()).filter(i=>i.status!=='resolved'&&Trip.get(i.tripId)?.date===operationDate),k=Analytics.fleetDaily(orgId(),operationDate);
@@ -6755,7 +6793,18 @@ function goRequesterWizardStep(next){
   if(target===4)refreshRequesterWizardReview();
   document.querySelector('.booking-wizard')?.scrollIntoView({behavior:'smooth',block:'start'});
 }
+/** 換乘車人：上車地址還是上一位的預設住址（或沒填）時，改成新乘車人的住址；自己改過的地址保留 */
+function selectRequesterRider(recipientId){
+  const d=collectRequesterDraftFromDom(),before=CareRecipient.get(d?.recipientId||'')||CareRecipient.selfForUser(Identity.currentUser()?.id||''),next=CareRecipient.get(recipientId);
+  if(!d||!next)return;
+  if(!d.pickupAddress||(before&&d.pickupAddress===CareRecipient.defaultPickupAddress(before)))d.pickupAddress=CareRecipient.defaultPickupAddress(next)||'';
+  requesterRecipientChoice=next.id;d.recipientId=next.id;
+  const key=requesterDraftKey();if(key){try{LocalStore.setItem(key,JSON.stringify(d));}catch(e){}}
+  render();
+}
 function bindRequesterWizardEvents(){
+  document.querySelectorAll('[data-recipient-choice]').forEach(btn=>btn.addEventListener('click',()=>{if(btn.dataset.recipientChoice)selectRequesterRider(btn.dataset.recipientChoice);}));
+  $('rqAddFamilyBtn')?.addEventListener('click',()=>{saveRequesterDraftFromDom({markDirty:true});openFamilyEditor('',recipient=>{if(recipient)selectRequesterRider(recipient.id);});});
   document.querySelectorAll('.wizard-next-btn').forEach(btn=>btn.addEventListener('click',()=>goRequesterWizardStep(btn.dataset.next)));
   document.querySelectorAll('.wizard-prev-btn').forEach(btn=>btn.addEventListener('click',()=>goRequesterWizardStep(btn.dataset.prev)));
   document.querySelectorAll('[data-wizard-go]').forEach(btn=>btn.addEventListener('click',()=>{const n=Number(btn.dataset.wizardGo);if(n<=requesterWizardStep||n===requesterWizardStep+1)goRequesterWizardStep(n);}));
@@ -6802,6 +6851,7 @@ function bindViewEvents(){
   document.querySelectorAll('.care-recipient-archive-btn').forEach(btn=>btn.addEventListener('click',()=>{if(!confirm('確定封存這位服務對象？歷史資料會保留，但不能再用於新預約。'))return;const result=CareRecipient.archive(btn.dataset.recipient,{actorUserId:Identity.currentUser()?.id});if(!result.ok){showToast(result.error);return;}render();showToast('服務對象已封存');}));
   document.querySelectorAll('.care-recipient-restore-btn').forEach(btn=>btn.addEventListener('click',()=>{const result=CareRecipient.restore(btn.dataset.recipient,{actorUserId:Identity.currentUser()?.id});if(!result.ok){showToast(result.error);return;}render();showToast('服務對象已恢復');}));
   $('editRequesterSelfProfileBtn')?.addEventListener('click',e=>openCareRecipientEditor(e.currentTarget.dataset.recipient));
+  $('addFamilyBtn')?.addEventListener('click',()=>openFamilyEditor(''));
   $('demandMarketDateInput')?.addEventListener('change',e=>{demandMarketDate=e.target.value||'';render();});
   $('clearDemandDateBtn')?.addEventListener('click',()=>{demandMarketDate='';render();});
   document.querySelectorAll('.demand-claim-btn').forEach(btn=>btn.addEventListener('click',async()=>{
