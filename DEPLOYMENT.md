@@ -144,7 +144,8 @@
 | 應用程式告警（補助公告抓取失敗等） | `_alerts.js` 送到 Discord 與 Email，另寫稽核紀錄 | `DISCORD_ALERT_WEBHOOK_URL`、`RESEND_API_KEY`、`ALERT_EMAIL_FROM`、`ALERT_EMAIL_TO` |
 
 **個資**：送出前經 `_scrub.js` 清掉電話、Email、身分證號、地址，敏感欄位（姓名、電話、地址、
-token 等）整個拿掉；不送請求內容、cookie、查詢字串與使用者資料。Sentry 專案設定另外建議：
+聯絡人、備註、生日、token 等；鍵名拆成單字比對，primaryPhone、emergencyContacts 這類 camelCase 也算，
+tripId、pickupAt 這類 ID 與時間不算）整個拿掉；不送請求內容、cookie、查詢字串與使用者資料。Sentry 專案設定另外建議：
 關閉 IP 記錄（Settings → Security & Privacy → Prevent Storing of IP Addresses），開啟
 Data Scrubber。
 

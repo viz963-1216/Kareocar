@@ -4,10 +4,30 @@
  * 送到外部監控（Sentry、告警）之前清掉個資（#17）：姓名、電話、Email、地址、身分證號。
  *
  *   scrubText(text)    字串裡的電話、Email、身分證號、門牌地址換成佔位字
- *   scrubValue(value)  物件遞迴處理；敏感鍵（name、phone、address…）的值整個拿掉
+ *   scrubValue(value)  物件遞迴處理；敏感鍵（name、phone、address…，含 primaryPhone 等 camelCase）的值整個拿掉
  */
 
-const SENSITIVE_KEY = /(^|_|-)(name|displayname|phone|mobile|tel|email|address|pickup|destination|contact|recipient|receiver|password|token|secret|cookie|authorization|session|idnumber|birth)/i;
+// 鍵名先拆成單字（camelCase、底線、連字號都拆，不分大小寫），任何一個單字是個資就整個值拿掉（#81）。
+// 例如 primaryPhone → primary、phone；emergencyContacts → emergency、contacts；filename 是一個字，不算 name。
+const PII_WORDS = new Set(['name', 'names', 'displayname', 'fullname', 'phone', 'phones', 'mobile', 'tel', 'email', 'emails',
+  'address', 'addresses', 'pickup', 'dropoff', 'destination', 'location', 'locations', 'lat', 'lng', 'gps', 'coords',
+  'contact', 'contacts', 'recipient', 'recipients', 'receiver', 'requester', 'signature', 'photo', 'note', 'notes',
+  'idnumber']);
+// 不管結尾是什麼都拿掉
+const ALWAYS_WORDS = new Set(['password', 'token', 'secret', 'cookie', 'authorization', 'session', 'birth', 'birthdate', 'credential']);
+// 這些結尾代表 ID、時間、狀態、筆數，不是個資本身（tripId、pickupAt、contactsCount）
+const SAFE_LAST_WORDS = new Set(['id', 'ids', 'at', 'date', 'time', 'count', 'code', 'type', 'status', 'version', 'sequence', 'label']);
+
+function keyWords(key) {
+  return String(key).replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+function isSensitiveKey(key) {
+  const words = keyWords(key);
+  if (words.some((w) => ALWAYS_WORDS.has(w))) return true;
+  if (!words.some((w) => PII_WORDS.has(w))) return false;
+  return !SAFE_LAST_WORDS.has(words[words.length - 1]);
+}
 const MAX_DEPTH = 6;
 const MAX_STRING = 2000;
 
@@ -34,11 +54,11 @@ function scrubValue(value, depth = 0) {
   if (typeof value === 'object') {
     const out = {};
     for (const [k, v] of Object.entries(value).slice(0, 100)) {
-      out[k] = SENSITIVE_KEY.test(k) ? '[redacted]' : scrubValue(v, depth + 1);
+      out[k] = isSensitiveKey(k) ? '[redacted]' : scrubValue(v, depth + 1);
     }
     return out;
   }
   return String(value);
 }
 
-module.exports = { scrubText, scrubValue };
+module.exports = { scrubText, scrubValue, isSensitiveKey };
