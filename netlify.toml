@@ -40,6 +40,11 @@
   status = 200
 
 [[redirects]]
+  from = "/api/v2/public-settings"
+  to = "/.netlify/functions/v2-public-settings"
+  status = 200
+
+[[redirects]]
   from = "/api/v2/oauth-start"
   to = "/.netlify/functions/v2-oauth-start"
   status = 200

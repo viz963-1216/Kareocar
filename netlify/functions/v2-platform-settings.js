@@ -7,6 +7,8 @@
  *   { action: 'get' }
  *   { action: 'set_retention', years }                 保存期限（1–30 年，預設 5）
  *   { action: 'set_documents', documents }             條款版本：{ privacy_notice: { title, version, url }, terms: {...} }
+ *   { action: 'set_login_methods', loginMethods }      登入頁的社群登入開關：{ google, facebook }（#79）
+ *   { action: 'set_support_contact', supportContact }  客服聯絡：{ lineUrl（https）, email }（#79）
  *   { action: 'run_retention' }                         立即執行一次到期資料匿名化（平常由每日排程執行）
  *   { action: 'test_alert' }                            送出測試告警（Email、Discord）
  *   { action: 'test_error' }                            刻意產生一次伺服器錯誤（Sentry）
@@ -18,6 +20,7 @@ const auth = require('./_auth-pg');
 const { runAuthenticated, writeAudit } = require('./_business-rpc');
 const { legalDocuments, retentionYears } = require('./_consent');
 const { sendAlert } = require('./_alerts');
+const { publicSettings } = require('./_public-settings');
 
 const text = (v, max = 300) => String(v === undefined || v === null ? '' : v).trim().slice(0, max);
 
@@ -25,7 +28,8 @@ exports.handler = (event) => runAuthenticated(event, async (client, body, claims
   const admin = (await client.query('select app.is_super_admin() as ok')).rows[0].ok === true;
   if (!admin) throw auth.authError('FORBIDDEN', '只有平台超級管理者可以修改平台設定');
   const action = String(body.action || 'get').trim();
-  const current = async () => ({ retentionYears: await retentionYears(client), legalDocuments: await legalDocuments(client) });
+  const current = async () => ({ retentionYears: await retentionYears(client), legalDocuments: await legalDocuments(client),
+    ...(await publicSettings(client)) });
 
   if (action === 'get') return current();
   if (action === 'set_retention') {
@@ -48,6 +52,25 @@ exports.handler = (event) => runAuthenticated(event, async (client, body, claims
     await client.query(`select app.set_platform_setting('legal_documents', $1::jsonb)`, [JSON.stringify(next)]);
     await writeAudit(client, { eventType: 'settings.legal_documents_changed', actorUserId: claims.userId,
       entityType: 'app_settings', entityId: 'legal_documents', details: { before, after: next } });
+    return current();
+  }
+  // 登入方式與客服聯絡（#79）：格式在資料庫函式驗證（0015），改了登入頁立刻生效
+  if (action === 'set_login_methods') {
+    const m = body.loginMethods || {};
+    const next = { google: m.google === true, facebook: m.facebook === true };
+    const before = (await publicSettings(client)).loginMethods;
+    await client.query(`select app.set_platform_setting('login_methods', $1::jsonb)`, [JSON.stringify(next)]);
+    await writeAudit(client, { eventType: 'settings.login_methods_changed', actorUserId: claims.userId,
+      entityType: 'app_settings', entityId: 'login_methods', details: { before, after: next } });
+    return current();
+  }
+  if (action === 'set_support_contact') {
+    const c = body.supportContact || {};
+    const next = { lineUrl: text(c.lineUrl, 300) || null, email: text(c.email, 200) || null };
+    const before = (await publicSettings(client)).supportContact;
+    await client.query(`select app.set_platform_setting('support_contact', $1::jsonb)`, [JSON.stringify(next)]);
+    await writeAudit(client, { eventType: 'settings.support_contact_changed', actorUserId: claims.userId,
+      entityType: 'app_settings', entityId: 'support_contact', details: { before, after: next } });
     return current();
   }
   if (action === 'run_retention') {
