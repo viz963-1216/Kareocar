@@ -5374,11 +5374,15 @@ function captureViewContext_(root){
 function restoreViewContext_(ctx){
   const scrollBack=()=>{try{window.scrollTo({left:ctx.scrollX,top:ctx.scrollY,behavior:'instant'});}catch(e){window.scrollTo(ctx.scrollX,ctx.scrollY);}};
   scrollBack();
-  // 有些區塊重畫後才非同步載入（頁面先變短、捲動被夾住），稍後再補回去；使用者自己捲動就不再補
-  let userMoved=false;const stop=()=>{userMoved=true;};
-  ['wheel','touchstart','keydown','mousedown'].forEach(t=>window.addEventListener(t,stop,{once:true,passive:true}));
-  [60,300,800].forEach(ms=>setTimeout(()=>{if(!userMoved&&Math.abs(window.scrollY-ctx.scrollY)>2)scrollBack();},ms));
-  setTimeout(()=>['wheel','touchstart','keydown','mousedown'].forEach(t=>window.removeEventListener(t,stop)),900);
+  // 有些區塊重畫後才非同步載入：頁面先變短，捲動被夾在底部。稍後補回去，但只補「還夾在底部」的情況；
+  // 使用者或程式自己捲到別處（例如捲到某個按鈕）就不動
+  // 做法：記下補完後的位置，2 秒內只要位置沒被別人動過、又還沒到原位，就再補一次
+  let settled=Math.round(window.scrollY);const started=Date.now();
+  const timer=setInterval(()=>{
+    const now=Math.round(window.scrollY);
+    if(now!==settled||now>=Math.round(ctx.scrollY)-2||Date.now()-started>2000){clearInterval(timer);return;}
+    scrollBack();settled=Math.round(window.scrollY);
+  },100);
   const f=ctx.focus,el=f?$(f.id):null;if(!el||el.disabled)return;
   if(el.value!==f.value)el.value=f.value;
   el.focus({preventScroll:true});
