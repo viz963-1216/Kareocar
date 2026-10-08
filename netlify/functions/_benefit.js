@@ -131,6 +131,20 @@ function normalizeFacts(facts = {}) {
 
 const NOT_OFFICIAL = '此結果是系統試算，不等同主管機關正式核定。';
 
+const CITY_PATTERN = /(台北市|新北市|桃園市|基隆市|新竹市|新竹縣|苗栗縣|宜蘭縣|台中市|彰化縣|南投縣|雲林縣|嘉義市|嘉義縣|台南市|高雄市|屏東縣|花蓮縣|台東縣|澎湖縣|金門縣|連江縣)/;
+/** 臺／台視為同一個字，比對縣市時用。 */
+const canonicalCity = (value) => (text(value) || '').replace(/臺/g, '台');
+
+/** 從住址判斷縣市與鄉鎮市區（#100：補助試算的地區由服務對象住址決定）。 */
+function residenceFromAddress(address) {
+  const canonical = canonicalCity(address).replace(/\s+/g, '');
+  const m = canonical.match(CITY_PATTERN);
+  if (!m) return { city: null, district: null };
+  const rest = canonical.slice(m.index + m[1].length);
+  const d = rest.match(/^(.{1,4}?[區鄉鎮市])/);
+  return { city: m[1], district: d ? d[1] : null };
+}
+
 /** 與前端 benefitResultFromRuleset 相同的判斷。 */
 function evaluate(ruleset, { requestedService = 'transportation', serviceDate = null, facts = {} } = {}) {
   const reasons = [];
@@ -150,8 +164,11 @@ function evaluate(ruleset, { requestedService = 'transportation', serviceDate = 
   const jurisdictionCity = ruleset.jurisdiction && ruleset.jurisdiction.city;
   if (jurisdictionCity) {
     if (!city) missing.push('residenceCity');
-    else if (city !== jurisdictionCity) failed.push(`居住地 ${city} 不符合 ${jurisdictionCity}`);
-    else reasons.push(`居住地符合 ${jurisdictionCity}`);
+    else if (canonicalCity(city) !== canonicalCity(jurisdictionCity)) {
+      // 住的縣市沒有核准的規則：不是「不符合」，是「尚無規則」（#100）
+      return { status: 'ruleset_required', eligibility: { eligible: null, confidence: 'unavailable' }, estimatedSubsidy: null,
+        estimatedCopay: null, currency, reasons, warnings: [`${city}尚無規則，暫時無法試算。`], missingFields: [] };
+    } else reasons.push(`居住地符合 ${jurisdictionCity}`);
   }
   const c = ruleset.conditions || {};
   if ((c.cmsLevels || []).length) {
@@ -175,7 +192,7 @@ function evaluate(ruleset, { requestedService = 'transportation', serviceDate = 
   }
   if ((c.residenceCities || []).length) {
     if (!city) missing.push('residenceCity');
-    else if (!c.residenceCities.includes(city)) failed.push(`居住地 ${city} 不在條件清單`);
+    else if (!c.residenceCities.map(canonicalCity).includes(canonicalCity(city))) failed.push(`居住地 ${city} 不在條件清單`);
     else reasons.push(`居住地 ${city} 符合條件`);
   }
   const uniqMissing = [...new Set(missing)];
@@ -191,6 +208,7 @@ function evaluate(ruleset, { requestedService = 'transportation', serviceDate = 
   const round2 = (n) => Math.round(n * 100) / 100;
   let subsidy = null;
   let copay = null;
+  let zoneFields = {};
   const warnings = [];
   if (calc.mode === 'fixed_amount') {
     subsidy = Math.max(0, Number(calc.amount) || 0);
@@ -215,13 +233,14 @@ function evaluate(ruleset, { requestedService = 'transportation', serviceDate = 
     }
     subsidy = t.subsidy;
     copay = t.copay;
+    zoneFields = { zone: t.zone, monthlyLimit: t.monthly, copayRate: t.rate };
     reasons.push(`交通接送第 ${t.zone} 區月額度 ${t.monthly} 元，自付 ${t.rate}%`);
   } else {
     warnings.push('此規則只判斷資格，未設定金額公式。');
   }
   warnings.push(NOT_OFFICIAL);
   return { status: 'eligible_estimate', eligibility: { eligible: true, confidence: 'estimated' }, estimatedSubsidy: subsidy,
-    estimatedCopay: copay, currency, reasons, warnings, missingFields: [] };
+    estimatedCopay: copay, ...zoneFields, currency, reasons, warnings, missingFields: [] };
 }
 
 /** 目前唯一一個 approved 版本（且服務日期在有效期間內），沒有就回傳 null。 */
@@ -281,5 +300,5 @@ const LEDGER_RESERVATION_ENABLED = false;
 
 module.exports = {
   DEFAULT_PROGRAM_CODE, LEDGER_RESERVATION_ENABLED, normalizeRulesetInput, rulesetFromRow, validateRuleset, normalizeFacts,
-  evaluate, activeRuleset, withRuleset, bookingBenefit, dateOnly
+  evaluate, activeRuleset, withRuleset, bookingBenefit, dateOnly, residenceFromAddress
 };

@@ -754,6 +754,20 @@ async function flowFamily(cdp, baseUrl, tokens) {
     let trialShown = true;
     try { await waitFor(page, "!!document.getElementById('benefitQuickCms')&&!!document.getElementById('benefitQuickRecipient')", '補助試算表單', 8000); } catch (_) { trialShown = false; }
     record(S, '補助試算頁照常可以使用（#98）', trialShown);
+    // #100：替家人試算，存在伺服器；地區由家人的住址判斷
+    await evaluate(page, `(()=>{const el=document.getElementById('benefitQuickRecipient');el.value=${J(recipient.id)};el.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+    await waitFor(page, `document.getElementById('benefitQuickRecipient').value===${J(recipient.id)}&&document.querySelector('main').innerText.includes('新北市板橋區')`, '試算頁顯示家人的地區');
+    await typeConfirmed(page, '#benefitQuickCms', '4');
+    await clickRetry(page, '#benefitQuickRunBtn');
+    const saved = await waitForDb(async () => {
+      const { rows } = await admin.query(`select data from benefit_assessments where care_recipient_id = $1 order by created_at desc limit 1`, [recipient.id]);
+      return rows[0] || null;
+    }, '家人的試算存進資料庫');
+    record(S, '試算存在伺服器：長照等級是填的，地區是家人住址的縣市（#100）',
+      saved.data.facts.cmsLevel === 4 && saved.data.facts.residenceCity === '新北市' && saved.data.createdByUserId === U.req.id, J(saved.data.facts));
+    let resultShown = true;
+    try { await waitFor(page, "/尚無規則|每月補助額度|預估補助|資料不足|不符合/.test(document.getElementById('benefitQuickResult').innerText)", '試算結果顯示在頁面', 10000); } catch (_) { resultShown = false; }
+    record(S, '試算結果顯示在頁面（重新整理後仍是伺服器保存的最近一次）', resultShown);
 
     const claimed = await claimBooking.handler({ httpMethod: 'POST', headers: { host: '127.0.0.1', cookie: `cr_at=${tokens.dsp}` },
       body: J({ bookingId: booking.id, organizationId: ORG }) });

@@ -75,7 +75,7 @@ const assess = (facts) => call(assessFn.handler, 'POST', U.req, { recipientId: '
       ('${U.req}','合成需求者','+886988000001','none',true);
     insert into memberships (id, user_id, organization_id, role, status) values ('M-BF-REQ','${U.req}','ORG-REQ-001','requester','active');
   `);
-  await call(mutateFn.handler, 'POST', U.req, { changes: [{ collection: 'careRecipients', id: 'CR-BF-1', record: { id: 'CR-BF-1' } }] });
+  await call(mutateFn.handler, 'POST', U.req, { changes: [{ collection: 'careRecipients', id: 'CR-BF-1', record: { id: 'CR-BF-1', addresses: { primary: '臺東縣成功鎮中山路1號' } } }] });
 
   console.log('--- 第一次抓取：產生自動草稿 ---');
   const r1 = await runScheduled();

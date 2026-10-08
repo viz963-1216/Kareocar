@@ -97,7 +97,9 @@ function booking(id, extra = {}) {
     insert into drivers (id, user_id, organization_id, duty_status, active) values ('${DRIVER}','${U.drv}','${ORG}','on_duty',true);
   `);
   const cr = await call(mutateFn.handler, 'POST', U.req, { changes: [{ collection: 'careRecipients', id: RECIPIENT,
-    record: { id: RECIPIENT, identity: { displayName: '合成長輩' } } },
+    record: { id: RECIPIENT, identity: { displayName: '合成長輩' }, addresses: { primary: '新北市板橋區文化路一段188號' } } },
+  // 沒有住址的服務對象（#100：地區由住址判斷）
+  { collection: 'careRecipients', id: `${RECIPIENT}-NOADDR`, record: { id: `${RECIPIENT}-NOADDR`, identity: { displayName: '合成沒住址' } } },
   // 預約端點要求需求者對服務對象有可預約的關係（#78）
   { collection: 'careRecipientRelations', id: `${RECIPIENT}-REL`,
     record: { id: `${RECIPIENT}-REL`, userId: U.req, recipientId: RECIPIENT, relationship: 'family', canBook: true, status: 'active' } }] });
@@ -146,6 +148,12 @@ function booking(id, extra = {}) {
   record('前端送上的補助金額被忽略（快照也換成伺服器的結果）', b1.commercialSnapshots[0].benefit.estimatedSubsidy === 300
     && b1.commercialSnapshots[0].benefit.rulesetId === r1.id);
 
+  // #100：地區由伺服器從服務對象住址判斷，前端送來的不採用
+  const asAddr = await assess(U.req, { recipientId: RECIPIENT, facts: { cmsLevel: 4, residenceCity: '臺東縣', residenceDistrict: '成功鎮' } });
+  record('試算的地區用服務對象住址（不採用前端送來的）', asAddr.status === 200 && asAddr.data.assessment.facts.residenceCity === '新北市'
+    && asAddr.data.assessment.facts.residenceDistrict === '板橋區', JSON.stringify(asAddr.data && asAddr.data.assessment.facts));
+  const noAddr = await assess(U.req, { recipientId: `${RECIPIENT}-NOADDR`, facts: { cmsLevel: 4 } });
+  record('服務對象沒有住址：請先補住址', noAddr.status === 400 && /住址/.test(noAddr.error.message), outcome(noAddr));
   const as2 = await assess(U.req, { recipientId: RECIPIENT, facts: {} });
   record('資料不足的試算：insufficient_data', as2.status === 200 && as2.data.assessment.status === 'insufficient_data', outcome(as2));
   await assess(U.req, { recipientId: RECIPIENT, facts: { cmsLevel: 4 } });
@@ -196,6 +204,8 @@ function booking(id, extra = {}) {
   const seen = (dspLoad.data.collections.bookings || []).find((x) => x.id === 'BKG-BEN-2');
   record('承接後調度員讀到伺服器算出的補助金額', claim.status === 200 && seen && seen.serverComputed.benefit.estimatedSubsidy === 450, outcome(claim));
   record('承接機構讀得到服務對象的試算（服務中）', (dspLoad.data.collections.benefitAssessments || []).some((a) => a.recipientId === RECIPIENT));
+  const dspAssess = await assess(U.dsp, { recipientId: RECIPIENT, facts: { cmsLevel: 6 } });
+  record('承接機構只能讀，不能替服務對象試算（#100）', dspAssess.status === 403, outcome(dspAssess));
 
   console.log('--- 正式核定額度（#23 第二部分）---');
   const authCall = (userId, body) => call(authorizationFn.handler, 'POST', userId, body);

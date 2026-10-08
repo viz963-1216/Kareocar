@@ -407,7 +407,7 @@ function seedDB(){
     memberships:[],
     users:[],
     fleets:[],drivers:[],externalIdentities:[],membershipEvents:[],
-    vehicleAssignments:[],vehicles:[],careRecipients:[],careRecipientRelations:[],careRecipientEvents:[],careRecipientMergeEvents:[],bookings:[],bookingEvents:[],bookingRevisions:[],dispatchPlans:[],trips:[],tripEvents:[],tripOfflineQueue:[],issues:[],systemReports:[],events:[],notifications:[],serviceProofs:[],kpiDaily:[],quoteSnapshots:[],cancellations:[],telemetryEvents:[],benefitRulesets:[],benefitRulesetEvents:[],benefitAssessments:[],benefitAssessmentEvents:[],benefitLatestInfo:null,benefitLatestEstimateRuns:[],
+    vehicleAssignments:[],vehicles:[],careRecipients:[],careRecipientRelations:[],careRecipientEvents:[],careRecipientMergeEvents:[],bookings:[],bookingEvents:[],bookingRevisions:[],dispatchPlans:[],trips:[],tripEvents:[],tripOfflineQueue:[],issues:[],systemReports:[],events:[],notifications:[],serviceProofs:[],kpiDaily:[],quoteSnapshots:[],cancellations:[],telemetryEvents:[],benefitRulesets:[],benefitRulesetEvents:[],benefitAssessments:[],benefitAssessmentEvents:[],benefitLatestInfo:null,
     integration:{googleDatabaseLastSyncAt:null,lastSyncAt:null,lastSyncStatus:'尚未完成正式資料同步',lastSyncDetails:[]}
   };
 }
@@ -4191,7 +4191,7 @@ function benefitCanCreateOwn(actorUserId,recipientId){return !!actorUserId&&!!re
 function benefitCanReadServed(actorUserId,recipientId,organizationId){return !!actorUserId&&!!organizationId&&!!Identity?.canUser?.(actorUserId,'benefit.assessment.read_served',organizationId)&&!!CareRecipient?.canRead?.(recipientId,{actorUserId,organizationId});}
 function benefitCanReadServedAny(actorUserId,recipientId){return !!actorUserId&&!!recipientId&&!!Identity?.activeMembershipsForUser?.(actorUserId)?.some(m=>benefitCanReadServed(actorUserId,recipientId,m.organizationId));}
 function benefitCanCreateServed(actorUserId,recipientId,organizationId){return !!actorUserId&&!!organizationId&&!!Identity?.canUser?.(actorUserId,'benefit.assessment.create_served',organizationId)&&!!CareRecipient?.canRead?.(recipientId,{actorUserId,organizationId});}
-function benefitAssessmentStatusLabel(status){return ({eligible_estimate:'預估符合',not_eligible:'預估不符合',insufficient_data:'資料不足',ruleset_required:'待規則'})[status]||status;}
+function benefitAssessmentStatusLabel(status){return ({eligible_estimate:'預估符合',not_eligible:'預估不符合',insufficient_data:'資料不足',ruleset_required:'尚無規則'})[status]||status;}
 function benefitResultFromRuleset(ruleset,{recipientId=null,requestedService='transportation',serviceDate=null,facts={}}={}){
   const reasons=[],warnings=[],missing=[],failed=[];const date=benefitDateOnly(serviceDate)||dateKey(),recipient=recipientId?CareRecipient?.get?.(recipientId):null;
   if(!ruleset)return {status:'ruleset_required',eligibility:{eligible:null,confidence:'unavailable'},estimatedSubsidy:null,estimatedCopay:null,currency:'TWD',reasons,warnings:['尚未有可套用的 Published 補助規則集。'],missingFields:[],ruleset:null};
@@ -6264,22 +6264,8 @@ const BENEFIT_ZONE_4_REMOTE=[
   '屏東縣三地門鄉','屏東縣霧臺鄉','屏東縣瑪家鄉','屏東縣泰武鄉','屏東縣來義鄉','屏東縣春日鄉','屏東縣獅子鄉','屏東縣牡丹鄉','屏東縣滿州鄉','屏東縣琉球鄉',
   '宜蘭縣大同鄉','宜蘭縣南澳鄉'
 ];
-const benefitQuickUiState={recipientId:'',cmsLevel:'',identityCategory:'general',result:null,refreshing:false,lastAutoAttemptAt:0};
+const benefitQuickUiState={recipientId:'',cmsLevel:'',identityCategory:'general',transportationApproved:'',touched:false,saving:false};
 
-function benefitRecipientResidence(recipient){
-  const a=recipient?.addresses||{},entries=Array.isArray(a.entries)?a.entries:[];
-  const row=entries.find(x=>x.id===a.primaryAddressId)||entries.find(x=>x.type==='home')||entries[0];
-  return String(row?.address||row?.addressText||CareRecipient?.primaryAddress?.(recipient)||'').trim();
-}
-function benefitTransportZone(address=''){
-  const normalized=String(address||'').replace(/台/g,'臺').replace(/\s+/g,'');
-  if(BENEFIT_ZONE_4_REMOTE.some(x=>normalized.includes(x.replace(/台/g,'臺'))))return 4;
-  if(BENEFIT_ZONE_4_CITIES.some(x=>normalized.includes(x.replace(/台/g,'臺'))))return 4;
-  if(BENEFIT_ZONE_1_CITIES.some(x=>normalized.includes(x.replace(/台/g,'臺'))))return 1;
-  if(BENEFIT_ZONE_2_CITIES.some(x=>normalized.includes(x.replace(/台/g,'臺'))))return 2;
-  if(BENEFIT_ZONE_3_CITIES.some(x=>normalized.includes(x.replace(/台/g,'臺'))))return 3;
-  return null;
-}
 function benefitLatestDefaultInfo(){
   return {
     schemaVersion:1,
@@ -6310,93 +6296,74 @@ function benefitApprovedTransportInfo(){
 }
 const BenefitLatestInfo={
   initialize(){
-    store.mutate(db=>{
-      if(!db.benefitLatestInfo)db.benefitLatestInfo=benefitLatestDefaultInfo();
-      db.benefitLatestEstimateRuns=Array.isArray(db.benefitLatestEstimateRuns)?db.benefitLatestEstimateRuns:[];
-    });
+    store.mutate(db=>{if(!db.benefitLatestInfo)db.benefitLatestInfo=benefitLatestDefaultInfo();delete db.benefitLatestEstimateRuns;});
     return {ok:true};
   },
-  info:benefitLatestInfo,
-  isStale(maxHours=24){
-    const info=benefitLatestInfo(),at=info.fetchedAt||info.checkedAt;
-    const ms=at?Date.now()-new Date(at).getTime():Infinity;
-    return !Number.isFinite(ms)||ms>maxHours*3600000;
-  },
-  // 重新載入伺服器資料（已核准的規則）；不再連外部網站
-  async refresh(){
-    if(benefitQuickUiState.refreshing)return {ok:false,error:'正在更新'};
-    benefitQuickUiState.refreshing=true;
-    try{const r=await AppStateDatabase.loadAll({silent:true});return {ok:!!r?.ok,info:benefitLatestInfo(),error:r?.ok?null:(r?.error||'載入失敗')};}
-    finally{benefitQuickUiState.refreshing=false;}
-  },
-  estimate({recipientId,cmsLevel,identityCategory='general'}={}){
-    const recipient=CareRecipient.get(recipientId);
-    if(!recipient)return {ok:false,error:'請先選擇服務對象'};
-    const cms=Number(cmsLevel);
-    if(!Number.isInteger(cms)||cms<1||cms>8)return {ok:false,error:'請輸入 1～8 的長照需要等級'};
-    const address=benefitRecipientResidence(recipient),zone=benefitTransportZone(address),info=benefitLatestInfo();
-    if(!zone)return {ok:false,error:'無法從服務對象居住地址判斷交通補助分區，請先補完整居住縣市／行政區。'};
-    if(cms<Number(info.cmsMin||2)){
-      return {ok:true,eligible:false,recipientId,cmsLevel:cms,address,zone,reason:`目前官方公開資格基礎為長照需要等級 ${info.cmsMin||2} 以上。`,source:info};
-    }
-    const category=['low_income','middle_low_income','general'].includes(identityCategory)?identityCategory:'general';
-    const monthly=Number(info.monthlyAmountByZone?.[zone]||0);
-    const copayRate=Number(info.copayByZone?.[zone]?.[category]??0);
-    const estimatedGov=Math.floor(monthly*(100-copayRate)/100);
-    const estimatedCopay=Math.floor(monthly*copayRate/100);
-    const result={ok:true,eligible:true,recipientId,cmsLevel:cms,address,zone,identityCategory:category,monthlyLimit:monthly,copayRate,estimatedGovernmentShare:estimatedGov,estimatedUserShare:estimatedCopay,source:deepClone(info),createdAt:nowISO()};
-    store.mutate(db=>{
-      db.benefitLatestEstimateRuns=Array.isArray(db.benefitLatestEstimateRuns)?db.benefitLatestEstimateRuns:[];
-      db.benefitLatestEstimateRuns.unshift({...deepClone(result),id:uid('bquick')});
-      if(db.benefitLatestEstimateRuns.length>100)db.benefitLatestEstimateRuns.length=100;
-    });
-    return result;
-  },
-  async refreshAndEstimate(input){
-    await this.refresh({manual:true});
-    return this.estimate(input);
-  },
-  async ensureFresh(){ return {ok:true}; }
+  info:benefitLatestInfo
 };
 
-function benefitSimpleResultHtml(result){
-  if(!result)return '<div class="empty">選好服務對象、長照等級與身分類別後，按「更新最新資訊並試算」。</div>';
-  if(!result.ok)return `<div class="benefit-quick-result bad"><h3>目前無法完成試算</h3><p>${escapeHTML(result.error||'資料不足')}</p></div>`;
-  if(!result.eligible)return `<div class="benefit-quick-result warn"><h3>目前可能不符合交通接送補助資格</h3><p>${escapeHTML(result.reason||'資格資料不足')}</p></div>`;
-  const categoryLabel={general:'一般戶',middle_low_income:'中低收入戶',low_income:'低收入戶'}[result.identityCategory]||'一般戶';
+// 補助試算存在伺服器（#100）：每位服務對象保留最近一次；地區由伺服器依住址判斷。
+// 建立服務對象的人（或平台管理者）可以試算；承接機構只能看。
+function benefitAssessableRecipients(){
+  const userId=Identity.currentUser()?.id||'';
+  return benefitAccessibleRecipients().filter(r=>Identity.isSuperAdmin()||r.governance?.createdByUserId===userId);
+}
+function benefitLatestAssessmentFor(recipientId){
+  return [...Benefit.list(null,{recipientId})].sort((x,y)=>new Date(y.createdAt||0)-new Date(x.createdAt||0))[0]||null;
+}
+// 與伺服器 residenceFromAddress 相同：縣市＋鄉鎮市區
+function benefitRecipientRegion(recipient){
+  const address=canonicalLocationText(CareRecipient.primaryAddress(recipient)||''),city=locationCity(address);
+  if(!city)return '';
+  const district=address.slice(address.indexOf(city)+city.length).match(/^(.{1,4}?[區鄉鎮市])/)?.[1]||'';
+  return city+district;
+}
+function benefitAssessmentResultHtml(a){
+  if(!a)return '<div class="empty">還沒有試算。填好長照等級、身分別與是否已核定交通接送後按「試算」。</div>';
+  const f=a.facts||{},region=`${f.residenceCity||''}${f.residenceDistrict||''}`||'—';
+  const meta=`<p class="small">地區：${escapeHTML(region)}（依服務對象住址）・長照等級：${escapeHTML(String(f.cmsLevel??'—'))}・試算時間：${escapeHTML(formatDateTime(a.computedAt||a.createdAt))}</p>`;
+  if(a.status==='ruleset_required')return `<div class="benefit-quick-result warn"><h3>尚無規則</h3><p>${escapeHTML((a.warnings||[])[0]||'這個地區還沒有平台核准的補助規則。')}</p>${meta}</div>`;
+  if(a.status==='insufficient_data')return `<div class="benefit-quick-result warn"><h3>資料不足</h3><p>${escapeHTML((a.warnings||[])[0]||'請補齊試算資料')}</p>${meta}</div>`;
+  if(a.status==='not_eligible')return `<div class="benefit-quick-result bad"><h3>目前可能不符合交通接送補助資格</h3><p>${escapeHTML((a.reasons||[]).slice(-1)[0]||'')}</p>${meta}</div>`;
+  const hasZone=a.monthlyLimit!==undefined&&a.monthlyLimit!==null;
   return `<div class="benefit-quick-result">
-    <h3>每月補助額度</h3>
-    <div class="amount">${benefitMoney(result.monthlyLimit)}</div>
-    <p>第 ${result.zone} 區</p>
-    <p>${escapeHTML(categoryLabel)}部分負擔約 <strong>${result.copayRate}%</strong>；若整月額度全數使用，預估個人負擔約 <strong>${benefitMoney(result.estimatedUserShare)}</strong>，政府給付部分約 <strong>${benefitMoney(result.estimatedGovernmentShare)}</strong>。</p>
-    <p class="small">居住地址：${escapeHTML(result.address||'—')}<br>長照需要等級：${escapeHTML(String(result.cmsLevel))}・資料更新：${escapeHTML(result.source?.fetchedAt?formatDateTime(result.source.fetchedAt):(result.source?.checkedAt||'官方快照'))}</p>
-      </div>`;
+    <h3>${hasZone?'每月補助額度':'預估補助'}</h3>
+    <div class="amount">${benefitMoney(hasZone?a.monthlyLimit:a.estimatedSubsidy)}</div>
+    ${hasZone?`<p>第 ${escapeHTML(String(a.zone))} 區・自付比例 <strong>${escapeHTML(String(a.copayRate))}%</strong></p>`:''}
+    <p class="small">預估，不是正式核定；實際以照管中心／主管機關核定為準。</p>
+    ${meta}
+  </div>`;
 }
 
 function benefitDashboard(){
-  const actorUserId=Identity.currentUser()?.id,canManage=Benefit.canManageRulesets(actorUserId),recipients=benefitAccessibleRecipients();
+  const actorUserId=Identity.currentUser()?.id,canManage=Benefit.canManageRulesets(actorUserId),recipients=benefitAssessableRecipients();
   if(!benefitQuickUiState.recipientId||!recipients.some(r=>r.id===benefitQuickUiState.recipientId))benefitQuickUiState.recipientId=recipients[0]?.id||'';
-  const selected=CareRecipient.get(benefitQuickUiState.recipientId);
-  const latestAssessment=Benefit.list(null,{actorUserId,recipientId:benefitQuickUiState.recipientId})[0]||null;
-  if(!benefitQuickUiState.cmsLevel&&latestAssessment?.facts?.cmsLevel)benefitQuickUiState.cmsLevel=String(latestAssessment.facts.cmsLevel);
+  const selected=CareRecipient.get(benefitQuickUiState.recipientId),latest=selected?benefitLatestAssessmentFor(selected.id):null;
+  const lf=latest?.facts||{};
+  if(!benefitQuickUiState.cmsLevel&&lf.cmsLevel)benefitQuickUiState.cmsLevel=String(lf.cmsLevel);
+  if(latest&&!benefitQuickUiState.touched){if(lf.identityCategory)benefitQuickUiState.identityCategory=lf.identityCategory;if(lf.transportationApproved!==null&&lf.transportationApproved!==undefined)benefitQuickUiState.transportationApproved=String(lf.transportationApproved);}
+  const region=selected?benefitRecipientRegion(selected):'';
   const info=BenefitLatestInfo.info();
-  setTimeout(()=>BenefitLatestInfo.ensureFresh(),0);
   const sourceText=`更新於 ${info.fetchedAt?formatDateTime(info.fetchedAt):(info.checkedAt||'—')}`;
-  const history=(store.state.benefitLatestEstimateRuns||[]).filter(x=>Benefit.canReadAssessment({recipientId:x.recipientId,organizationId:null},actorUserId,orgId())).slice(0,5);
-  return `<div class="page-head"><div><h2>長照交通補助試算</h2><p>結果僅供參考，以政府核定為準。</p></div></div>
+  const readable=benefitAccessibleRecipients().filter(r=>!recipients.some(x=>x.id===r.id)).map(r=>({r,a:benefitLatestAssessmentFor(r.id)})).filter(x=>x.a);
+  const opt=(v,label,cur)=>`<option value="${v}" ${cur===v?'selected':''}>${label}</option>`;
+  return `<div class="page-head"><div><h2>長照交通補助試算</h2><p>結果僅供參考，以政府核定為準。試算會保存，預約時用最近一次的試算資料。</p></div></div>
   <section class="card">
     ${recipients.length?`<div class="benefit-quick-form">
       <div class="form-field"><label for="benefitQuickRecipient">服務對象</label><select id="benefitQuickRecipient">${recipients.map(r=>`<option value="${r.id}" ${r.id===benefitQuickUiState.recipientId?'selected':''}>${escapeHTML(CareRecipient.displayName(r)||r.id)}</option>`).join('')}</select></div>
       <div class="form-field"><label for="benefitQuickCms">長照需要等級</label><input id="benefitQuickCms" type="number" min="1" max="8" value="${escapeHTML(benefitQuickUiState.cmsLevel||'')}" placeholder="2～8" /></div>
-      <div class="form-field"><label for="benefitQuickIdentity">身分類別</label><select id="benefitQuickIdentity">
-        <option value="general" ${benefitQuickUiState.identityCategory==='general'?'selected':''}>一般戶</option>
-        <option value="middle_low_income" ${benefitQuickUiState.identityCategory==='middle_low_income'?'selected':''}>中低收入戶</option>
-        <option value="low_income" ${benefitQuickUiState.identityCategory==='low_income'?'selected':''}>低收入戶</option>
+      <div class="form-field"><label for="benefitQuickIdentity">身分別</label><select id="benefitQuickIdentity">
+        ${opt('general','一般戶',benefitQuickUiState.identityCategory)}${opt('middle_low_income','中低收入戶',benefitQuickUiState.identityCategory)}${opt('low_income','低收入戶',benefitQuickUiState.identityCategory)}
+      </select></div>
+      <div class="form-field"><label for="benefitQuickTransport">是否已核定交通接送</label><select id="benefitQuickTransport">
+        ${opt('','不確定',benefitQuickUiState.transportationApproved)}${opt('true','已核定',benefitQuickUiState.transportationApproved)}${opt('false','尚未核定',benefitQuickUiState.transportationApproved)}
       </select></div>
     </div>
-    <button class="btn primary block" id="benefitQuickRunBtn" type="button" style="margin-top:12px">${benefitQuickUiState.refreshing?'試算中…':'試算'}</button>
-    <div style="margin-top:12px">${benefitSimpleResultHtml(benefitQuickUiState.result)}</div>`:`<div class="empty">${role()==='requester'?'預約過一次接送後，就能用你的資料試算。':'還沒有服務對象。'}</div>`}
+    <p class="small muted">地區：${region?escapeHTML(region):'<strong>服務對象資料還沒有住址，請先補上住址（要有縣市）才能試算。</strong>'}</p>
+    <button class="btn primary block" id="benefitQuickRunBtn" type="button" style="margin-top:12px" ${region&&!benefitQuickUiState.saving?'':'disabled'}>${benefitQuickUiState.saving?'試算中…':'試算'}</button>
+    <div style="margin-top:12px" id="benefitQuickResult">${benefitAssessmentResultHtml(latest)}</div>`:`<div class="empty">${role()==='requester'?'預約過一次接送後，就能替你或家人試算。':'只有建立服務對象的人可以試算；你服務中的服務對象若已試算，會列在下方。'}</div>`}
   </section>
+  ${readable.length?`<section class="card"><div class="card-head"><h3>服務對象的試算</h3><span class="small muted">只能查看，不能修改</span></div><div class="list">${readable.map(({r,a})=>`<div class="list-item"><strong>${escapeHTML(CareRecipient.displayName(r)||'服務對象')}</strong>${benefitAssessmentResultHtml(a)}</div>`).join('')}</div></section>`:''}
   <section class="card">
     <div class="card-head"><h3>每月補助額度</h3><span class="small muted">${escapeHTML(sourceText)}</span></div>
     <div class="benefit-simple-grid">
@@ -6409,7 +6376,6 @@ function benefitDashboard(){
     </div>
     <div class="small muted" style="margin-top:12px">資料來源：${BENEFIT_LATEST_OFFICIAL_SOURCES.map(s=>`<a href="${escapeHTML(s.url)}" target="_blank" rel="noopener">${escapeHTML(s.title)}</a>`).join('・')}</div>
   </section>
-  ${history.length?`<section class="card"><div class="card-head"><h3>最近試算</h3></div><div class="list">${history.map(x=>`<div class="list-item"><strong>${escapeHTML(CareRecipient.displayName(CareRecipient.get(x.recipientId))||'服務對象')}｜第 ${x.zone||'—'} 區</strong><p>${escapeHTML(String(x.cmsLevel||'—'))} 級・每月額度 ${benefitMoney(x.monthlyLimit)}・部分負擔 ${x.copayRate??'—'}%・${formatDateTime(x.createdAt)}</p></div>`).join('')}</div></section>`:''}
   ${canManage?`<details class="benefit-advanced"><summary>進階管理</summary><div class="benefit-advanced-body">${benefitAdvancedDashboard()}</div></details>`:''}`;
 }
 
@@ -6437,6 +6403,20 @@ async function publishBenefitRuleset(ruleId){await benefitRulesetRequest_({actio
 async function retireBenefitRuleset(ruleId){const note=prompt('請填寫駁回原因');if(note===null)return;if(!String(note).trim()){showToast('駁回必須填寫原因');return;}await benefitRulesetRequest_({action:'reject',id:ruleId,note},()=> '規則草稿已駁回');}
 function updateBenefitAssessmentRecipientCity(){const r=CareRecipient.get($('benefitAssessmentRecipient')?.value);if(r)$('benefitAssessmentResidenceCity').value=locationCity(CareRecipient.primaryAddress(r)||'')||'';}
 function openBenefitAssessment(){const recipients=benefitAccessibleRecipients(),actor=Identity.currentUser()?.id;if(!recipients.length){showToast('目前沒有可建立補助試算的服務對象');return;}const published=Benefit.rulesets({actorUserId:actor}).filter(r=>r.status==='approved'),codes=[...new Set(published.map(r=>r.code))];$('benefitAssessmentRecipient').innerHTML=recipients.map(r=>`<option value="${r.id}">${escapeHTML(CareRecipient.displayName(r))}</option>`).join('');$('benefitAssessmentProgramCode').innerHTML=(codes.length?codes:[Benefit.constants.defaultProgramCode]).map(c=>`<option value="${escapeHTML(c)}">${escapeHTML(c)}${codes.length?'':'（尚無已發布規則集）'}</option>`).join('');$('benefitAssessmentServiceDate').value=dateKey();$('benefitAssessmentCmsLevel').value='';$('benefitAssessmentApprovedCarePlan').value='';$('benefitAssessmentTransportationApproved').value='';$('benefitAssessmentIdentityCategory').value='';$('benefitAssessmentEligibleCost').value='';updateBenefitAssessmentRecipientCity();openModal('benefitAssessmentModal');}
+async function saveBenefitQuickAssessment(){
+  if(benefitQuickUiState.saving)return;
+  const cms=Number($('benefitQuickCms')?.value||benefitQuickUiState.cmsLevel);
+  if(!Number.isInteger(cms)||cms<1||cms>8){showToast('請輸入 1～8 的長照需要等級');return;}
+  Object.assign(benefitQuickUiState,{cmsLevel:String(cms),identityCategory:$('benefitQuickIdentity')?.value||'general',transportationApproved:$('benefitQuickTransport')?.value??'',saving:true});
+  render();
+  try{
+    await backendJsonPost(APP_CONFIG.benefitAssessUrl,{recipientId:benefitQuickUiState.recipientId,facts:{cmsLevel:cms,identityCategory:benefitQuickUiState.identityCategory,transportationApproved:benefitQuickUiState.transportationApproved}});
+    await AppStateDatabase.loadAll({silent:true});
+    benefitQuickUiState.touched=false;
+    showToast('試算已保存');
+  }catch(error){showToast(error.message||'試算失敗');}
+  finally{benefitQuickUiState.saving=false;render();}
+}
 // 補助試算由伺服器依目前核准的規則版本計算並保存（#23）
 async function saveBenefitAssessment(){const recipientId=$('benefitAssessmentRecipient').value,organizationId=Identity.isSuperAdmin()?orgId():(role()==='requester'?APP_CONFIG.requesterOrganizationId:orgId());try{await authoritativeFlush_();const r=await backendJsonPost(APP_CONFIG.benefitAssessUrl,{recipientId,organizationId,programCode:$('benefitAssessmentProgramCode').value,serviceDate:$('benefitAssessmentServiceDate').value,facts:{cmsLevel:$('benefitAssessmentCmsLevel').value,residenceCity:$('benefitAssessmentResidenceCity').value,approvedCarePlan:$('benefitAssessmentApprovedCarePlan').value,transportationApproved:$('benefitAssessmentTransportationApproved').value,identityCategory:$('benefitAssessmentIdentityCategory').value,eligibleCost:$('benefitAssessmentEligibleCost').value}});await AppStateDatabase.loadAll({silent:true});closeModal('benefitAssessmentModal');render();showToast(`補助試算已建立：${Benefit.statusLabel(r.data.assessment.status)}`);}catch(error){showToast(error.message||'補助試算失敗');}}
 
@@ -6901,20 +6881,11 @@ function enhanceStaticAccessibility(){
   document.querySelectorAll('.modal').forEach(modal=>{modal.setAttribute('role','dialog');modal.setAttribute('aria-modal','true');});
 }
 function bindViewEvents(){
-  $('benefitQuickRecipient')?.addEventListener('change',e=>{benefitQuickUiState.recipientId=e.target.value||'';benefitQuickUiState.result=null;benefitQuickUiState.cmsLevel='';render();});
-  $('benefitQuickCms')?.addEventListener('input',e=>{benefitQuickUiState.cmsLevel=e.target.value||'';});
-  $('benefitQuickIdentity')?.addEventListener('change',e=>{benefitQuickUiState.identityCategory=e.target.value||'general';});
-  $('benefitQuickRunBtn')?.addEventListener('click',async e=>{
-    if(benefitQuickUiState.refreshing)return;
-    benefitQuickUiState.cmsLevel=$('benefitQuickCms')?.value||benefitQuickUiState.cmsLevel||'';
-    benefitQuickUiState.identityCategory=$('benefitQuickIdentity')?.value||benefitQuickUiState.identityCategory||'general';
-    e.currentTarget.disabled=true;e.currentTarget.textContent='更新官方資訊中…';
-    const refresh=await BenefitLatestInfo.refresh({manual:true});
-    benefitQuickUiState.result=BenefitLatestInfo.estimate({recipientId:benefitQuickUiState.recipientId,cmsLevel:benefitQuickUiState.cmsLevel,identityCategory:benefitQuickUiState.identityCategory});
-    render();
-    if(!refresh.ok)showToast('官方來源暫時無法連線，已使用最近成功資料試算');
-    else showToast('已更新官方長照資訊並完成試算');
-  });
+  $('benefitQuickRecipient')?.addEventListener('change',e=>{Object.assign(benefitQuickUiState,{recipientId:e.target.value||'',cmsLevel:'',identityCategory:'general',transportationApproved:'',touched:false});render();});
+  $('benefitQuickCms')?.addEventListener('input',e=>{benefitQuickUiState.cmsLevel=e.target.value||'';benefitQuickUiState.touched=true;});
+  $('benefitQuickIdentity')?.addEventListener('change',e=>{benefitQuickUiState.identityCategory=e.target.value||'general';benefitQuickUiState.touched=true;});
+  $('benefitQuickTransport')?.addEventListener('change',e=>{benefitQuickUiState.transportationApproved=e.target.value;benefitQuickUiState.touched=true;});
+  $('benefitQuickRunBtn')?.addEventListener('click',saveBenefitQuickAssessment);
   $('openBenefitRulesetBtn')?.addEventListener('click',()=>openBenefitRulesetEditor());
   $('openBenefitAssessmentBtn')?.addEventListener('click',openBenefitAssessment);
   $('openBenefitAuthorizationBtn')?.addEventListener('click',openBenefitAuthorization);
