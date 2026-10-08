@@ -49,9 +49,11 @@ ok('服務日期在有效期間外：not_eligible', () => {
   const r = b.evaluate(rule({ effectiveTo: '2026-12-31' }), { serviceDate: '2099-01-01', facts: { cmsLevel: 4 } });
   assert.equal(r.status, 'not_eligible');
 });
-ok('縣市規則：居住地不符不給', () => {
+ok('縣市規則：住在沒有規則的縣市顯示「尚無規則」（#100）', () => {
   const r = b.evaluate(rule({ jurisdiction: { city: '臺北市' } }), { serviceDate: '2099-01-01', facts: { cmsLevel: 4, residenceCity: '新北市' } });
-  assert.equal(r.status, 'not_eligible');
+  assert.equal(r.status, 'ruleset_required');
+  assert.equal(r.estimatedSubsidy, null);
+  assert.ok(r.warnings.some((w) => w.includes('新北市尚無規則')));
 });
 ok('事實欄位正規化（字串轉數字、布林）', () => {
   assert.deepEqual(b.normalizeFacts({ cmsLevel: '4', approvedCarePlan: 'true', eligibleCost: '' }),
@@ -89,8 +91,21 @@ ok('交通分區規則：月額度 ×（100 − 自付%），依福利身分', (
   const general = b.evaluate(zoneRule, { serviceDate: '2099-01-01', facts: { cmsLevel: 4, residenceCity: '新北市', identityCategory: 'general' } });
   assert.equal(general.estimatedSubsidy, 1343);
   assert.equal(general.estimatedCopay, 496);
+  // #100：預約畫面顯示每月補助額度與自付比例
+  assert.equal(general.monthlyLimit, 1840); // 新北市是第 2 區
+  assert.equal(general.copayRate, 27);
   const low = b.evaluate(zoneRule, { serviceDate: '2099-01-01', facts: { cmsLevel: 4, residenceCity: '臺北市', identityCategory: 'low_income' } });
   assert.equal(low.estimatedSubsidy, 1680);
+});
+ok('住址判斷縣市與鄉鎮市區（臺／台視為相同）', () => {
+  assert.deepEqual(b.residenceFromAddress('新北市板橋區文化路一段188號'), { city: '新北市', district: '板橋區' });
+  assert.deepEqual(b.residenceFromAddress('臺東縣成功鎮中山路1號'), { city: '台東縣', district: '成功鎮' });
+  assert.deepEqual(b.residenceFromAddress('火星某處'), { city: null, district: null });
+});
+ok('規則轄區寫「臺北市」，住址是「台北市」也算符合', () => {
+  const r = b.evaluate({ ...zoneRule, jurisdiction: { country: 'TW', city: '臺北市' } },
+    { serviceDate: '2099-01-01', facts: { cmsLevel: 4, residenceCity: '台北市', identityCategory: 'general' } });
+  assert.equal(r.status, 'eligible_estimate');
 });
 ok('交通分區規則：缺居住縣市或福利身分就是資料不足', () => {
   const r = b.evaluate(zoneRule, { serviceDate: '2099-01-01', facts: { cmsLevel: 4 } });
