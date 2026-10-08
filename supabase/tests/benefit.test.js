@@ -229,6 +229,19 @@ function booking(id, extra = {}) {
   record('第二、三筆預約一樣不保留，可用額度不會被吃光', (await balance(AUTH)).available === 1000 && (await balance(AUTH)).reserved === 0);
   const cancelled = await call(cancelFn.handler, 'POST', U.req, { bookingId: 'BKG-BEN-L1', reasonCode: 'requester_no_longer_needed' });
   record('需求者取消照常成功，額度不變', cancelled.status === 200 && (await balance(AUTH)).available === 1000, outcome(cancelled));
+  await writeBooking(U.req, booking('BKG-BEN-L4'));
+  const expired = await writeBooking(U.req, { ...(await bookingRow('BKG-BEN-L4')), state: 'expired', status: 'expired', claimStatus: 'expired' });
+  record('需求者讓預約過期照常成功，額度不變', expired.status === 200 && (await balance(AUTH)).available === 1000, outcome(expired));
+
+  // 帳本函式保留給之後有車資時使用：直接呼叫確認仍然正確（保留取估算與可用額度較小者、不重複保留、釋放後歸零）
+  await writeBooking(U.req, booking('BKG-BEN-L5'));
+  const sql1 = async (q) => (await admin.query(q)).rows[0];
+  const reserved1 = Number((await sql1(`select app.reserve_booking_benefit('BKG-BEN-L5', 'direct_test') as n`)).n);
+  const reserved2 = Number((await sql1(`select app.reserve_booking_benefit('BKG-BEN-L5', 'direct_test') as n`)).n);
+  record('保留函式仍可用：保留估算金額、不重複保留', reserved1 === 450 && reserved2 === 0 && (await reservedFor('BKG-BEN-L5')) === 450, `${reserved1} / ${reserved2}`);
+  await admin.query(`select app.release_booking_benefit('BKG-BEN-L5', 'direct_test')`);
+  await admin.query(`select app.release_booking_benefit('BKG-BEN-L5', 'direct_test')`);
+  record('釋放函式仍可用：釋放後歸零、重複釋放不出錯', (await reservedFor('BKG-BEN-L5')) === 0 && (await balance(AUTH)).available === 1000);
 
   await call(claimFn.handler, 'POST', U.dsp, { bookingId: 'BKG-BEN-L2', organizationId: ORG });
   const rejected = await writeBooking(U.dsp, { ...(await bookingRow('BKG-BEN-L2')), state: 'rejected', status: 'rejected', claimStatus: 'rejected' });
@@ -252,8 +265,8 @@ function booking(id, extra = {}) {
   record('行程完成照常，不結算額度', proof.status === 200 && proof.data.status === 'completed' && Number(settledRow.s) === 0, outcome(proof));
   const undo = await call(executeFn.handler, 'POST', U.drv, F.undoStep(await tripState(), U.drv, new Date().toISOString()).request);
   record('完成後修正（返回上一步）照常，額度不變', undo.status === 200 && (await balance(AUTH)).settled === 0 && (await balance(AUTH)).reserved === 0, outcome(undo));
-  const noLedger = (await admin.query(`select count(*)::int n from benefit_ledger where booking_id is not null`)).rows[0].n;
-  record('帳本沒有任何預約的保留或結算紀錄', noLedger === 0, `n=${noLedger}`);
+  const noLedger = (await admin.query(`select count(*)::int n from benefit_ledger where booking_id is not null and booking_id <> 'BKG-BEN-L5'`)).rows[0].n;
+  record('經端點操作的預約在帳本沒有任何保留或結算紀錄', noLedger === 0, `n=${noLedger}`);
 
   console.log('--- 調整、撤銷與權限 ---');
   const bal = await balance(AUTH);
