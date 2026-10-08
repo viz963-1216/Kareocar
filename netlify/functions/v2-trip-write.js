@@ -11,6 +11,8 @@
  * 司機執行自己的行程走 v2-trip-execute；需求者取消走 v2-cancel-booking。
  *
  * 指派、改派、取消時通知相關司機（notifications 資料表，見 0007）。
+ * 取消行程時，同一筆交易內把排在這趟的去程／回程退回待排車，已排車的預約退回部分排車
+ * （#76 決策「排好的退回部分排車」；規則在 js/lifecycle.js 的 unscheduleTripLegs）。
  *
  * 行程用 revision 做樂觀鎖。整批在同一筆交易裡，任何一筆不合規則就整批不寫入。
  */
@@ -22,9 +24,39 @@ const session = require('./_session');
 const { sanitize } = require('./_bookings');
 const { checkTripWrite } = require('./_trip-rules');
 const { resourceScope, notifyDrivers } = require('./_trips');
+const lifecycle = require('../../js/lifecycle.js');
 
 const MAX_CHANGES = 50;
 const text = (v) => String(v === undefined || v === null ? '' : v).trim();
+
+/** 這趟行程關聯的預約 ID */
+function tripBookingIds(trip) {
+  const ids = new Set();
+  const add = (v) => { if (text(v)) ids.add(text(v)); };
+  add(trip && trip.bookingId);
+  for (const id of (trip && Array.isArray(trip.bookingIds) ? trip.bookingIds : [])) add(id);
+  for (const ref of (trip && Array.isArray(trip.bookingLegRefs) ? trip.bookingLegRefs : [])) add(ref && ref.bookingId);
+  return [...ids];
+}
+
+/** 取消行程：排在這趟的去程／回程退回待排車，並寫預約事件 */
+async function unscheduleBookingsOfTrip(client, { tripId, trip, actorUserId, at }) {
+  for (const bookingId of tripBookingIds(trip)) {
+    const row = (await client.query(
+      `select data, organization_id from app_state where collection = 'bookings' and id = $1 and not deleted for update`,
+      [bookingId])).rows[0];
+    if (!row) continue;
+    const r = lifecycle.unscheduleTripLegs(row.data || {}, { tripId, at });
+    if (!r.changed) continue;
+    await client.query(`update app_state set data = $2 where collection = 'bookings' and id = $1`, [bookingId, JSON.stringify(r.booking)]);
+    const event = { id: `bevt_${auth.randomHex(8)}`, bookingId, eventType: 'leg_unscheduled', action: 'unschedule',
+      fromState: r.from, toState: r.to, actorUserId, organizationId: row.organization_id || null, tripId,
+      source: 'trip_cancelled', bookingVersion: r.booking.version, metadata: { legIds: r.legIds }, createdAt: at };
+    await client.query(
+      `insert into app_state (collection, id, organization_id, booking_id, data) values ('bookingEvents', $1, $2, $3, $4)`,
+      [event.id, row.organization_id || null, bookingId, JSON.stringify(event)]);
+  }
+}
 
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
@@ -86,7 +118,11 @@ exports.handler = async (event) => {
         const saved = upsert.rows[0];
         if (saved.organization_id !== organizationId) {
           // 觸發器把組織清掉代表呼叫者不是該組織的營運方；上面已檢查過，這裡是保險
-          throw auth.authError('FORBIDDEN', `沒有權限替這個機構排車`);
+          throw auth.authError('FORBIDDEN', `沒有權限寫入這個機構的行程`);
+        }
+        if (existing && text((existing.data || {}).status) !== 'cancelled' && text(record.status) === 'cancelled') {
+          await unscheduleBookingsOfTrip(client, { tripId: id, trip: existing.data || {}, actorUserId: claims.userId,
+            at: new Date().toISOString() });
         }
         await notifyDrivers(client, { id, record, before: existing ? existing.data || {} : null,
           organizationId, revision: saved.revision });

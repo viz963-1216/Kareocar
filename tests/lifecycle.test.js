@@ -136,4 +136,35 @@ ok('排車：平台指定給其他機構的段，以指定的機構為準', () =
   assert.equal(L.scheduleBookingLeg(b, { tripId: 'T1', organizationId: 'ORG-A', at: AT }).ok, false);
 });
 
+ok('排車狀態集合由這裡提供，伺服器規則與排車端點共用', () => {
+  assert.deepEqual([...L.BOOKING_SCHEDULING_STATES].sort(), ['partially_scheduled', 'scheduled']);
+});
+ok('取消行程（#76 決策「排好的退回部分排車」）：這趟的去程退回待排車，已排車的預約退回部分排車', () => {
+  const b = claimedBooking([legOf('B1', 'outbound', 1), legOf('B1', 'return', 2)]);
+  const s1 = L.scheduleBookingLeg(b, { tripId: 'T1', organizationId: 'ORG-A', at: AT }).booking;
+  const s2 = L.scheduleBookingLeg(s1, { legId: 'B1_return', tripId: 'T2', organizationId: 'ORG-A', at: AT }).booking;
+  assert.equal(s2.state, 'scheduled');
+  const r = L.unscheduleTripLegs(s2, { tripId: 'T1', at: AT });
+  assert.equal(r.changed, true);
+  assert.equal(r.from, 'scheduled'); assert.equal(r.to, 'partially_scheduled');
+  const out = r.booking.legs.find((l) => l.direction === 'outbound');
+  assert.deepEqual([out.status, out.tripId, out.scheduledOrganizationId, out.scheduledAt], ['pending', null, null, null]);
+  assert.equal(r.booking.legs.find((l) => l.direction === 'return').tripId, 'T2');
+  assert.equal(r.booking.tripId, 'T2');
+  assert.equal(s2.legs[0].status, 'scheduled', '不改傳入的預約');
+  // 退回後可以再排
+  assert.equal(L.scheduleBookingLeg(r.booking, { tripId: 'T3', organizationId: 'ORG-A', at: AT }).ok, true);
+});
+ok('取消行程：部分排車的預約維持部分排車；沒有排在這趟的預約不變', () => {
+  const b = claimedBooking([legOf('B1', 'outbound', 1), legOf('B1', 'return', 2)]);
+  const s1 = L.scheduleBookingLeg(b, { tripId: 'T1', organizationId: 'ORG-A', at: AT }).booking;
+  const r = L.unscheduleTripLegs(s1, { tripId: 'T1', at: AT });
+  assert.equal(r.to, 'partially_scheduled'); assert.equal(r.booking.tripId, null);
+  assert.equal(L.unscheduleTripLegs(s1, { tripId: 'T9', at: AT }).changed, false);
+});
+ok('退回部分排車只由伺服器在取消行程時做，一般預約寫入不接受', () => {
+  assert.deepEqual(L.bookingTargets('scheduled', 'unschedule'), ['partially_scheduled']);
+  assert.ok(!(L.bookingWriteTransitions('ops').scheduled || []).includes('partially_scheduled'));
+});
+
 console.log(`lifecycle: ${pass} passed`);

@@ -328,7 +328,14 @@ async function newClaimed(id) {
   record('修改預約不能改聯絡人', editContact.status === 200 && afterEdit.name === '合成需求者' && afterEdit.phone === '0944000001', JSON.stringify(afterEdit));
   const opsCreate = await writeBooking(U.dspA, booking('BKG-ACC-R10', { requestedByUserId: null, state: 'claimed', claimStatus: 'claimed',
     status: 'claimed', organizationId: ORG_A, recipientId: 'CR-ACC-MOM' }));
-  record('機構自行建立（電話預約）帶服務對象：不受需求者關係限制', opsCreate.status === 200, outcome(opsCreate));
+  record('機構自行建立（電話預約）帶本機構服務過的服務對象：可以', opsCreate.status === 200, outcome(opsCreate));
+  // 收緊（總驗收決策）：調度員不能掛上其他機構、或本機構沒服務過的服務對象
+  const opsB = await writeBooking(U.dspB, booking('BKG-ACC-R12', { requestedByUserId: null, state: 'claimed', claimStatus: 'claimed',
+    status: 'claimed', organizationId: ORG_B, recipientId: 'CR-ACC-MOM' }));
+  record('其他機構的調度員掛上別家服務的服務對象：被拒、沒有寫入', opsB.status === 403 && !(await row('bookings', 'BKG-ACC-R12')), outcome(opsB));
+  const opsNever = await writeBooking(U.dspA, booking('BKG-ACC-R13', { requestedByUserId: null, state: 'claimed', claimStatus: 'claimed',
+    status: 'claimed', organizationId: ORG_A, recipientId: 'CR-ACC-AUNT' }));
+  record('調度員掛上本機構沒服務過的服務對象：被拒、沒有寫入', opsNever.status === 403 && !(await row('bookings', 'BKG-ACC-R13')), outcome(opsNever));
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n結果：${results.length - failed.length} 通過 / ${failed.length} 失敗`);

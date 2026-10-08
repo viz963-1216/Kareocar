@@ -15,8 +15,8 @@
  *     （app.revoke_booking_organization），原機構立即讀不到
  *   - 不能刪除預約；接案與取消有各自的端點
  *   - 不能排車：排車只走 v2-schedule-trips（ADR 0003），去程／回程的排車欄位一律沿用資料庫的值
- *   - 預約帶服務對象（recipientId）時，需求者必須是這位服務對象的建立者、且有未撤銷的可預約關係；
- *     承接機構的負責人或調度員不受此限（#78）
+ *   - 預約帶服務對象（recipientId）時，需求者必須是這位服務對象的建立者、且有未撤銷的可預約關係（#78）；
+ *     承接機構的負責人或調度員只能用本機構服務過或自己建立的服務對象（總驗收收緊）
  *   - 替家人預約時的聯絡人（contacts.requester）由伺服器依登入的需求者寫入，之後沿用資料庫的值（#82）
  *
  * 整批在同一筆交易裡，任何一筆不合規則就整批不寫入。
@@ -66,7 +66,20 @@ async function applyServerBenefit(client, record, existing) {
 async function assertRecipientBookable(client, { actorUserId, record, existing, roles }) {
   const recipientId = text(record.recipientId);
   if (!recipientId || !recipientChanged(record, existing)) return;
-  if (roles.admin || (existing ? roles.opsOfExisting : roles.opsOfClaimedOrg)) return;
+  if (roles.admin) return;
+  const opsOrg = existing ? (roles.opsOfExisting ? existing.organization_id : null)
+    : (roles.opsOfClaimedOrg ? text(record.organizationId) : null);
+  if (opsOrg) {
+    // 承接機構：本機構服務過（有本機構承接的預約）、掛在本機構，或是呼叫者自己建立的服務對象
+    const { rows: served } = await client.query(
+      `select 1 where exists (select 1 from app_state b where b.collection = 'bookings' and not b.deleted
+                                and b.organization_id = $1 and b.data->>'recipientId' = $2)
+                   or exists (select 1 from app_state r where r.collection = 'careRecipients' and not r.deleted
+                                and r.id = $2 and (r.organization_id = $1 or r.owner_user_id = $3))`,
+      [opsOrg, recipientId, actorUserId]);
+    if (!served.length) throw auth.authError('FORBIDDEN', '這位服務對象不是本機構服務的對象');
+    return;
+  }
   const { rows } = await client.query(
     `select 1
        from app_state r

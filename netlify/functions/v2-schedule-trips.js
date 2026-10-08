@@ -33,7 +33,7 @@ const lifecycle = require('../../js/lifecycle.js');
 const MAX_TRIPS = 20;
 const MAX_LEGS = 60;
 const TRIP_EVENT_SCHEMA_VERSION = 1;
-const SCHEDULED = new Set(['partially_scheduled', 'scheduled']);
+const SCHEDULED = new Set(lifecycle.BOOKING_SCHEDULING_STATES);
 const text = (v) => String(v === undefined || v === null ? '' : v).trim();
 const fail = (code, message) => { throw auth.authError(code, message); };
 
