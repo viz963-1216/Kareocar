@@ -50,10 +50,29 @@ exports.handler = async (event) => {
           order by updated_at
           limit $1`, [MAX_ROWS])).rows;
 
+      // 預約上的補助資訊（#101）：承接機構在服務對象居住縣市、接送當天是否有有效的長照特約。
+      // 需求者讀不到 ltc_contracts，用 security definer 的 app.ltc_contract_active 判斷；同樣的組合只查一次。
+      const ltcCache = new Map();
+      const ltcActive = async (org, city, date) => {
+        if (!org || !city || !date) return false;
+        const key = `${org}|${city}|${date}`;
+        if (!ltcCache.has(key)) {
+          ltcCache.set(key, (await client.query('select app.ltc_contract_active($1, $2, $3::date) as ok', [org, city, date])).rows[0].ok === true);
+        }
+        return ltcCache.get(key);
+      };
+      const bookingBenefitView = async (record, org) => {
+        const sb = record.serverComputed && record.serverComputed.benefit;
+        const city = sb && sb.facts && sb.facts.residenceCity;
+        const date = benefit.dateOnly((sb && sb.serviceDate) || record.pickupDate);
+        return benefit.bookingBenefitView(sb, { claimed: !!org, ltcActive: await ltcActive(org, city, date) });
+      };
+
       for (const row of rows) {
         const record = (row.data && typeof row.data === 'object') ? row.data : {};
         push(row.collection, {
           ...record,
+          ...(row.collection === 'bookings' ? { benefitView: await bookingBenefitView(record, row.organization_id) } : {}),
           id: row.id,
           // 伺服器說了算的欄位放在後面覆蓋，避免前端拿到自己上次送的舊值
           organizationId: row.organization_id || null,

@@ -1219,7 +1219,7 @@ function currentBookingCommercialSnapshot(booking){
   return rows.find(x=>x.id===booking.activeCommercialSnapshotId)||rows[rows.length-1]||null;
 }
 // 金額以伺服器計算的 serverComputed 為準（#21 報價），沒有才退回快照。
-// 預約畫面暫不顯示補助（#98）：伺服器現在算的是整個月的額度，不是這一趟；改由 #101 依補助試算與長照特約重做。
+// 補助資訊另外由 bookingBenefitHtml 顯示（#101），這裡只有車資。
 function bookingCommercialSummary(booking){
   const q=booking?.serverComputed?.quote||currentBookingCommercialSnapshot(booking)?.quote;
   // 平台不訂車資，沒有估價時就是雙方議定
@@ -5570,7 +5570,7 @@ function requesterHome(){
   ${requesterNotificationsCard()}
   <div class="requester-status-strip"><div><span>等待處理</span><strong>${pending}</strong></div><div><span>已安排</span><strong>${scheduled}</strong></div><div><span>全部預約</span><strong>${rows.length}</strong></div></div>
   ${next?`<section class="card requester-next"><div class="card-head"><div><h3>下一筆接送</h3><p>${escapeHTML(next.pickupDate)} ${escapeHTML(next.pickupTime)}・${escapeHTML(bookingServiceOrgName(next))}</p></div>${bookingStatusPill(next.status)}</div><div class="route-line"><strong>${escapeHTML(Booking.dispatchView(next)?.pickupAddress||next.pickupAddress)}</strong><br>↓<br><strong>${escapeHTML(Booking.dispatchView(next)?.destination||next.destination)}</strong></div><div class="item-actions"><button class="btn outline" data-ui-view="requester-bookings" type="button">查看預約</button></div></section>`:''}
-  <section class="card"><div class="card-head"><h3>最近預約</h3>${recent.length?'<button class="btn outline sm" id="requesterAllBookingsBtn" type="button">查看全部</button>':''}</div>${recent.map(b=>`<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(b.pickupDate)} ${escapeHTML(b.pickupTime)}｜${escapeHTML(b.name)}</h4><p>${escapeHTML(bookingServiceOrgName(b))}<br>${bookingLegSummary(b)}</p></div>${bookingStatusPill(b.status)}</div></div>`).join('')||'<div class="empty">還沒有預約</div>'}</section>`;
+  <section class="card"><div class="card-head"><h3>最近預約</h3>${recent.length?'<button class="btn outline sm" id="requesterAllBookingsBtn" type="button">查看全部</button>':''}</div>${recent.map(b=>`<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(b.pickupDate)} ${escapeHTML(b.pickupTime)}｜${escapeHTML(b.name)}</h4><p>${escapeHTML(bookingServiceOrgName(b))}${bookingLtcTag(b)}<br>${bookingLegSummary(b)}</p></div>${bookingStatusPill(b.status)}</div></div>`).join('')||'<div class="empty">還沒有預約</div>'}</section>`;
 }
 
 function requesterNew(){
@@ -5621,7 +5621,7 @@ function requesterNew(){
     </section>
     <section class="wizard-panel ${step===4?'active':''}" data-wizard-panel="4">
       <section class="card"><div class="card-head"><div><h3>確認並送出</h3></div></div>
-                <div class="wizard-review" id="requesterWizardReview"><div class="wizard-review-row"><span>乘車人</span><strong>${escapeHTML(riderName)}${riderIsSelf?'':'（家人）'}</strong></div><div class="wizard-review-row"><span>地點</span><strong id="wizardReviewRoute">${escapeHTML(reviewRoute)}</strong></div><div class="wizard-review-row"><span>時間</span><strong id="wizardReviewTime">${escapeHTML(date)} ${escapeHTML(time)}・${escapeHTML(tripType)}</strong></div>${rider?`<div class="wizard-review-row"><span>固定需求</span><strong>${escapeHTML(fixed)}</strong></div>`:''}${b?`<div class="wizard-review-row"><span>費用</span><strong>${escapeHTML(Booking.commercialSummary(b))}</strong></div>`:''}</div>
+                <div class="wizard-review" id="requesterWizardReview"><div class="wizard-review-row"><span>乘車人</span><strong>${escapeHTML(riderName)}${riderIsSelf?'':'（家人）'}</strong></div><div class="wizard-review-row"><span>地點</span><strong id="wizardReviewRoute">${escapeHTML(reviewRoute)}</strong></div><div class="wizard-review-row"><span>時間</span><strong id="wizardReviewTime">${escapeHTML(date)} ${escapeHTML(time)}・${escapeHTML(tripType)}</strong></div>${rider?`<div class="wizard-review-row"><span>固定需求</span><strong>${escapeHTML(fixed)}</strong></div>`:''}${b?`<div class="wizard-review-row"><span>費用</span><strong>${escapeHTML(Booking.commercialSummary(b))}</strong></div>`:''}${rider?`<div class="wizard-review-row"><span>補助</span><strong id="wizardReviewBenefit">${bookingBenefitHtml(b?bookingBenefitViewOf(b):benefitViewFromAssessment(benefitLatestAssessmentFor(rider.id)),rider.id).replace(/^補助（/,'（').replace(/^補助：/,'')}</strong></div>`:''}</div>
         <div class="wizard-actions"><button class="btn outline wizard-prev-btn" data-prev="3" type="button">上一步</button><div class="right"><button class="btn primary" id="submitRequesterBookingBtn" type="button">${submitLabel}</button></div></div>
       </section>
     </section>
@@ -5630,7 +5630,7 @@ function requesterNew(){
 function requesterBookings(){
   const rows=requesterBookingsRows(),userId=Identity.currentUser()?.id;
   return `<div class="page-head"><div><h2>我的預約</h2></div><div class="page-actions"><button type="button" class="btn primary" id="requesterNewBookingBtn">＋ 預約接送</button></div></div>
-  <div class="list">${rows.map(b=>{const canCancel=Identity.can('booking.cancel_own')&&Booking.canCancelOwn(b.id,userId).ok,canEdit=Identity.can('booking.edit_own')&&Booking.canEditOwn(b.id,userId).ok;return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(b.pickupDate)} ${escapeHTML(b.pickupTime)}｜${escapeHTML(b.name)}${bookingRequesterContact(b)?' <span class="pill gray">家人</span>':''}</h4><p>承接機構：${escapeHTML(bookingServiceOrgName(b))}<br>${bookingLegSummary(b)}<br>${escapeHTML(Booking.needsText(b))}・${Dispatch.bookingPoolingConsented(b)?'可共乘':'不共乘'}<br><span class="muted small">${escapeHTML(Booking.commercialSummary(b))}</span></p></div>${bookingStatusPill(b.status)}</div><div class="item-actions">${canEdit?`<button type="button" class="btn primary sm requester-edit-booking-btn" data-booking="${b.id}">修改預約</button>`:''}${canCancel?`<button type="button" class="btn danger sm requester-cancel-booking-btn" data-booking="${b.id}">取消預約</button>`:''}<button type="button" class="btn outline sm booking-history-btn" data-booking="${b.id}">異動紀錄</button>${['partially_scheduled','scheduled'].includes(b.status)&&!canCancel?'<span class="muted small">要更改請聯絡承接機構</span>':''}</div></div>`;}).join('')||'<div class="empty">還沒有預約</div>'}</div>`;
+  <div class="list">${rows.map(b=>{const canCancel=Identity.can('booking.cancel_own')&&Booking.canCancelOwn(b.id,userId).ok,canEdit=Identity.can('booking.edit_own')&&Booking.canEditOwn(b.id,userId).ok;return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(b.pickupDate)} ${escapeHTML(b.pickupTime)}｜${escapeHTML(b.name)}${bookingRequesterContact(b)?' <span class="pill gray">家人</span>':''}</h4><p>承接機構：${escapeHTML(bookingServiceOrgName(b))}${bookingLtcTag(b)}<br>${bookingLegSummary(b)}<br>${escapeHTML(Booking.needsText(b))}・${Dispatch.bookingPoolingConsented(b)?'可共乘':'不共乘'}<br><span class="muted small">${escapeHTML(Booking.commercialSummary(b))}</span>${['cancelled','rejected','expired'].includes(Booking.stateOf(b))?'':`<br><span class="booking-benefit">${bookingBenefitHtml(bookingBenefitViewOf(b),b.recipientId)}</span>`}</p></div>${bookingStatusPill(b.status)}</div><div class="item-actions">${canEdit?`<button type="button" class="btn primary sm requester-edit-booking-btn" data-booking="${b.id}">修改預約</button>`:''}${canCancel?`<button type="button" class="btn danger sm requester-cancel-booking-btn" data-booking="${b.id}">取消預約</button>`:''}<button type="button" class="btn outline sm booking-history-btn" data-booking="${b.id}">異動紀錄</button>${['partially_scheduled','scheduled'].includes(b.status)&&!canCancel?'<span class="muted small">要更改請聯絡承接機構</span>':''}</div></div>`;}).join('')||'<div class="empty">還沒有預約</div>'}</div>`;
 }
 function demandMarket(){
   const userId=Identity.currentUser()?.id,rows=Booking.openDemand(demandMarketDate||null,userId),membershipOrgId=Identity.membershipOrganizationId(),canClaim=Identity.can('booking.market.claim')&&!!membershipOrgId;
@@ -6367,6 +6367,35 @@ function benefitAssessmentResultHtml(a){
   </div>`;
 }
 
+// 預約上的補助資訊（#101）：狀態由伺服器依試算、是否接案、承接機構的長照特約算好（booking.benefitView）。
+// 只顯示給需求者；金額是預估，實際以承接機構核定為準。
+function benefitViewFromAssessment(a){
+  if(!a)return {state:'assessment_required'};
+  if(a.status!=='eligible_estimate')return {state:a.status,message:((a.status==='not_eligible'?a.reasons:a.warnings)||[]).slice(-1)[0]||''};
+  return {state:'pre_claim',monthlyLimit:a.monthlyLimit??null,copayRate:a.copayRate??null,zone:a.zone??null,estimatedSubsidy:a.estimatedSubsidy??null,city:a.facts?.residenceCity||null};
+}
+function bookingBenefitAmountsText_(v){
+  if(v.monthlyLimit!==null&&v.monthlyLimit!==undefined)return `每月補助額度 ${benefitMoney(v.monthlyLimit)}・自付比例 ${escapeHTML(String(v.copayRate??'—'))}%`;
+  return `預估補助 ${benefitMoney(v.estimatedSubsidy)}`;
+}
+function bookingBenefitHtml(view,recipientId=''){
+  const v=view||{state:'assessment_required'},note='<span class="muted small">預估，實際以承接機構核定為準</span>';
+  const go=`<button type="button" class="btn outline sm benefit-go-btn" data-recipient="${escapeHTML(recipientId||'')}">前往補助試算</button>`;
+  switch(v.state){
+    case 'assessment_required':return `補助：尚未試算，可以先試算長照交通補助（不影響預約）。${go}`;
+    case 'ruleset_required':return `補助：尚無規則${v.message?`（${escapeHTML(v.message)}）`:''}`;
+    case 'insufficient_data':return `補助：試算資料不足，請重新試算。${go}`;
+    case 'not_eligible':return `補助：預估不符合交通接送補助資格${v.message?`（${escapeHTML(v.message)}）`:''}`;
+    case 'pre_claim':return `補助（若由長照特約機構承接）：${bookingBenefitAmountsText_(v)}<br>${note}`;
+    case 'ltc_contracted':return `補助：${bookingBenefitAmountsText_(v)}<br>${note}`;
+    case 'not_ltc':return `補助：承接機構在${escapeHTML(v.city||'服務對象居住縣市')}不是長照特約，這趟不適用長照交通補助。`;
+    default:return '';
+  }
+}
+// 剛送出、還沒重新載入的預約沒有 benefitView：接案前用服務對象最近一次試算先顯示
+function bookingBenefitViewOf(b){return b?.benefitView||(b?.organizationId?null:benefitViewFromAssessment(benefitLatestAssessmentFor(b?.recipientId)));}
+function bookingLtcTag(b){return b?.benefitView?.state==='ltc_contracted'?' <span class="pill green">長照特約</span>':'';}
+
 function benefitDashboard(){
   const actorUserId=Identity.currentUser()?.id,canManage=Benefit.canManageRulesets(actorUserId),recipients=benefitAssessableRecipients();
   if(!benefitQuickUiState.recipientId||!recipients.some(r=>r.id===benefitQuickUiState.recipientId))benefitQuickUiState.recipientId=recipients[0]?.id||'';
@@ -6918,6 +6947,11 @@ function bindViewEvents(){
   $('benefitQuickIdentity')?.addEventListener('change',e=>{benefitQuickUiState.identityCategory=e.target.value||'general';benefitQuickUiState.touched=true;});
   $('benefitQuickTransport')?.addEventListener('change',e=>{benefitQuickUiState.transportationApproved=e.target.value;benefitQuickUiState.touched=true;});
   $('benefitQuickRunBtn')?.addEventListener('click',saveBenefitQuickAssessment);
+  document.querySelectorAll('.benefit-go-btn').forEach(btn=>btn.addEventListener('click',()=>{
+    if(!canView('benefits')){showToast('你沒有此頁面的檢視權限');return;}
+    Object.assign(benefitQuickUiState,{recipientId:btn.dataset.recipient||benefitQuickUiState.recipientId,cmsLevel:'',touched:false});
+    currentView='benefits';renderNav();render();
+  }));
   $('openBenefitRulesetBtn')?.addEventListener('click',()=>openBenefitRulesetEditor());
   $('openBenefitAssessmentBtn')?.addEventListener('click',openBenefitAssessment);
   $('openBenefitAuthorizationBtn')?.addEventListener('click',openBenefitAuthorization);

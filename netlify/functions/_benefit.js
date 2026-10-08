@@ -298,7 +298,30 @@ async function bookingBenefit(client, booking) {
  */
 const LEDGER_RESERVATION_ENABLED = false;
 
+/**
+ * 預約上要顯示的補助資訊（#101）。依預約的伺服器估算、是否已接案、承接機構在服務對象居住縣市
+ * 當天是否有有效的長照特約，決定狀態；只有接案前與長照特約機構承接時帶金額。
+ *   assessment_required  尚未試算（提示前往試算，不擋預約）
+ *   ruleset_required / not_eligible / insufficient_data  照試算結果
+ *   pre_claim       接案前：若由長照特約機構承接的額度與比例
+ *   ltc_contracted  承接機構是長照特約
+ *   not_ltc         承接機構在這個縣市沒有有效的長照特約（含縣市不符、過期）
+ */
+function bookingBenefitView(serverBenefit, { claimed = false, ltcActive = false } = {}) {
+  const status = serverBenefit && serverBenefit.status;
+  if (!status || status === 'assessment_required') return { state: 'assessment_required' };
+  const message = ((status === 'not_eligible' ? serverBenefit.reasons : serverBenefit.warnings) || []).slice(-1)[0]
+    || ((serverBenefit.warnings || [])[0]) || '';
+  if (status !== 'eligible_estimate') return { state: status, message };
+  const city = (serverBenefit.facts && serverBenefit.facts.residenceCity) || null;
+  const amounts = { monthlyLimit: serverBenefit.monthlyLimit ?? null, copayRate: serverBenefit.copayRate ?? null,
+    zone: serverBenefit.zone ?? null, estimatedSubsidy: serverBenefit.estimatedSubsidy ?? null, city };
+  if (!claimed) return { state: 'pre_claim', ...amounts };
+  if (ltcActive) return { state: 'ltc_contracted', ...amounts };
+  return { state: 'not_ltc', city };
+}
+
 module.exports = {
   DEFAULT_PROGRAM_CODE, LEDGER_RESERVATION_ENABLED, normalizeRulesetInput, rulesetFromRow, validateRuleset, normalizeFacts,
-  evaluate, activeRuleset, withRuleset, bookingBenefit, dateOnly, residenceFromAddress
+  evaluate, activeRuleset, withRuleset, bookingBenefit, dateOnly, residenceFromAddress, bookingBenefitView
 };
