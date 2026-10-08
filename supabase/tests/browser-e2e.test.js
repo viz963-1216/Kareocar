@@ -247,6 +247,13 @@ async function typeConfirmed(page, selector, text) {
   }
   throw new Error(`${selector} 填不進去`);
 }
+/** 點了要等到某個結果（例如視窗打開）；背景重畫把按鈕換掉時點擊會落空，沒出現就再點 */
+async function clickUntil(page, selector, expression, label) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    await clickRetry(page, selector);
+    try { await waitFor(page, expression, label, 5000); return; } catch (e) { if (attempt >= 3) throw e; }
+  }
+}
 async function clickRetry(page, selector) {
   for (let attempt = 1; ; attempt++) {
     try { await click(page, selector); return; }
@@ -690,8 +697,7 @@ async function flowFamily(cdp, baseUrl, tokens) {
   try {
     await login(page, U.req);
     await goView(page, 'account');
-    await click(page, '#addFamilyBtn');
-    await waitFor(page, "document.getElementById('careRecipientEditModal').classList.contains('open')", '新增家人視窗開啟');
+    await clickUntil(page, '#addFamilyBtn', "document.getElementById('careRecipientEditModal').classList.contains('open')", '新增家人視窗開啟');
     await typeInto(page, '#crNameInput', fam.name);
     await typeInto(page, '#crPhoneInput', fam.phone);
     await typeInto(page, '#crAddressInput', fam.address);
