@@ -789,7 +789,8 @@ async function flowFamily(cdp, baseUrl, tokens) {
       let shown = true;
       try { await waitFor(dsp, `document.querySelector('main').innerText.includes(${J(fam.name)})`, '調度畫面顯示家人', 10000); } catch (_) { shown = false; }
       const text = await evaluate(dsp, "document.querySelector('main').innerText");
-      record(S, '調度畫面不顯示補助資訊（#102 才開放給承接機構）', shown && !/補助(估算|：)|每月補助額度/.test(text));
+      record(S, '承接機構的調度看到補助資訊：不是長照特約時說明不適用（#102）', shown && text.includes('補助：承接機構在新北市不是長照特約')
+        && !text.includes('每月補助額度'), shown ? '' : text.slice(0, 400));
       record(S, '調度畫面顯示服務對象（家人）的姓名與需求，需求者為聯絡人',
         shown && text.includes(fam.aid) && text.includes(`聯絡人：${U.req.name}`), shown ? '' : text.slice(0, 400));
       // 排車後，司機看到的停靠點：乘車人是家人，需求者是聯絡人（#76 故事 13）
