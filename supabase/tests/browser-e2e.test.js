@@ -247,6 +247,13 @@ async function typeConfirmed(page, selector, text) {
   }
   throw new Error(`${selector} 填不進去`);
 }
+/** 點了要等到某個結果（例如視窗打開）；背景重畫把按鈕換掉時點擊會落空，沒出現就再點 */
+async function clickUntil(page, selector, expression, label) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    await clickRetry(page, selector);
+    try { await waitFor(page, expression, label, 5000); return; } catch (e) { if (attempt >= 3) throw e; }
+  }
+}
 async function clickRetry(page, selector) {
   for (let attempt = 1; ; attempt++) {
     try { await click(page, selector); return; }
@@ -690,8 +697,7 @@ async function flowFamily(cdp, baseUrl, tokens) {
   try {
     await login(page, U.req);
     await goView(page, 'account');
-    await click(page, '#addFamilyBtn');
-    await waitFor(page, "document.getElementById('careRecipientEditModal').classList.contains('open')", '新增家人視窗開啟');
+    await clickUntil(page, '#addFamilyBtn', "document.getElementById('careRecipientEditModal').classList.contains('open')", '新增家人視窗開啟');
     await typeInto(page, '#crNameInput', fam.name);
     await typeInto(page, '#crPhoneInput', fam.phone);
     await typeInto(page, '#crAddressInput', fam.address);
@@ -726,6 +732,7 @@ async function flowFamily(cdp, baseUrl, tokens) {
     try { await waitFor(page, `document.getElementById('requesterWizardReview').textContent.includes(${J(fam.name)})`, '確認步驟顯示乘車人', 8000); }
     catch (_) { reviewed = false; }
     record(S, '確認步驟的乘車人是家人', reviewed, reviewed ? '' : await evaluate(page, "document.getElementById('requesterWizardReview').textContent"));
+    record(S, '確認步驟不顯示補助資訊（#98）', !(await evaluate(page, "/補助/.test(document.getElementById('requesterWizardReview').textContent)")));
     await click(page, '#submitRequesterBookingBtn');
     const booking = await waitForDb(async () => {
       const { rows } = await admin.query(`select id, owner_user_id, data from app_state where collection = 'bookings' and data->>'recipientId' = $1`, [recipient.id]);
@@ -738,6 +745,15 @@ async function flowFamily(cdp, baseUrl, tokens) {
     await waitFor(page, "!!document.querySelector('.nav-btn.active[data-view=\"requester-bookings\"]')", '送出後回到我的預約');
     record(S, '我的預約顯示這筆是替家人預約（乘車人是家人、標示「家人」）', await evaluate(page,
       `[...document.querySelectorAll('main .list-item h4')].some((h)=>h.innerText.includes(${J(fam.name)})&&h.innerText.includes('家人'))`));
+    // #98：預約畫面暫不顯示補助資訊，補助試算頁照常
+    record(S, '我的預約不顯示補助資訊（#98）', !(await evaluate(page, "/補助(估算|：)/.test(document.querySelector('main').innerText)")));
+    await clickUntil(page, `.booking-history-btn[data-booking=${J(booking.id)}]`, "document.getElementById('bookingHistoryModal').classList.contains('open')", '異動紀錄視窗開啟');
+    record(S, '異動紀錄視窗不顯示補助資訊（#98）', !(await evaluate(page, "/補助/.test(document.getElementById('bookingHistoryList').innerText)")));
+    await click(page, '#bookingHistoryModal [data-close="bookingHistoryModal"]');
+    await goView(page, 'benefits');
+    let trialShown = true;
+    try { await waitFor(page, "!!document.getElementById('benefitQuickCms')&&!!document.getElementById('benefitQuickRecipient')", '補助試算表單', 8000); } catch (_) { trialShown = false; }
+    record(S, '補助試算頁照常可以使用（#98）', trialShown);
 
     const claimed = await claimBooking.handler({ httpMethod: 'POST', headers: { host: '127.0.0.1', cookie: `cr_at=${tokens.dsp}` },
       body: J({ bookingId: booking.id, organizationId: ORG }) });
@@ -750,6 +766,7 @@ async function flowFamily(cdp, baseUrl, tokens) {
       let shown = true;
       try { await waitFor(dsp, `document.querySelector('main').innerText.includes(${J(fam.name)})`, '調度畫面顯示家人', 10000); } catch (_) { shown = false; }
       const text = await evaluate(dsp, "document.querySelector('main').innerText");
+      record(S, '調度畫面不顯示補助資訊（#98）', shown && !/補助(估算|：)/.test(text));
       record(S, '調度畫面顯示服務對象（家人）的姓名與需求，需求者為聯絡人',
         shown && text.includes(fam.aid) && text.includes(`聯絡人：${U.req.name}`), shown ? '' : text.slice(0, 400));
       // 排車後，司機看到的停靠點：乘車人是家人，需求者是聯絡人（#76 故事 13）

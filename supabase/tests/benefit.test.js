@@ -217,34 +217,35 @@ function booking(id, extra = {}) {
   const AUTH = saved.data && saved.data.authorizationId;
   record('服務中的機構調度員登錄核定 1000', saved.status === 200 && Boolean(AUTH) && (await balance(AUTH)).available === 1000, outcome(saved));
 
-  console.log('--- 建立預約時保留、取消釋放 ---');
+  // #98：平台沒有車資，現在的估算是整個月的額度；在每筆預約保留整月額度會讓第二筆就顯示「額度用完」。
+  // 暫停「預約時保留、接送完成時結算」，帳本與核定照舊（之後有車資再啟用）。
+  console.log('--- 暫停額度保留與結算（#98）---');
   await writeBooking(U.req, booking('BKG-BEN-L1'));
-  record('建立預約保留伺服器估算的金額（450）', (await reservedFor('BKG-BEN-L1')) === 450 && (await balance(AUTH)).available === 550);
-  await writeBooking(U.req, { ...(await bookingRow('BKG-BEN-L1')), pickupTime: '11:00' });
-  record('沒改日期的修改不重複保留', (await reservedFor('BKG-BEN-L1')) === 450);
+  record('建立預約不保留額度，可用額度維持 1000', (await reservedFor('BKG-BEN-L1')) === 0 && (await balance(AUTH)).available === 1000);
+  await writeBooking(U.req, { ...(await bookingRow('BKG-BEN-L1')), pickupDate: '2099-01-02' });
+  record('改日期重新估算也不保留', (await reservedFor('BKG-BEN-L1')) === 0);
   await writeBooking(U.req, booking('BKG-BEN-L2'));
   await writeBooking(U.req, booking('BKG-BEN-L3'));
-  const afterThree = await balance(AUTH);
-  record('額度不足時只保留剩下的（450 + 450 + 100），可用額度歸零',
-    (await reservedFor('BKG-BEN-L2')) === 450 && (await reservedFor('BKG-BEN-L3')) === 100 && afterThree.available === 0 && afterThree.reserved === 1000,
-    JSON.stringify(afterThree));
+  record('第二、三筆預約一樣不保留，可用額度不會被吃光', (await balance(AUTH)).available === 1000 && (await balance(AUTH)).reserved === 0);
   const cancelled = await call(cancelFn.handler, 'POST', U.req, { bookingId: 'BKG-BEN-L1', reasonCode: 'requester_no_longer_needed' });
-  const afterCancel = await balance(AUTH);
-  record('需求者取消後釋放 450，剩餘額度正確', cancelled.status === 200 && (await reservedFor('BKG-BEN-L1')) === 0
-    && afterCancel.available === 450 && afterCancel.reserved === 550, JSON.stringify(afterCancel));
-  const again = await call(cancelFn.handler, 'POST', U.req, { bookingId: 'BKG-BEN-L1', reasonCode: 'requester_no_longer_needed' });
-  record('重複取消不會重複釋放', again.status === 400 && (await balance(AUTH)).available === 450);
+  record('需求者取消照常成功，額度不變', cancelled.status === 200 && (await balance(AUTH)).available === 1000, outcome(cancelled));
+  await writeBooking(U.req, booking('BKG-BEN-L4'));
+  const expired = await writeBooking(U.req, { ...(await bookingRow('BKG-BEN-L4')), state: 'expired', status: 'expired', claimStatus: 'expired' });
+  record('需求者讓預約過期照常成功，額度不變', expired.status === 200 && (await balance(AUTH)).available === 1000, outcome(expired));
 
-  console.log('--- 併發保留不超出額度 ---');
-  await Promise.all([writeBooking(U.req, booking('BKG-BEN-C1')), writeBooking(U.req, booking('BKG-BEN-C2'))]);
-  const concurrent = await balance(AUTH);
-  record('兩筆同時建立：保留總額不超過核定（可用額度不為負）', concurrent.reserved <= 1000 && concurrent.available >= 0
-    && (await reservedFor('BKG-BEN-C1')) + (await reservedFor('BKG-BEN-C2')) === 450, JSON.stringify(concurrent));
+  // 帳本函式保留給之後有車資時使用：直接呼叫確認仍然正確（保留取估算與可用額度較小者、不重複保留、釋放後歸零）
+  await writeBooking(U.req, booking('BKG-BEN-L5'));
+  const sql1 = async (q) => (await admin.query(q)).rows[0];
+  const reserved1 = Number((await sql1(`select app.reserve_booking_benefit('BKG-BEN-L5', 'direct_test') as n`)).n);
+  const reserved2 = Number((await sql1(`select app.reserve_booking_benefit('BKG-BEN-L5', 'direct_test') as n`)).n);
+  record('保留函式仍可用：保留估算金額、不重複保留', reserved1 === 450 && reserved2 === 0 && (await reservedFor('BKG-BEN-L5')) === 450, `${reserved1} / ${reserved2}`);
+  await admin.query(`select app.release_booking_benefit('BKG-BEN-L5', 'direct_test')`);
+  await admin.query(`select app.release_booking_benefit('BKG-BEN-L5', 'direct_test')`);
+  record('釋放函式仍可用：釋放後歸零、重複釋放不出錯', (await reservedFor('BKG-BEN-L5')) === 0 && (await balance(AUTH)).available === 1000);
 
-  console.log('--- 不受理釋放、完成結算 ---');
   await call(claimFn.handler, 'POST', U.dsp, { bookingId: 'BKG-BEN-L2', organizationId: ORG });
   const rejected = await writeBooking(U.dsp, { ...(await bookingRow('BKG-BEN-L2')), state: 'rejected', status: 'rejected', claimStatus: 'rejected' });
-  record('承接機構不受理後釋放額度', rejected.status === 200 && (await reservedFor('BKG-BEN-L2')) === 0, outcome(rejected));
+  record('承接機構婉拒照常成功', rejected.status === 200, outcome(rejected));
 
   await call(claimFn.handler, 'POST', U.dsp, { bookingId: 'BKG-BEN-L3', organizationId: ORG });
   const TRIP = 'TRP-BEN-L3';
@@ -261,15 +262,13 @@ function booking(id, extra = {}) {
   const proof = await call(executeFn.handler, 'POST', U.drv, F.addProof(await tripState(), U.drv, new Date().toISOString()).request);
   const settledRow = (await admin.query(
     `select coalesce(sum(settled_delta), 0) as s from benefit_ledger where booking_id = 'BKG-BEN-L3'`)).rows[0];
-  record('行程完成後保留額度轉為已結算（100）', proof.status === 200 && proof.data.status === 'completed'
-    && (await reservedFor('BKG-BEN-L3')) === 0 && Number(settledRow.s) === 100, outcome(proof));
+  record('行程完成照常，不結算額度', proof.status === 200 && proof.data.status === 'completed' && Number(settledRow.s) === 0, outcome(proof));
   const undo = await call(executeFn.handler, 'POST', U.drv, F.undoStep(await tripState(), U.drv, new Date().toISOString()).request);
-  record('完成後修正（返回上一步）時結算回轉為保留', undo.status === 200 && (await reservedFor('BKG-BEN-L3')) === 100
-    && (await balance(AUTH)).settled === 0, outcome(undo));
+  record('完成後修正（返回上一步）照常，額度不變', undo.status === 200 && (await balance(AUTH)).settled === 0 && (await balance(AUTH)).reserved === 0, outcome(undo));
+  const noLedger = (await admin.query(`select count(*)::int n from benefit_ledger where booking_id is not null and booking_id <> 'BKG-BEN-L5'`)).rows[0].n;
+  record('經端點操作的預約在帳本沒有任何保留或結算紀錄', noLedger === 0, `n=${noLedger}`);
 
-  console.log('--- 撤銷、調整與權限 ---');
-  const revokeBusy = await authCall(U.dsp, { action: 'revoke', id: AUTH, organizationId: ORG, reason: '合成撤銷' });
-  record('仍有保留額度時不能撤銷', revokeBusy.status === 400, outcome(revokeBusy));
+  console.log('--- 調整、撤銷與權限 ---');
   const bal = await balance(AUTH);
   const tooLow = await authCall(U.dsp, { action: 'adjust', id: AUTH, organizationId: ORG, amount: -(1000 - bal.reserved - bal.settled + 1), reason: '合成調降測試' });
   record('調整後不能低於已保留＋已結算', tooLow.status === 400, outcome(tooLow));
@@ -286,11 +285,11 @@ function booking(id, extra = {}) {
   const reqLoad2 = await load(U.req);
   const req2Load2 = await load(U.req2);
   record('需求者讀得到自己服務對象的核定與帳本', (reqLoad2.data.collections.benefitAuthorizations || []).some((a) => a.id === AUTH)
-    && (reqLoad2.data.collections.benefitLedger || []).some((l) => l.authorizationId === AUTH && l.entryType === 'reserve'));
+    && (reqLoad2.data.collections.benefitLedger || []).some((l) => l.authorizationId === AUTH && l.entryType === 'adjustment'));
   record('其他需求者與其他機構讀不到', !(req2Load2.data.collections.benefitAuthorizations || []).length
     && !((await load(U.dspB)).data.collections.benefitLedger || []).length);
-  const ledgerRow = (reqLoad2.data.collections.benefitLedger || []).find((l) => l.entryType === 'reserve');
-  record('帳本記錄保留時使用的規則版本', ledgerRow && Boolean(ledgerRow.rulesetId) && typeof ledgerRow.amount === 'number');
+  const revoked = await authCall(U.dsp, { action: 'revoke', id: AUTH, organizationId: ORG, reason: '合成撤銷' });
+  record('沒有保留額度時可以撤銷核定', revoked.status === 200, outcome(revoked));
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n結果：${results.length - failed.length} 通過 / ${failed.length} 失敗`);
