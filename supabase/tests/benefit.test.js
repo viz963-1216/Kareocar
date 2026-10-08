@@ -341,6 +341,53 @@ function booking(id, extra = {}) {
   const revoked = await authCall(U.dsp, { action: 'revoke', id: AUTH, organizationId: ORG, reason: '合成撤銷' });
   record('沒有保留額度時可以撤銷核定', revoked.status === 200, outcome(revoked));
 
+  console.log('--- 承接機構改變、重新試算（#102）---');
+  const viewOf2 = async (userId, id) => {
+    const bk = ((await load(userId)).data.collections.bookings || []).find((x) => x.id === id);
+    return bk ? bk.benefitView : undefined;
+  };
+  await writeBooking(U.req, booking('BKG-BEN-MOVE', { pickupDate: '2099-04-01' }));
+  record('（前提）接案前', (await viewOf2(U.req, 'BKG-BEN-MOVE')).state === 'pre_claim');
+  await call(claimFn.handler, 'POST', U.dsp, { bookingId: 'BKG-BEN-MOVE', organizationId: ORG });
+  record('長照特約機構接案：需求者看到「長照特約」', (await viewOf2(U.req, 'BKG-BEN-MOVE')).state === 'ltc_contracted');
+  const dspView = await viewOf2(U.dsp, 'BKG-BEN-MOVE');
+  record('承接機構的調度看到同樣的補助資訊', dspView && dspView.state === 'ltc_contracted' && dspView.estimatedSubsidy === 450, JSON.stringify(dspView));
+  record('其他機構看不到這筆預約的補助資訊', (await viewOf2(U.dspB, 'BKG-BEN-MOVE')) === undefined);
+  const moveRow = await bookingRow('BKG-BEN-MOVE');
+  const releasedMove = await writeBooking(U.dsp, { ...moveRow, state: 'open', claimStatus: 'open', status: 'open', organizationId: null, claimedByUserId: null, claimedAt: null });
+  record('退回需求池：回到「接案前」', releasedMove.status === 200 && (await viewOf2(U.req, 'BKG-BEN-MOVE')).state === 'pre_claim', outcome(releasedMove));
+  const reclaim = await call(claimFn.handler, 'POST', U.dspB, { bookingId: 'BKG-BEN-MOVE', organizationId: ORG_B });
+  record('非長照特約機構重新接案：需求者看到「不是長照特約」', reclaim.status === 200 && (await viewOf2(U.req, 'BKG-BEN-MOVE')).state === 'not_ltc', outcome(reclaim));
+  record('原承接機構退回後看不到這筆預約', (await viewOf2(U.dsp, 'BKG-BEN-MOVE')) === undefined);
+
+  // 承接機構替服務對象建立的預約（需求者在 RLS 下改不到）也要更新
+  const opsBooking = await writeBooking(U.dsp, booking('BKG-BEN-OPS', { requestedByUserId: null, state: 'claimed', claimStatus: 'claimed',
+    status: 'claimed', organizationId: ORG, pickupDate: '2099-05-01' }));
+  record('（前提）承接機構替服務對象建立預約', opsBooking.status === 200, outcome(opsBooking));
+  const benefitOf = async (id) => (await bookingRow(id)).serverComputed.benefit;
+  // 前面「完成後修正」把行程改回進行中；這裡把它標回已完成，當作已完成的預約
+  await admin.query(`update app_state set data = jsonb_set(data, '{status}', '"completed"') where collection = 'trips' and id = $1`, [TRIP]);
+  const before = { L3: await benefitOf('BKG-BEN-L3'), L4: await benefitOf('BKG-BEN-L4') };
+  const reassessed = await assess(U.req, { recipientId: RECIPIENT, facts: { cmsLevel: 1 } });
+  const refreshed = (reassessed.data && reassessed.data.refreshedBookingIds) || [];
+  record('重新試算：回傳更新了哪些預約', reassessed.status === 200 && ['BKG-BEN-OPEN', 'BKG-BEN-MOVE', 'BKG-BEN-OPS', 'BKG-BEN-2'].every((id) => refreshed.includes(id)),
+    JSON.stringify(refreshed));
+  const newId = reassessed.data.assessment.id;
+  const opsB = await benefitOf('BKG-BEN-OPS');
+  record('還沒完成的預約改用新的試算（含承接機構建立的）', opsB.status === 'not_eligible' && opsB.sourceAssessmentId === newId
+    && (await benefitOf('BKG-BEN-OPEN')).sourceAssessmentId === newId, JSON.stringify({ status: opsB.status, src: opsB.sourceAssessmentId }));
+  record('報價快照裡的補助也一起更新', ((await bookingRow('BKG-BEN-OPEN')).commercialSnapshots || []).every((x) => !x.benefit || x.benefit.sourceAssessmentId === newId));
+  record('需求者看到更新後的狀態（不符合）', (await viewOf2(U.req, 'BKG-BEN-OPEN')).state === 'not_eligible');
+  record('承接機構看到它建立的預約也更新了', (await viewOf2(U.dsp, 'BKG-BEN-OPS')).state === 'not_eligible');
+  record('已完成的預約保留原樣', !refreshed.includes('BKG-BEN-L3') && JSON.stringify(await benefitOf('BKG-BEN-L3')) === JSON.stringify(before.L3));
+  record('已過期的預約保留原樣', !refreshed.includes('BKG-BEN-L4') && JSON.stringify(await benefitOf('BKG-BEN-L4')) === JSON.stringify(before.L4));
+  const forgedSet = await db.withUser(U.req2, (c) => c.query(`select app.set_booking_benefit('BKG-BEN-OPS', '{"estimatedSubsidy":99999}'::jsonb)`))
+    .then(() => 'allowed', (e) => e.code);
+  record('[資料庫層] 不是服務對象建立者，不能改預約的補助估算', forgedSet === '42501', forgedSet);
+  const forgedList = await db.withUser(U.dsp, (c) => c.query(`select * from app.recipient_refreshable_bookings($1)`, [RECIPIENT]))
+    .then(() => 'allowed', (e) => e.code);
+  record('[資料庫層] 承接機構不能替服務對象觸發更新', forgedList === '42501', forgedList);
+
   const failed = results.filter((r) => !r.ok);
   console.log(`\n結果：${results.length - failed.length} 通過 / ${failed.length} 失敗`);
   process.exitCode = failed.length ? 1 : 0;

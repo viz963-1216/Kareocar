@@ -8,7 +8,8 @@
  *
  * 依目前唯一一個 approved 規則版本計算，記錄使用的版本 ID。只有建立這位服務對象的人或平台
  * 超級管理者可以試算；承接機構只能讀（#100）。地區由伺服器從服務對象住址判斷，不採用前端
- * 送來的縣市。之後建立預約時，伺服器用最近一次試算的資料（不是金額）依預約日期重新估算。
+ * 送來的縣市。之後建立預約時，伺服器用最近一次試算的資料（不是金額）依預約日期重新估算；
+ * 重新試算時，這位服務對象還沒完成的預約也一起更新（#102）。
  */
 
 const crypto = require('crypto');
@@ -51,8 +52,16 @@ exports.handler = (event) => runAuthenticated(event, async (client, body, claims
     organizationId: optionalText(body.organizationId, 80) || null, createdByUserId: claims.userId
   });
   await client.query('select app.record_benefit_assessment($1::jsonb)', [JSON.stringify(assessment)]);
+  // 重新試算後，這位服務對象還沒完成的預約改用新的試算估算；已完成的保留原樣（#102，0021）
+  const pending = (await client.query('select id, pickup_date from app.recipient_refreshable_bookings($1)', [recipientId])).rows;
+  const refreshedBookingIds = [];
+  for (const b of pending) {
+    const estimate = await benefit.bookingBenefit(client, { recipientId, pickupDate: b.pickup_date });
+    const done = (await client.query('select app.set_booking_benefit($1, $2::jsonb) as ok', [b.id, JSON.stringify(estimate)])).rows[0].ok;
+    if (done) refreshedBookingIds.push(b.id);
+  }
   await writeAudit(client, { eventType: 'benefit.assessment.created', actorUserId: claims.userId,
     entityType: 'benefit_assessment', entityId: assessment.id,
-    details: { recipientId, status: assessment.status, rulesetId: assessment.rulesetId } });
-  return { assessment };
+    details: { recipientId, status: assessment.status, rulesetId: assessment.rulesetId, refreshedBookingIds } });
+  return { assessment, refreshedBookingIds };
 });
