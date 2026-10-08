@@ -794,6 +794,25 @@ async function flowPublicSettings(cdp, baseUrl) {
     await login(page, U.root);
     await goView(page, 'platform-organizations');
     await waitFor(page, "!!document.getElementById('platformPublicSettings')&&!document.getElementById('savePublicSettingsBtn').disabled", '平台設定讀到目前的登入方式與客服聯絡');
+    {
+      // 背景重新載入資料時，畫面保留正在輸入的欄位（焦點、游標、內容）與捲動位置
+      const loadsBefore = page.stateLoads.length;
+      await evaluate(page, "(()=>{const e=document.getElementById('supportLineUrlInput');e.focus({preventScroll:true});e.value='https://typing-in-progress';e.dispatchEvent(new Event('input',{bubbles:true}));e.setSelectionRange(3,3);return true;})()");
+      // 捲到底，記下欄位在畫面上的位置（使用者看到的位置）
+      const y = await evaluate(page, "(()=>{window.scrollTo({top:document.documentElement.scrollHeight,behavior:'instant'});return Math.round(window.scrollY);})()");
+      const fieldTop = await evaluate(page, "Math.round(document.getElementById('supportLineUrlInput').getBoundingClientRect().top)");
+      // 模擬使用者切回這個分頁（無頭瀏覽器的分頁可見狀態不一定，明確設成 visible）
+      await evaluate(page, "(()=>{Object.defineProperty(document,'visibilityState',{value:'visible',configurable:true});document.dispatchEvent(new Event('visibilitychange'));return true;})()");
+      const started = Date.now();
+      while (page.stateLoads.length <= loadsBefore && Date.now() - started < 15000) await sleep(150);
+      await sleep(800);
+      const after = await evaluate(page, "(()=>{const e=document.activeElement;return {id:e&&e.id,value:e&&e.value,caret:e&&e.selectionStart,y:Math.round(window.scrollY),top:e?Math.round(e.getBoundingClientRect().top):null};})()");
+      record(S, '背景重新載入資料後：正在輸入的欄位保留焦點、游標與內容，捲動位置不跳回頂端',
+        page.stateLoads.length > loadsBefore && after.id === 'supportLineUrlInput' && after.value === 'https://typing-in-progress'
+          // 欄位在畫面上的位置不跳（上方區塊變高變矮時，瀏覽器的捲動錨定會微調捲動值，所以比畫面位置）
+          && after.caret === 3 && y > 0 && Math.abs(after.top - fieldTop) <= 20,
+        J({ y, fieldTop, after, loads: page.stateLoads.length - loadsBefore }));
+    }
     await evaluate(page, "(()=>{const c=document.getElementById('loginMethodFacebookInput');if(!c.checked)c.click();return true;})()");
     await typeConfirmed(page, '#supportLineUrlInput', line);
     await typeConfirmed(page, '#supportEmailInput', email);
