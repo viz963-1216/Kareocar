@@ -50,7 +50,8 @@ ok('預約：新關聯的必須屬於此機構且可排車；原本就有的不�
   throwsCode(() => sched({ record: rec, scope: scope({ bookings: new Map([['B1', { organization_id: 'ORG-B', state: 'claimed' }]]) }) }), 'VALIDATION_ERROR', /不屬於/);
   throwsCode(() => sched({ record: rec, scope: scope({ bookings: new Map([['B1', { organization_id: ORG, state: 'cancelled' }]]) }) }), 'VALIDATION_ERROR', /不能排車/);
   assert.ok(sched({ record: rec, scope: scope({ bookings: new Map([['B1', { organization_id: ORG, state: 'claimed' }]]) }) }));
-  assert.ok(sched({ record: rec, scope: scope({ bookings: new Map([['B1', { organization_id: 'ORG-B', state: 'claimed', leg_organization_ids: [ORG] }]]) }) }));
+  // #110：平台指定機構已移除，被指定的機構不能把別家的預約排進自己的行程
+  throwsCode(() => sched({ record: rec, scope: scope({ bookings: new Map([['B1', { organization_id: 'ORG-B', state: 'claimed', leg_organization_ids: [ORG] }]]) }) }), 'VALIDATION_ERROR', /不屬於/);
   assert.ok(run({ record: rec, existing: { data: rec } }));
 });
 console.log(`trip-rules: ${pass} passed`);

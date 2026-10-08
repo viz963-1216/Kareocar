@@ -94,7 +94,7 @@ function checkTripWrite({ record, existing, organizationId, canManage, scope, vi
   for (const id of bookingIdsOf(out)) {
     if (had.has(id)) continue;
     const b = scope.bookings.get(id);
-    const owned = b && (b.organization_id === organizationId || (b.leg_organization_ids || []).includes(organizationId));
+    const owned = b && b.organization_id === organizationId;
     if (!owned) throw ruleError('VALIDATION_ERROR', `預約 ${id} 不屬於此機構，不能排進行程`);
     if (!SCHEDULABLE_BOOKING_STATES.has(b.state)) throw ruleError('VALIDATION_ERROR', `預約 ${id} 目前不能排車（${b.state || 'open'}）`);
   }

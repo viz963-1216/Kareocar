@@ -80,4 +80,15 @@ ok('伺服器欄位沿用資料庫，前端送的被忽略', () => {
 ok('不合法的狀態被拒', () => {
   throwsCode(() => checkBookingWrite({ actorUserId: ME, record: { id: 'B1', state: 'hacked' }, existing: null, roles: none }), 'VALIDATION_ERROR');
 });
+ok('#110：一般寫入不能指定某一段由哪家機構負責（新增與修改、任何角色）', () => {
+  const ASSIGN = ['assignedOrganizationId', 'assignedAt', 'assignedByUserId'];
+  const leg = { id: 'L1', direction: 'outbound', assignedOrganizationId: 'ORG-X', assignedAt: '2026-10-08T00:00:00Z', assignedByUserId: ME };
+  const created = checkBookingWrite({ actorUserId: ME, record: { id: 'B1', state: 'open', legs: [leg] }, existing: null, roles: none });
+  assert.ok(ASSIGN.every((k) => !(k in created.record.legs[0])));
+  const stored = existing('claimed', { legs: [{ id: 'L1', direction: 'outbound', status: 'pending', assignedOrganizationId: 'ORG-OLD' }] }, 'ORG-A');
+  for (const roles of [{ ...none, ownsExisting: true }, { ...none, opsOfExisting: true }, { ...none, admin: true }]) {
+    const r = checkBookingWrite({ actorUserId: ME, record: { id: 'B1', state: 'claimed', legs: [leg] }, existing: stored, roles });
+    assert.ok(ASSIGN.every((k) => !(k in r.record.legs[0])), JSON.stringify(r.record.legs[0]));
+  }
+});
 console.log(`booking-rules: ${pass} passed`);

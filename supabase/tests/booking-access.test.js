@@ -337,6 +337,17 @@ async function newClaimed(id) {
     status: 'claimed', organizationId: ORG_A, recipientId: 'CR-ACC-AUNT' }));
   record('調度員掛上本機構沒服務過的服務對象：被拒、沒有寫入', opsNever.status === 403 && !(await row('bookings', 'BKG-ACC-R13')), outcome(opsNever));
 
+  console.log('--- 平台指定機構已移除（#110）---');
+  const legWith = (id) => ({ ...F.outboundLeg(id), assignedOrganizationId: ORG_B, assignedAt: new Date().toISOString(), assignedByUserId: U.req });
+  const assigned = (r) => (r.data.legs || []).some((l) => 'assignedOrganizationId' in l || 'assignedAt' in l || 'assignedByUserId' in l);
+  const created110 = await writeBooking(U.req, booking('BKG-ACC-110', { legs: [legWith('BKG-ACC-110')] }));
+  record('需求者建立預約時送來的指定機構欄位不存', created110.status === 200 && !assigned(await row('bookings', 'BKG-ACC-110')), outcome(created110));
+  await claim(U.dspA, 'BKG-ACC-110', ORG_A);
+  const opsAssign = await writeBooking(U.dspA, { ...(await row('bookings', 'BKG-ACC-110')).data, legs: [legWith('BKG-ACC-110')] });
+  record('承接機構的調度也不能經一般寫入把某一段指定給別家', opsAssign.status === 200 && !assigned(await row('bookings', 'BKG-ACC-110')), outcome(opsAssign));
+  const bLoad110 = await load(U.dspB);
+  record('被寫入指定的機構讀不到這筆預約', !sees(bLoad110, 'bookings', 'BKG-ACC-110'));
+
   const failed = results.filter((r) => !r.ok);
   console.log(`\n結果：${results.length - failed.length} 通過 / ${failed.length} 失敗`);
   process.exitCode = failed.length ? 1 : 0;
