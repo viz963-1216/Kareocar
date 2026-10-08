@@ -771,10 +771,12 @@ async function flowPublicSettings(cdp, baseUrl) {
       const started = Date.now();
       while (page.stateLoads.length <= loadsBefore && Date.now() - started < 15000) await sleep(150);
       await sleep(800);
-      const after = await evaluate(page, "(()=>{const e=document.activeElement;return {id:e&&e.id,value:e&&e.value,caret:e&&e.selectionStart,y:Math.round(window.scrollY)};})()");
+      const after = await evaluate(page, "(()=>{const e=document.activeElement;return {id:e&&e.id,value:e&&e.value,caret:e&&e.selectionStart,y:Math.round(window.scrollY),atBottom:window.scrollY>=document.documentElement.scrollHeight-window.innerHeight-2};})()");
       record(S, '背景重新載入資料後：正在輸入的欄位保留焦點、游標與內容，捲動位置不跳回頂端',
         page.stateLoads.length > loadsBefore && after.id === 'supportLineUrlInput' && after.value === 'https://typing-in-progress'
-          && after.caret === 3 && y > 0 && Math.abs(after.y - y) <= 5, J({ y, after, loads: page.stateLoads.length - loadsBefore }));
+          // 原本捲到底：重新載入後頁面可能短一點點，仍在最底部就算沒跳走
+          && after.caret === 3 && y > 0 && (Math.abs(after.y - y) <= 5 || (after.atBottom && after.y > y / 2)),
+        J({ y, after, loads: page.stateLoads.length - loadsBefore }));
     }
     await evaluate(page, "(()=>{const c=document.getElementById('loginMethodFacebookInput');if(!c.checked)c.click();return true;})()");
     await typeInto(page, '#supportLineUrlInput', line);
