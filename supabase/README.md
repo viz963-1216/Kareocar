@@ -26,6 +26,7 @@ API 端點與各項業務規則。部署流程與上線檢查清單見 [DEPLOYME
 | `migrations/0017_requester_hub_name.sql` | 系統機構 ORG-REQ-001 改名「需求者群組」（畫面用語統一，#83） |
 | `migrations/0018_anonymize_remaining.sql` | 匿名化補齊（#89）：預約去程／回程的地點只留縣市與行政區、執行快照的司機只留 ID、預約與行程的通知內容、到期服務對象的補助試算資料 |
 | `migrations/0019_keep_active_recipients.sql` | 到期匿名化不清掉還在使用的帳號的服務對象（從沒預約的，只有建立的帳號停用或不存在才清） |
+| `migrations/0020_ltc_contracts.sql` | 長照特約 `ltc_contracts`（機構、縣市、契約字號、有效期間，可多筆）；只能經 `app.save_ltc_contract`／`app.remove_ltc_contract`（平台超級管理者、寫稽核）；`app.ltc_contract_active(機構, 縣市, 日期)` |
 | `rollback/<名稱>.down.sql` | 每支 migration 的回復檔（`0001` 的回復會刪除所有資料，只用在空資料庫或 Staging 重建） |
 | `migrations_archive/` | 壓縮成 baseline 之前的 0001–0008，只供查閱，不再套用 |
 | `seed-test-org.sql` | 建立測試機構與負責人的一次性腳本（`tests/seed-test-org.test.sh` 驗證） |
@@ -167,6 +168,7 @@ SELECT；寫入只經檢查身分與狀態的函式，連有漏洞的 handler �
 | `POST /api/v2/trip-execute` | 司機執行自己的行程 |
 | `POST /api/v2/benefit-ruleset`、`benefit-assess`、`benefit-authorization` | 補助規則、試算、正式核定 |
 | `POST /api/v2/consent` | 同意個資告知與服務條款 |
+| `POST /api/v2/ltc-contracts` | 長照特約的新增、修改、移除（平台超級管理者）；讀取走 state-load 的 `ltcContracts`（平台管理者看全部，機構負責人、調度員看自己機構的） |
 | `POST /api/v2/platform-settings` | 保存期限、條款版本、登入方式開關、客服聯絡、立即匿名化（平台管理者） |
 | `POST /api/v2/account-deletion` | 刪除帳號申請與審核 |
 | `POST /api/v2/client-error` | 前端未處理錯誤轉送 Sentry（不需登入，有大小與頻率限制） |

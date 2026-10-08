@@ -26,6 +26,7 @@ const admin = new Pool({ host, port: Number(process.env.PGPORT), database: 'care
 const db = require('../../netlify/functions/_db');
 const applyFn = require('../../netlify/functions/v2-organization-apply');
 const reviewFn = require('../../netlify/functions/v2-organization-review');
+const ltcFn = require('../../netlify/functions/v2-ltc-contracts');
 const loadFn = require('../../netlify/functions/v2-state-load');
 const bookingWriteFn = require('../../netlify/functions/v2-booking-write');
 const claimFn = require('../../netlify/functions/v2-claim-booking');
@@ -180,6 +181,46 @@ function openBooking(id) {
   record('需求者組織不能被審核', hub.status === 404, outcome(hub));
   const allReviews = await admin.query(`select count(*)::int n from audit_events where event_type = 'organization.reviewed'`);
   record('每一次成功的審核決定都有一筆稽核紀錄（核准、停權、恢復、駁回 = 4）', allReviews.rows[0].n === 4, `n=${allReviews.rows[0].n}`);
+
+  console.log('--- 長照特約（#99）---');
+  const ltc = (userId, body) => call(ltcFn.handler, 'POST', userId, body);
+  const contract = (extra = {}) => ({ organizationId: org1, city: '新北市', contractNo: '合成新北長照特約 115-001',
+    validFrom: '2026-01-01', validTo: '2027-12-31', ...extra });
+  const ownerSave = await ltc(U.app1, { action: 'save', contract: contract() });
+  record('機構負責人不能自己標記長照特約', ownerSave.status === 403, outcome(ownerSave));
+  const directInsert = await db.withUser(U.root, (c) => c.query(
+    `insert into ltc_contracts (id, organization_id, city, contract_no, valid_from) values ('LTC-X', $1, '新北市', 'X', '2026-01-01')`, [org1]))
+    .then(() => 'allowed', (e) => e.code);
+  record('[資料庫層] 連平台管理者都不能直接寫，只能經受控函式', directInsert === '42501', directInsert);
+  const badCity = await ltc(U.root, { action: 'save', contract: contract({ city: '火星市' }) });
+  const noNo = await ltc(U.root, { action: 'save', contract: contract({ contractNo: '' }) });
+  const badRange = await ltc(U.root, { action: 'save', contract: contract({ validFrom: '2027-01-01', validTo: '2026-01-01' }) });
+  const hubContract = await ltc(U.root, { action: 'save', contract: contract({ organizationId: 'ORG-REQ-001' }) });
+  record('縣市不合法、沒有契約字號、期間顛倒、需求者群組：都被拒', [badCity, noNo, badRange, hubContract].every((r) => r.status === 400),
+    [badCity, noNo, badRange, hubContract].map(outcome).join(' / '));
+  const saved1 = await ltc(U.root, { action: 'save', contract: contract({ city: '臺北市', contractNo: '合成北市特約' }) });
+  const saved2 = await ltc(U.root, { action: 'save', contract: contract() });
+  const LTC2 = saved2.data && saved2.data.id;
+  record('平台管理者可以新增多筆（臺北市寫成台北市也認得）', saved1.status === 200 && saved2.status === 200 && Boolean(LTC2)
+    && (await admin.query(`select count(*)::int n from ltc_contracts where organization_id = $1`, [org1])).rows[0].n === 2, `${outcome(saved1)} / ${outcome(saved2)}`);
+  const active = async (orgId, city, date) => (await admin.query('select app.ltc_contract_active($1, $2, $3::date) as ok', [orgId, city, date])).rows[0].ok;
+  record('有效判斷：縣市與日期都在範圍內才算', await active(org1, '新北市', '2026-10-08') === true && await active(org1, '臺北市', '2026-10-08') === true
+    && await active(org1, '桃園市', '2026-10-08') === false && await active(org1, '新北市', '2028-01-01') === false
+    && await active(org1, '新北市', '2025-12-31') === false && await active('ORG-REQ-001', '新北市', '2026-10-08') === false);
+  const ownerLoad = await load(U.app1);
+  const ownerSees = (ownerLoad.data.collections.ltcContracts || []).filter((x) => x.organizationId === org1);
+  record('機構負責人看得到自己機構的長照特約', ownerSees.length === 2 && ownerSees.some((x) => x.city === '新北市' && x.contractNo === '合成新北長照特約 115-001'));
+  record('其他人看不到', !((await load(U.app2)).data.collections.ltcContracts || []).length && !((await load(U.req)).data.collections.ltcContracts || []).length);
+  const edited = await ltc(U.root, { action: 'save', contract: { ...contract({ validTo: '2026-06-30' }), id: LTC2 } });
+  record('修改有效期間後，過期就不算數', edited.status === 200 && await active(org1, '新北市', '2026-10-08') === false, outcome(edited));
+  const ownerRemove = await ltc(U.app1, { action: 'remove', id: LTC2 });
+  const removed = await ltc(U.root, { action: 'remove', id: LTC2 });
+  record('只有平台管理者能移除', ownerRemove.status === 403 && removed.status === 200
+    && (await admin.query(`select count(*)::int n from ltc_contracts where id = $1`, [LTC2])).rows[0].n === 0, `${outcome(ownerRemove)} / ${outcome(removed)}`);
+  const ltcAudits = (await admin.query(`select event_type, details from audit_events where event_type like 'ltc_contract.%' order by created_at`)).rows;
+  record('每次新增、修改、移除都寫稽核紀錄（3 次新增修改 + 1 次移除）', ltcAudits.length === 4
+    && ltcAudits.filter((a) => a.event_type === 'ltc_contract.saved').length === 3 && ltcAudits.some((a) => a.event_type === 'ltc_contract.removed'),
+    JSON.stringify(ltcAudits.map((a) => a.event_type)));
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n結果：${results.length - failed.length} 通過 / ${failed.length} 失敗`);

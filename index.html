@@ -419,6 +419,20 @@
   <div class="modal-actions"><button type="button" class="btn secondary" data-close="bookingActionModal">取消</button><button class="btn danger" id="confirmBookingActionBtn" type="button">確認</button></div>
 </div></div>
 
+<div class="modal" id="ltcContractsModal"><div class="modal-panel">
+  <div class="modal-head"><div><h3>長照特約</h3><p class="small muted" id="ltcContractsOrgName"></p></div><button class="icon-btn" data-close="ltcContractsModal" type="button" aria-label="關閉視窗">×</button></div>
+  <p class="small muted">看過機構與縣市政府簽訂的長照交通接送特約契約後再標記。過了有效期間就不算長照特約。</p>
+  <input id="ltcContractId" type="hidden" /><input id="ltcContractOrgId" type="hidden" />
+  <div class="list" id="ltcContractsList"></div>
+  <div class="form-2">
+    <div class="form-field"><label for="ltcCityInput">特約縣市</label><select id="ltcCityInput"><option value="台北市">台北市</option><option value="新北市">新北市</option><option value="桃園市">桃園市</option><option value="台中市">台中市</option><option value="台南市">台南市</option><option value="高雄市">高雄市</option><option value="基隆市">基隆市</option><option value="新竹市">新竹市</option><option value="嘉義市">嘉義市</option><option value="新竹縣">新竹縣</option><option value="苗栗縣">苗栗縣</option><option value="彰化縣">彰化縣</option><option value="南投縣">南投縣</option><option value="雲林縣">雲林縣</option><option value="嘉義縣">嘉義縣</option><option value="屏東縣">屏東縣</option><option value="宜蘭縣">宜蘭縣</option><option value="花蓮縣">花蓮縣</option><option value="台東縣">台東縣</option><option value="澎湖縣">澎湖縣</option><option value="金門縣">金門縣</option><option value="連江縣">連江縣</option></select></div>
+    <div class="form-field"><label for="ltcContractNoInput">契約字號</label><input id="ltcContractNoInput" maxlength="100" placeholder="例如：新北社長字第 115001 號" /></div>
+    <div class="form-field"><label for="ltcValidFromInput">生效日期</label><input id="ltcValidFromInput" type="date" /></div>
+    <div class="form-field"><label for="ltcValidToInput">到期日期 <span class="field-optional">選填</span></label><input id="ltcValidToInput" type="date" /></div>
+  </div>
+  <div class="modal-actions"><button type="button" class="btn secondary" data-close="ltcContractsModal">關閉</button><button class="btn primary" id="saveLtcContractBtn" type="button">新增</button></div>
+</div></div>
+
 <div class="modal" id="bookingHistoryModal"><div class="modal-panel">
   <div class="modal-head"><div><h3>預約異動紀錄</h3><p class="small muted" id="bookingHistoryContext">預約生命週期紀錄</p></div><button class="icon-btn" data-close="bookingHistoryModal" type="button" aria-label="關閉視窗">×</button></div>
   <div class="list" id="bookingHistoryList"></div>

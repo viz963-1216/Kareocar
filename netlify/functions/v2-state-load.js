@@ -172,6 +172,18 @@ exports.handler = async (event) => {
         });
       }
 
+      // 長照特約（#99）：平台管理者看全部，機構的負責人、調度員看自己機構的（ltc_contracts_read 政策）
+      const contracts = (await client.query(
+        `select id, organization_id, city, contract_no, to_char(valid_from, 'YYYY-MM-DD') as valid_from,
+                to_char(valid_to, 'YYYY-MM-DD') as valid_to, updated_at from ltc_contracts
+          order by organization_id, city, valid_from`)).rows;
+      for (const c of contracts) {
+        push('ltcContracts', {
+          id: c.id, organizationId: c.organization_id, city: c.city, contractNo: c.contract_no,
+          validFrom: c.valid_from || null, validTo: c.valid_to || null, updatedAt: c.updated_at
+        });
+      }
+
       // 需求者看得到承接自己預約的機構名稱（只有名稱）。自己是成員的機構上面已經有完整資料。
       // active: false 讓前端不會把它當成可切換或可承接的組織，只用來顯示名稱。
       const known = new Set(orgs.map((o) => o.id));
