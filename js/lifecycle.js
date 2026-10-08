@@ -80,9 +80,9 @@
     return legsOf(booking).filter((l) => l.status === BOOKING_LEG_STATUS.PENDING)
       .sort((a, b) => (Number(a.sequence) || 0) - (Number(b.sequence) || 0))[0] || null;
   }
-  /** 這個 leg 由哪個機構負責：平台指定的機構、已排車的機構，否則是預約的承接機構。 */
+  /** 這個 leg 由哪個機構負責：已排車的機構，否則是預約的承接機構（平台指定機構已移除，#110）。 */
   function legResponsibleOrganization(booking, leg) {
-    return (leg && (leg.assignedOrganizationId || leg.scheduledOrganizationId)) || (booking && booking.organizationId) || null;
+    return (leg && leg.scheduledOrganizationId) || (booking && booking.organizationId) || null;
   }
 
   /**

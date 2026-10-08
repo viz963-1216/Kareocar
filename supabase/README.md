@@ -28,6 +28,7 @@ API 端點與各項業務規則。部署流程與上線檢查清單見 [DEPLOYME
 | `migrations/0019_keep_active_recipients.sql` | 到期匿名化不清掉還在使用的帳號的服務對象（從沒預約的，只有建立的帳號停用或不存在才清） |
 | `migrations/0020_ltc_contracts.sql` | 長照特約 `ltc_contracts`（機構、縣市、契約字號、有效期間，可多筆）；只能經 `app.save_ltc_contract`／`app.remove_ltc_contract`（平台超級管理者、寫稽核）；`app.ltc_contract_active(機構, 縣市, 日期)` |
 | `migrations/0021_recipient_booking_benefit.sql` | 重新試算時更新預約的補助估算：`app.recipient_refreshable_bookings`（列出還沒完成的預約）、`app.set_booking_benefit`（寫入估算）；只有服務對象建立者與平台超級管理者，已取消／婉拒／過期或行程都已完成的不動 |
+| `migrations/0022_drop_leg_assignment.sql` | 清掉預約去程／回程上的平台指定機構欄位（功能移除，#110；跨機構排車改走需求池，ADR 0004）；只有資料清理 |
 | `rollback/<名稱>.down.sql` | 每支 migration 的回復檔（`0001` 的回復會刪除所有資料，只用在空資料庫或 Staging 重建） |
 | `migrations_archive/` | 壓縮成 baseline 之前的 0001–0008，只供查閱，不再套用 |
 | `seed-test-org.sql` | 建立測試機構與負責人的一次性腳本（`tests/seed-test-org.test.sh` 驗證） |

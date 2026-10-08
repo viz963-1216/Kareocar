@@ -130,10 +130,11 @@ ok('排車：已排的段、別家機構、公開中的預約、缺時間都不�
   assert.equal(L.scheduleBookingLeg(d, { tripId: 'T1', organizationId: 'ORG-A', at: AT }).ok, false);
   assert.equal(L.scheduleBookingLeg(c, { legId: 'NOPE', tripId: 'T1', organizationId: 'ORG-A', at: AT }).ok, false);
 });
-ok('排車：平台指定給其他機構的段，以指定的機構為準', () => {
+ok('排車：平台指定機構已移除（#110），殘留的指定欄位不影響負責機構', () => {
   const b = claimedBooking([legOf('B1', 'outbound', 1, { assignedOrganizationId: 'ORG-B' })]);
-  assert.equal(L.legResponsibleOrganization(b, b.legs[0]), 'ORG-B');
-  assert.equal(L.scheduleBookingLeg(b, { tripId: 'T1', organizationId: 'ORG-A', at: AT }).ok, false);
+  assert.equal(L.legResponsibleOrganization(b, b.legs[0]), 'ORG-A');
+  assert.equal(L.scheduleBookingLeg(b, { tripId: 'T1', organizationId: 'ORG-A', at: AT }).ok, true);
+  assert.equal(L.scheduleBookingLeg(b, { tripId: 'T1', organizationId: 'ORG-B', at: AT }).ok, false);
 });
 
 ok('排車狀態集合由這裡提供，伺服器規則與排車端點共用', () => {

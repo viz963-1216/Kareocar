@@ -37,6 +37,18 @@ const REQUESTER_LOCKED = [
   'tripType', 'passengerCount', 'wheelchairSlots', 'name', 'phone'
 ];
 
+// 「某一段由哪家機構負責」不能經一般寫入指定（#110；跨機構排車改走需求池，見 ADR 0004）
+const LEG_ASSIGNMENT_FIELDS = ['assignedOrganizationId', 'assignedAt', 'assignedByUserId'];
+function stripLegAssignment(out) {
+  if (!Array.isArray(out.legs)) return;
+  out.legs = out.legs.map((leg) => {
+    if (!leg || typeof leg !== 'object') return leg;
+    const next = { ...leg };
+    for (const k of LEG_ASSIGNMENT_FIELDS) delete next[k];
+    return next;
+  });
+}
+
 // 去程／回程的排車欄位只由排車 command（v2-schedule-trips）寫入，一般預約寫入一律沿用資料庫的值（ADR 0003）
 // 已排車的段不能被移除或改編號，否則排車紀錄會跟著消失
 function keepLegScheduling(out, before) {
@@ -110,6 +122,7 @@ function checkBookingWrite({ actorUserId, record, existing, roles }) {
     for (const k of ['cancelledAt', 'cancelledByUserId', 'cancelReasonCode', 'cancelReasonText', 'cancelledTripIds', 'previousOrganizationIds']) {
       delete out[k];
     }
+    stripLegAssignment(out);
     return { record: out, revoke: false };
   }
 
@@ -139,6 +152,7 @@ function checkBookingWrite({ actorUserId, record, existing, roles }) {
     if (k in before) out[k] = before[k]; else delete out[k];
   }
   keepLegScheduling(out, before);
+  stripLegAssignment(out);
   const revoke = Boolean(existing.organization_id) && REVOKE_STATES.has(toState);
   out.organizationId = revoke ? null : (existing.organization_id || null);
   if (revoke) {
