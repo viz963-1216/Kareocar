@@ -31,13 +31,17 @@
     ['claimed', 'scheduled', 'schedule', 'ops'],
     ['claimed', 'cancelled', 'cancel', 'owner'],
     ['partially_scheduled', 'scheduled', 'schedule', 'ops'],
+    ['scheduled', 'partially_scheduled', 'unschedule', 'ops'], // 調度取消行程：這趟的去程／回程退回待排車
     ['partially_scheduled', 'cancelled', 'cancel', 'owner'],
     ['scheduled', 'cancelled', 'cancel', 'owner']
   ].map((edge) => Object.freeze(edge)));
 
   // 這些動作有專用端點（v2-claim-booking、v2-cancel-booking、v2-schedule-trips），一般的預約寫入不接受。
-  // 排車只能走 command（ADR 0003），否則會寫出「已排車卻沒有行程」的預約
-  const DEDICATED_BOOKING_ACTIONS = Object.freeze(['claim', 'cancel', 'schedule']);
+  // 排車只能走 command（ADR 0003），否則會寫出「已排車卻沒有行程」的預約；
+  // 退回部分排車只在調度取消行程時由伺服器做（v2-trip-write），否則會寫出「待排車卻還掛著行程」的預約
+  const DEDICATED_BOOKING_ACTIONS = Object.freeze(['claim', 'cancel', 'schedule', 'unschedule']);
+  // 進入排車之後的預約狀態；只由排車 command 與取消行程改變
+  const BOOKING_SCHEDULING_STATES = Object.freeze(['partially_scheduled', 'scheduled']);
   // 各角色可以「不改狀態、只改內容」的狀態
   const BOOKING_EDITABLE = Object.freeze({
     owner: Object.freeze(['open', 'claimed']),
@@ -128,6 +132,37 @@
     return { ok: true, booking: next, leg, from, to };
   }
 
+  /**
+   * 調度取消一趟行程時，把排在這趟的去程／回程退回待排車（#76 決策「排好的退回部分排車」）。
+   * 不改傳入的物件。沒有排在這趟的預約回傳 changed: false。
+   *
+   * @returns {{ changed: false } | { changed: true, booking, from, to, legIds }}
+   */
+  function unscheduleTripLegs(booking, { tripId, at }) {
+    const onTrip = legsOf(booking).filter((l) => l.status === BOOKING_LEG_STATUS.SCHEDULED && l.tripId === tripId);
+    if (!booking || !tripId || !onTrip.length) return { changed: false };
+    const from = String(booking.state || '').trim() || 'open';
+    const next = JSON.parse(JSON.stringify(booking));
+    const ids = new Set(onTrip.map((l) => l.id));
+    for (const leg of legsOf(next)) {
+      if (!ids.has(leg.id)) continue;
+      leg.status = BOOKING_LEG_STATUS.PENDING;
+      leg.tripId = null;
+      leg.scheduledOrganizationId = null;
+      leg.scheduledAt = null;
+    }
+    const to = from === 'scheduled' ? (bookingTargets(from, 'unschedule')[0] || from) : from;
+    next.state = to;
+    next.status = to;
+    next.updatedAt = at;
+    if (to !== from) next.stateChangedAt = at;
+    next.scheduledAt = null;
+    next.version = Math.max(1, Number(next.version) || 1) + 1;
+    const firstScheduled = legsOf(next).find((l) => l.status === BOOKING_LEG_STATUS.SCHEDULED && l.tripId);
+    next.tripId = (firstScheduled && firstScheduled.tripId) || null;
+    return { changed: true, booking: next, from, to, legIds: [...ids] };
+  }
+
   const TRIP_STATUSES = Object.freeze(['scheduled', 'in_progress', 'interrupted', 'completed', 'cancelled', 'aborted']);
   // 一般流程（已開始的行程不能取消，要用中斷；結束的行程不能再改狀態）
   const TRIP_STATUS_TRANSITIONS = Object.freeze({
@@ -152,9 +187,9 @@
   }
 
   return Object.freeze({
-    BOOKING_STATES, BOOKING_EDGES, BOOKING_REVOKE_STATES,
+    BOOKING_STATES, BOOKING_EDGES, BOOKING_REVOKE_STATES, BOOKING_SCHEDULING_STATES,
     bookingTargets, bookingWriteTransitions,
-    BOOKING_LEG_STATUS, LEG_SCHEDULING_FIELDS, nextPendingLeg, legResponsibleOrganization, scheduleBookingLeg,
+    BOOKING_LEG_STATUS, LEG_SCHEDULING_FIELDS, nextPendingLeg, legResponsibleOrganization, scheduleBookingLeg, unscheduleTripLegs,
     TRIP_STATUSES, TRIP_STATUS_TRANSITIONS, TRIP_CORRECTION_TRANSITIONS,
     canTripTransition
   });

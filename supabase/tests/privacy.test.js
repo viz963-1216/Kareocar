@@ -175,9 +175,12 @@ function booking(id, extra = {}) {
   await event('careRecipientEvents', 'CREVT-PRV-OLD', {}, { recipientId: 'CR-PRV-OLD', eventType: 'updated', detail: '更新服務對象主檔',
     changes: [{ field: '手機', from: '0955666777', to: '0955666778' }] });
   // 從沒預約過的服務對象：建立超過保存期限才匿名化
-  const zero = recipient('CR-PRV-ZERO').record;
-  await admin.query(`insert into app_state (collection, id, owner_user_id, data, created_at) values ('careRecipients', 'CR-PRV-ZERO', $1, $2::jsonb, '2015-01-01')`,
-    [U.req, JSON.stringify(zero)]);
+  // 建立的帳號已停用 → 匿名化；帳號還在用 → 不動（0019）
+  await admin.query(`insert into users (id, display_name, phone_e164, platform_role, active) values ('USR-PRV-GONE', '合成已停用', null, 'none', false)`);
+  await admin.query(`insert into app_state (collection, id, owner_user_id, data, created_at) values ('careRecipients', 'CR-PRV-ZERO', 'USR-PRV-GONE', $1::jsonb, '2015-01-01')`,
+    [JSON.stringify(recipient('CR-PRV-ZERO').record)]);
+  await admin.query(`insert into app_state (collection, id, owner_user_id, data, created_at) values ('careRecipients', 'CR-PRV-ZEROACTIVE', $1, $2::jsonb, '2015-01-01')`,
+    [U.req, JSON.stringify(recipient('CR-PRV-ZEROACTIVE').record)]);
   await call(mutateFn.handler, 'POST', U.req, { changes: [recipient('CR-PRV-NEWZERO')] });
   const oldBefore = (await row('bookings', 'BKG-PRV-OLD')).data;
   const trip = F.makeTrip({ id: 'TRP-PRV-OLD', organizationId: 'ORG-REQ-001', driverId: null, vehicleId: null, bookingId: 'BKG-PRV-OLD',
@@ -235,8 +238,9 @@ function booking(id, extra = {}) {
       && !JSON.stringify(crOld).includes('合成備註') && !JSON.stringify(crOld).includes('合成緊急聯絡人')
       && crOld.addresses.district === '新北市板橋區' && crOld.identity.gender === 'female'
       && crOld.mobility.wheelchairType === 'manual' && crOld.status === 'active' && Boolean(crOld.anonymizedAt), JSON.stringify(crOld));
-  record('從沒預約、建立超過保存期限的服務對象匿名化；剛建立的不動',
+  record('從沒預約、建立超過保存期限、建立的帳號已停用的服務對象匿名化；帳號還在用的、剛建立的都不動',
     !JSON.stringify((await row('careRecipients', 'CR-PRV-ZERO')).data).includes('0955666777')
+      && (await row('careRecipients', 'CR-PRV-ZEROACTIVE')).data.contacts.primaryPhone === '0955666777'
       && (await row('careRecipients', 'CR-PRV-NEWZERO')).data.contacts.primaryPhone === '0955666777');
   const evAfter = await Promise.all([['bookingEvents', 'BEVT-PRV-OLD'], ['tripEvents', 'TEVT-PRV-OLD'], ['careRecipientEvents', 'CREVT-PRV-OLD']]
     .map(async ([c, i]) => (await row(c, i)).data));

@@ -257,6 +257,16 @@ const schedule = (userId, body) => call(scheduleFn.handler, userId, body);
   const cancelTrip = await call(tripWriteFn.handler, U.dspA, { changes: [{ collection: 'trips', id: 'TRP-SCH-CX',
     expectedRevision: toCancel ? toCancel.revision : 0, record: { ...(toCancel ? toCancel.data : {}), status: 'cancelled' } }] });
   record('行程寫入取消已有預約的行程照常可以', plainTrip.status === 200 && cancelTrip.status === 200, `${outcome(plainTrip)} / ${outcome(cancelTrip)}`);
+  // #76 決策「排好的退回部分排車」：取消行程後，這趟的去程退回待排車，預約退回部分排車，可以重新排車
+  const reverted = (await row('bookings', 'BKG-SCH-BY4')).data;
+  const revLeg = reverted.legs.find((l) => l.id === 'BKG-SCH-BY4_outbound');
+  record('取消行程：這趟的去程退回待排車，已排車的預約退回部分排車', reverted.state === 'partially_scheduled'
+    && revLeg.status === 'pending' && revLeg.tripId === null && reverted.tripId === null, JSON.stringify({ state: reverted.state, leg: revLeg }));
+  const unschedEvents = (await admin.query(`select data from app_state where collection = 'bookingEvents' and booking_id = 'BKG-SCH-BY4' and data->>'eventType' = 'leg_unscheduled'`)).rows;
+  record('取消行程：預約寫入「退回待排車」事件', unschedEvents.length === 1 && unschedEvents[0].data.tripId === 'TRP-SCH-CX', `n=${unschedEvents.length}`);
+  const resched = await schedule(U.dspA, { trips: [trip('TRP-SCH-CX2', [{ bookingId: 'BKG-SCH-BY4', legId: 'BKG-SCH-BY4_outbound' }])],
+    expectedVersions: { 'BKG-SCH-BY4': (await row('bookings', 'BKG-SCH-BY4')).version } });
+  record('退回後可以重新排車', resched.status === 200 && (await row('bookings', 'BKG-SCH-BY4')).data.state === 'scheduled', outcome(resched));
 
   // 規格審查找到的漏網路徑
   await claimedBooking('BKG-SCH-BY5');

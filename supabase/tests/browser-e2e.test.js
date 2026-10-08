@@ -235,6 +235,25 @@ async function typeInto(page, selector, text) {
   await page.send('Input.insertText', { text });
 }
 
+/**
+ * 背景同步會重畫整個畫面（輸入框失焦、捲動回到頂端）。表單操作用這兩個：
+ * 填完確認值真的在輸入框裡，點擊被捲出畫面就再試。
+ */
+async function typeConfirmed(page, selector, text) {
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    await typeInto(page, selector, text);
+    await sleep(250);
+    if (await evaluate(page, `(document.querySelector(${J(selector)})||{}).value===${J(text)}`)) return;
+  }
+  throw new Error(`${selector} 填不進去`);
+}
+async function clickRetry(page, selector) {
+  for (let attempt = 1; ; attempt++) {
+    try { await click(page, selector); return; }
+    catch (e) { if (attempt >= 3) throw e; await sleep(800); }
+  }
+}
+
 async function setOffline(page, offline) {
   await page.send('Network.emulateNetworkConditions', { offline, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
   await waitFor(page, `navigator.onLine===${!offline}`, offline ? '瀏覽器進入離線' : '瀏覽器恢復連線');
@@ -700,7 +719,9 @@ async function flowFamily(cdp, baseUrl, tokens) {
       await evaluate(page, "document.getElementById('rqPickup').value"));
     await typeInto(page, '#rqDestination', destination);
     await click(page, '.wizard-next-btn[data-next="3"]');
-    await click(page, '.wizard-next-btn[data-next="4"]');
+    // 排到第 3 天，避開其他情境留給同一位司機的行程
+    await evaluate(page, `(()=>{const d=document.getElementById('rqDate');d.value=${J(dayOffset(3))};d.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+    await clickRetry(page, '.wizard-next-btn[data-next="4"]');
     let reviewed = true;
     try { await waitFor(page, `document.getElementById('requesterWizardReview').textContent.includes(${J(fam.name)})`, '確認步驟顯示乘車人', 8000); }
     catch (_) { reviewed = false; }
@@ -731,6 +752,18 @@ async function flowFamily(cdp, baseUrl, tokens) {
       const text = await evaluate(dsp, "document.querySelector('main').innerText");
       record(S, '調度畫面顯示服務對象（家人）的姓名與需求，需求者為聯絡人',
         shown && text.includes(fam.aid) && text.includes(`聯絡人：${U.req.name}`), shown ? '' : text.slice(0, 400));
+      // 排車後，司機看到的停靠點：乘車人是家人，需求者是聯絡人（#76 故事 13）
+      await click(dsp, `.booking-create-trip-btn[data-booking=${J(booking.id)}]`);
+      await waitFor(dsp, "document.getElementById('createTripModal').classList.contains('open')&&!!document.getElementById('newDriver').value&&!!document.getElementById('newVehicle').value",
+        '排車視窗帶入司機與車輛');
+      await click(dsp, '#saveTripBtn');
+      const scheduled = await waitForDb(async () => { const r = await row('bookings', booking.id); return r && r.data.state === 'scheduled' ? r : null; }, '家人的預約已排車');
+      const trip = await row('trips', scheduled.data.legs[0].tripId);
+      const pickup = (trip.data.steps || []).find((st) => st.type === 'pickup') || {};
+      const contacts = pickup.contacts || [];
+      record(S, '司機的停靠點：乘車人是家人（姓名、電話），需求者是聯絡人',
+        pickup.name === fam.name && contacts.some((c) => c.name === fam.name && c.phone === fam.phone)
+          && contacts.some((c) => c.name === `聯絡人 ${U.req.name}` && c.phone === U.req.phone), J(contacts));
     } finally {
       await finishPage(dsp, S);
     }
@@ -762,13 +795,10 @@ async function flowPublicSettings(cdp, baseUrl) {
     await goView(page, 'platform-organizations');
     await waitFor(page, "!!document.getElementById('platformPublicSettings')&&!document.getElementById('savePublicSettingsBtn').disabled", '平台設定讀到目前的登入方式與客服聯絡');
     await evaluate(page, "(()=>{const c=document.getElementById('loginMethodFacebookInput');if(!c.checked)c.click();return true;})()");
-    await typeInto(page, '#supportLineUrlInput', line);
-    await typeInto(page, '#supportEmailInput', email);
+    await typeConfirmed(page, '#supportLineUrlInput', line);
+    await typeConfirmed(page, '#supportEmailInput', email);
     // 背景同步重畫畫面時捲動位置會回到頂端（輸入的值會保留），按鈕剛好被捲出畫面就再試一次
-    for (let attempt = 1; ; attempt++) {
-      try { await click(page, '#savePublicSettingsBtn'); break; }
-      catch (e) { if (attempt >= 3) throw e; await sleep(800); }
-    }
+    await clickRetry(page, '#savePublicSettingsBtn');
     const saved = await waitForDb(async () => {
       const { rows } = await admin.query(`select key, value from app_settings where key in ('login_methods','support_contact')`);
       const m = Object.fromEntries(rows.map((r) => [r.key, r.value]));
