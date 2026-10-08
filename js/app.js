@@ -5363,6 +5363,27 @@ function bindInlineViewJumps(){
     const target=btn.dataset.uiView; if(!canView(target)){showToast('你沒有此頁面的檢視權限');return;} currentView=target; renderNav(); render();
   }));
 }
+// 背景同步（登入後、切回分頁時重新載入資料）也會呼叫 render()。同一個畫面重畫時保留使用者的位置：
+// 捲動位置、正在輸入的欄位（焦點、游標、還沒存的內容）；換畫面時照舊從頂端開始。
+let lastRenderedView='';
+function captureViewContext_(root){
+  const el=document.activeElement,typing=el&&root.contains(el)&&el.id&&(el.tagName==='TEXTAREA'||(el.tagName==='INPUT'&&!['checkbox','radio','file','button','submit'].includes(el.type)));
+  let start=null,end=null;try{start=el.selectionStart;end=el.selectionEnd;}catch(e){}
+  return {scrollX:window.scrollX,scrollY:window.scrollY,focus:typing?{id:el.id,value:el.value,start,end}:null};
+}
+function restoreViewContext_(ctx){
+  const scrollBack=()=>{try{window.scrollTo({left:ctx.scrollX,top:ctx.scrollY,behavior:'instant'});}catch(e){window.scrollTo(ctx.scrollX,ctx.scrollY);}};
+  scrollBack();
+  // 有些區塊重畫後才非同步載入（頁面先變短、捲動被夾住），稍後再補回去；使用者自己捲動就不再補
+  let userMoved=false;const stop=()=>{userMoved=true;};
+  ['wheel','touchstart','keydown','mousedown'].forEach(t=>window.addEventListener(t,stop,{once:true,passive:true}));
+  [60,300,800].forEach(ms=>setTimeout(()=>{if(!userMoved&&Math.abs(window.scrollY-ctx.scrollY)>2)scrollBack();},ms));
+  setTimeout(()=>['wheel','touchstart','keydown','mousedown'].forEach(t=>window.removeEventListener(t,stop)),900);
+  const f=ctx.focus,el=f?$(f.id):null;if(!el||el.disabled)return;
+  if(el.value!==f.value)el.value=f.value;
+  el.focus({preventScroll:true});
+  try{if(f.start!==null)el.setSelectionRange(f.start,f.end);}catch(e){}
+}
 function render(){
   const currentRoleClass=role();
   document.body.classList.remove('ui-role-requester','ui-role-driver','ui-role-dispatcher','ui-role-owner','ui-role-super_admin');
@@ -5376,8 +5397,10 @@ function render(){
   }
   const activeNav=NAVS.find(n=>n.id===currentView); $('topTitle').textContent=(NAV_LABEL_BY_ROLE[role()]||{})[currentView]||activeNav?.label||'工作台';
   const renderer=VIEW_RENDERERS[currentView],root=$('contentRoot');
+  const keep=lastRenderedView===currentView&&root.firstElementChild?captureViewContext_(root):null;
   root.setAttribute('aria-busy','true');
-  root.innerHTML='<div class="ui-loading" aria-label="頁面載入中"><div class="ui-skeleton"></div><div class="ui-skeleton"></div><div class="ui-skeleton"></div></div>';
+  // 換畫面才先放骨架；同一個畫面重畫時放骨架會讓頁面高度瞬間變短、捲動被拉回頂端
+  if(!keep)root.innerHTML='<div class="ui-loading" aria-label="頁面載入中"><div class="ui-skeleton"></div><div class="ui-skeleton"></div><div class="ui-skeleton"></div></div>';
   try{
     root.innerHTML=renderer?orgReviewBanner()+renderer():'<div class="ui-state"><div class="ui-state-icon">○</div><h3>此頁尚未完成</h3><p>請從其他功能繼續操作。</p></div>';
   }catch(error){
@@ -5385,6 +5408,8 @@ function render(){
     root.innerHTML=`<section class="ui-state error"><div class="ui-state-icon">!</div><h3>頁面資料載入失敗</h3><p>頁面：${escapeHTML(activeNav?.label||currentView)}<br>${escapeHTML(error?.message||'未知錯誤')}</p><button class="btn primary" id="retryCurrentViewBtn" type="button">重新載入此頁</button></section>`;
   }finally{root.setAttribute('aria-busy','false');}
   $('retryCurrentViewBtn')?.addEventListener('click',()=>render()); bindViewEvents(); bindRequesterWizardEvents(); bindInlineViewJumps(); enhanceResponsiveTables(); enhanceStaticAccessibility(); updateSyncUI(); if(Identity.can('trip.read_own')&&currentView==='driver-home') updateDriverClock();
+  lastRenderedView=currentView;
+  if(keep)restoreViewContext_(keep);
 }
 
 function renderKpiCards(k){
@@ -7231,6 +7256,11 @@ async function bootstrapApplication(){
   },650);
   return {ok:true,benefitInit,benefitLatestInit};
 }
+// 切回這個分頁時在背景重新載入資料（別人可能已經接案、排車），畫面照上面的規則保留位置與輸入
+document.addEventListener('visibilitychange',async()=>{
+  if(document.visibilityState!=='visible'||!careRideBootCompleted||!Identity.currentUser())return;
+  try{const r=await AppStateDatabase.loadAll({silent:true});if(r?.ok&&Identity.currentUser()){applyIdentityContext();renderNav();render();}}catch(e){console.warn('[Visibility] background refresh failed',e);}
+});
 document.addEventListener('input',e=>{const field=e.target.closest?.('.form-field.has-error');if(field){field.classList.remove('has-error');const input=e.target;if(input?.removeAttribute){input.removeAttribute('aria-invalid');input.removeAttribute('aria-describedby');}field.querySelector('.field-error-message')?.remove();}});
 document.addEventListener('change',e=>{const field=e.target.closest?.('.form-field.has-error');if(field){field.classList.remove('has-error');const input=e.target;if(input?.removeAttribute){input.removeAttribute('aria-invalid');input.removeAttribute('aria-describedby');}field.querySelector('.field-error-message')?.remove();}});
 
