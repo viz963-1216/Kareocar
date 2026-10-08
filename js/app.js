@@ -60,6 +60,7 @@ const APP_CONFIG = Object.freeze({
   benefitAuthorizationUrl: '/api/v2/benefit-authorization',
   consentUrl: '/api/v2/consent',
   platformSettingsUrl: '/api/v2/platform-settings',
+  ltcContractsUrl: '/api/v2/ltc-contracts',
   publicSettingsUrl: '/api/v2/public-settings',
   accountDeletionUrl: '/api/v2/account-deletion',
   identityWriteUrl: '/api/v2/identity-write',
@@ -1086,7 +1087,7 @@ const AppStateDatabase={
         // 通知是伺服器唯讀的集合（#25）：不在寫入佇列裡，但要從伺服器載入
         db.notifications=Array.isArray(collections.notifications)?collections.notifications:[];
         // 補助規則版本與試算也是伺服器唯讀（#23）：由 benefit-ruleset／benefit-assess 端點寫入
-        ['benefitRulesets','benefitRulesetEvents','benefitAssessments','benefitAuthorizations','benefitAuthorizationEvents','benefitLedger','deletionRequests','benefitSourceFetches'].forEach(name=>{db[name]=Array.isArray(collections[name])?collections[name]:[];});
+        ['benefitRulesets','benefitRulesetEvents','benefitAssessments','benefitAuthorizations','benefitAuthorizationEvents','benefitLedger','deletionRequests','benefitSourceFetches','ltcContracts'].forEach(name=>{db[name]=Array.isArray(collections[name])?collections[name]:[];});
         db.demandPool=Array.isArray(result.data?.pool)?result.data.pool:[];
         db.integration={...(db.integration||{}),lastSyncStatus:result.data?.truncated?'部分資料已載入':'同步完成',
                         lastSyncDetails:result.data?.truncated?['資料量達到上限，目前僅載入部分資料。']:[],
@@ -5837,7 +5838,7 @@ function accountView(){
   const u=Identity.currentUser(),body=role()==='driver'?driverAccount():role()==='requester'?requesterAccount():genericAccount();
   if(!u)return body;
   const contact=supportContactHtml(),supportCard=contact?`<section class="card" id="supportContactCard"><div class="card-head"><h3>聯絡客服</h3></div>${contact}</section>`:'';
-  return body+loginMethodsCard_()+systemReportAccountCard()+(Identity.isSuperAdmin()?'':orgApplicationCard()+deletionRequestCard())+supportCard
+  return body+(['owner','dispatcher'].includes(role())?ltcContractsAccountCard_():'')+loginMethodsCard_()+systemReportAccountCard()+(Identity.isSuperAdmin()?'':orgApplicationCard()+deletionRequestCard())+supportCard
     +`${appVersionNote()}<button type="button" class="btn outline block account-logout-btn">登出</button>`;
 }
 // 刪除帳號與個資申請（#26）：由平台管理者處理；核准後預約與行程匿名化、帳號停用
@@ -6010,9 +6011,40 @@ function platformHome(){
   }).join('');
   return `<div class="page-head"><div><h2>平台總覽</h2></div><div class="page-actions">${Identity.can('booking.sync_google')?'<button type="button" class="btn outline" id="syncCustomerBookingsBtn">↻ 重新整理</button>':''}</div></div><div class="metric-grid"><div class="metric"><span>機構</span><strong>${active.length}</strong></div><div class="metric"><span>成員</span><strong>${members.length}</strong></div><div class="metric"><span>待處理問題回報</span><strong>${openReports.length}</strong></div></div><section class="card"><div class="card-head"><div><h3>各機構狀況</h3></div></div><div class="list">${statusRows||'<div class="empty">目前沒有有效機構</div>'}</div></section>`;
 }
+// 長照特約（#99）：平台管理者在機構管理標記；機構的負責人、調度員在我的帳戶看得到
+const LTC_CITIES=Object.freeze(['台北市','新北市','桃園市','台中市','台南市','高雄市','基隆市','新竹市','嘉義市','新竹縣','苗栗縣','彰化縣',
+  '南投縣','雲林縣','嘉義縣','屏東縣','宜蘭縣','花蓮縣','台東縣','澎湖縣','金門縣','連江縣']);
+function ltcContractsFor(orgId){ return (store.state.ltcContracts||[]).filter(c=>c.organizationId===orgId); }
+function ltcContractInEffect(c,day=dateKey()){ return c.validFrom<=day&&(!c.validTo||c.validTo>=day); }
+function ltcContractLabel(c){ return `${c.city}・${c.contractNo}・${c.validFrom} 起${c.validTo?`至 ${c.validTo}`:''}${ltcContractInEffect(c)?'':'（目前不在有效期間）'}`; }
+function ltcContractsSummary(orgId){ const rows=ltcContractsFor(orgId);return rows.length?rows.map(c=>`${c.city}${ltcContractInEffect(c)?'':'（未生效／已到期）'}`).join('、'):'無'; }
+function ltcContractsAccountCard_(){
+  const id=orgId(),rows=id?ltcContractsFor(id):[];if(!id)return '';
+  return `<section class="card" id="ltcContractsAccountCard"><div class="card-head"><div><h3>長照特約</h3><p>由平台管理者看過契約後標記；有異動請聯絡平台。</p></div></div>${rows.map(c=>`<div class="list-item"><p>${escapeHTML(ltcContractLabel(c))}</p></div>`).join('')||'<div class="empty">目前沒有長照特約</div>'}</section>`;
+}
+function openLtcContracts(organizationId){
+  const o=Organization.get(organizationId);if(!o){showToast('找不到機構');return;}
+  $('ltcContractOrgId').value=organizationId;$('ltcContractsOrgName').textContent=o.name||'';resetLtcContractForm_();renderLtcContractsList_();openModal('ltcContractsModal');
+}
+function resetLtcContractForm_(){ $('ltcContractId').value='';$('ltcCityInput').value='新北市';$('ltcContractNoInput').value='';$('ltcValidFromInput').value='';$('ltcValidToInput').value='';$('saveLtcContractBtn').textContent='新增'; }
+function renderLtcContractsList_(){
+  const rows=ltcContractsFor($('ltcContractOrgId').value);
+  $('ltcContractsList').innerHTML=rows.map(c=>`<div class="list-item"><div class="list-item-head"><div><p>${escapeHTML(ltcContractLabel(c))}</p></div></div><div class="item-actions"><button type="button" class="btn outline sm ltc-edit-btn" data-id="${escapeHTML(c.id)}">修改</button><button type="button" class="btn warning sm ltc-remove-btn" data-id="${escapeHTML(c.id)}">移除</button></div></div>`).join('')||'<div class="empty">還沒有長照特約</div>';
+  document.querySelectorAll('.ltc-edit-btn').forEach(btn=>btn.addEventListener('click',()=>{const c=(store.state.ltcContracts||[]).find(x=>x.id===btn.dataset.id);if(!c)return;$('ltcContractId').value=c.id;$('ltcCityInput').value=c.city;$('ltcContractNoInput').value=c.contractNo;$('ltcValidFromInput').value=c.validFrom||'';$('ltcValidToInput').value=c.validTo||'';$('saveLtcContractBtn').textContent='儲存修改';}));
+  document.querySelectorAll('.ltc-remove-btn').forEach(btn=>btn.addEventListener('click',async()=>{if(!confirm('確定移除這筆長照特約？'))return;await ltcContractsRequest_({action:'remove',id:btn.dataset.id},'長照特約已移除');}));
+}
+async function ltcContractsRequest_(payload,message){
+  try{await backendJsonPost(APP_CONFIG.ltcContractsUrl,payload);await AppStateDatabase.loadAll({silent:true});resetLtcContractForm_();renderLtcContractsList_();render();showToast(message);}
+  catch(error){showToast(error.message||'長照特約儲存失敗');}
+}
+function saveLtcContract(){
+  const scope=$('ltcContractsModal');if(!validateFieldRules(scope,[{id:'ltcContractNoInput',message:'請填寫契約字號'},{id:'ltcValidFromInput',message:'請選擇生效日期'}]))return;
+  ltcContractsRequest_({action:'save',contract:{id:$('ltcContractId').value||null,organizationId:$('ltcContractOrgId').value,city:$('ltcCityInput').value,
+    contractNo:$('ltcContractNoInput').value.trim(),validFrom:$('ltcValidFromInput').value,validTo:$('ltcValidToInput').value||null}},$('ltcContractId').value?'長照特約已更新':'長照特約已新增');
+}
 function platformOrganizations(){
   const rows=Organization.list();
-  return `<div class="page-head"><div><h2>機構管理</h2></div><div class="page-actions"><button type="button" class="btn primary" id="openAddOrganizationBtn">＋ 新增機構</button></div></div><div class="list">${rows.map(o=>{const isRequesterHub=o.id===APP_CONFIG.requesterOrganizationId||o.type==='requester_hub',memberCount=store.state.memberships.filter(m=>m.organizationId===o.id&&Identity.membershipStatus(m)==='active').length,ownerM=isRequesterHub?null:store.state.memberships.find(m=>m.organizationId===o.id&&m.role==='owner'&&Identity.membershipStatus(m)!=='revoked'),ownerU=ownerM?store.state.users.find(u=>u.id===ownerM.userId):null;return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(o.name)}</h4><p>${isRequesterHub?'所有需求者':o.type==='transport_provider'?'交通接送機構':o.type==='care_facility'?'長照／日照機構':'其他合作機構'}${!isRequesterHub?(o.taxId?`・統編 ${escapeHTML(o.taxId)}`:'・統編未填'):''}<br>${isRequesterHub?`有效需求者：${memberCount} 人`:`聯絡電話：${escapeHTML(o.contactPhone||'未填')}<br>負責人：${escapeHTML(ownerU?.name||'尚未指定')}・有效成員：${memberCount} 人`}</p></div><span class="pill ${isRequesterHub?'purple':o.active!==false?'green':'gray'}">${isRequesterHub?'系統機構':o.active!==false?'有效':'已移除'}</span>${isRequesterHub?'':orgReviewPill(o)}</div>${!isRequesterHub&&(o.application?.contactName||o.application?.documentsNote||o.reviewNote)?`<p class="small muted">${o.application?.contactName?`聯絡人：${escapeHTML(o.application.contactName)}<br>`:''}${o.application?.documentsNote?`文件：${escapeHTML(o.application.documentsNote)}<br>`:''}${o.reviewNote?`審核備註：${escapeHTML(o.reviewNote)}`:''}</p>`:''}<div class="item-actions">${isRequesterHub?`<button type="button" class="btn outline sm platform-enter-org-btn" data-org="${o.id}">查看需求者</button>`:`${(()=>{const st=orgReviewStatus(o),btn=(d,label,cls)=>`<button type="button" class="btn ${cls} sm platform-org-review-btn" data-org="${o.id}" data-decision="${d}">${label}</button>`;return st==='pending'?btn('approve','核准申請','success')+btn('reject','駁回','warning'):st==='approved'?btn('suspend','暫停接案','warning'):btn('approve',st==='suspended'?'恢復接案':'重新核准','success');})()}<button type="button" class="btn outline sm platform-edit-org-btn" data-org="${o.id}">編輯資料</button>${o.active!==false?`<button type="button" class="btn outline sm platform-enter-org-btn" data-org="${o.id}">管理成員</button><button type="button" class="btn warning sm platform-org-active-btn" data-org="${o.id}" data-active="false">停用機構</button>`:`<button type="button" class="btn success sm platform-org-active-btn" data-org="${o.id}" data-active="true">重新啟用</button>`}`}</div></div>`;}).join('')}</div>${platformPrivacySettingsCard()}${pendingDeletionRequestsCard()}`;
+  return `<div class="page-head"><div><h2>機構管理</h2></div><div class="page-actions"><button type="button" class="btn primary" id="openAddOrganizationBtn">＋ 新增機構</button></div></div><div class="list">${rows.map(o=>{const isRequesterHub=o.id===APP_CONFIG.requesterOrganizationId||o.type==='requester_hub',memberCount=store.state.memberships.filter(m=>m.organizationId===o.id&&Identity.membershipStatus(m)==='active').length,ownerM=isRequesterHub?null:store.state.memberships.find(m=>m.organizationId===o.id&&m.role==='owner'&&Identity.membershipStatus(m)!=='revoked'),ownerU=ownerM?store.state.users.find(u=>u.id===ownerM.userId):null;return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(o.name)}</h4><p>${isRequesterHub?'所有需求者':o.type==='transport_provider'?'交通接送機構':o.type==='care_facility'?'長照／日照機構':'其他合作機構'}${!isRequesterHub?(o.taxId?`・統編 ${escapeHTML(o.taxId)}`:'・統編未填'):''}<br>${isRequesterHub?`有效需求者：${memberCount} 人`:`聯絡電話：${escapeHTML(o.contactPhone||'未填')}<br>負責人：${escapeHTML(ownerU?.name||'尚未指定')}・有效成員：${memberCount} 人`}</p></div><span class="pill ${isRequesterHub?'purple':o.active!==false?'green':'gray'}">${isRequesterHub?'系統機構':o.active!==false?'有效':'已移除'}</span>${isRequesterHub?'':orgReviewPill(o)}</div>${!isRequesterHub&&(o.application?.contactName||o.application?.documentsNote||o.reviewNote)?`<p class="small muted">${o.application?.contactName?`聯絡人：${escapeHTML(o.application.contactName)}<br>`:''}${o.application?.documentsNote?`文件：${escapeHTML(o.application.documentsNote)}<br>`:''}${o.reviewNote?`審核備註：${escapeHTML(o.reviewNote)}`:''}</p>`:''}${isRequesterHub?'':`<p class="small">長照特約：${escapeHTML(ltcContractsSummary(o.id))}</p>`}<div class="item-actions">${isRequesterHub?`<button type="button" class="btn outline sm platform-enter-org-btn" data-org="${o.id}">查看需求者</button>`:`${(()=>{const st=orgReviewStatus(o),btn=(d,label,cls)=>`<button type="button" class="btn ${cls} sm platform-org-review-btn" data-org="${o.id}" data-decision="${d}">${label}</button>`;return st==='pending'?btn('approve','核准申請','success')+btn('reject','駁回','warning'):st==='approved'?btn('suspend','暫停接案','warning'):btn('approve',st==='suspended'?'恢復接案':'重新核准','success');})()}<button type="button" class="btn outline sm platform-edit-org-btn" data-org="${o.id}">編輯資料</button><button type="button" class="btn outline sm platform-ltc-btn" data-org="${o.id}">長照特約</button>${o.active!==false?`<button type="button" class="btn outline sm platform-enter-org-btn" data-org="${o.id}">管理成員</button><button type="button" class="btn warning sm platform-org-active-btn" data-org="${o.id}" data-active="false">停用機構</button>`:`<button type="button" class="btn success sm platform-org-active-btn" data-org="${o.id}" data-active="true">重新啟用</button>`}`}</div></div>`;}).join('')}</div>${platformPrivacySettingsCard()}${pendingDeletionRequestsCard()}`;
 }
 // 已發布的個資告知、服務條款沒同意最新版本時，要求同意（#26）；平台管理者不需要
 function ensureConsent_(){
@@ -7009,6 +7041,7 @@ function bindViewEvents(){
   bindPlatformPrivacySettings();
   document.querySelectorAll('.booking-leg-org-select').forEach(select=>select.addEventListener('change',e=>{const target=e.currentTarget.value;if(!target)return;const result=Booking.assignPendingLegOrganization(e.currentTarget.dataset.booking,e.currentTarget.dataset.leg,target,Identity.currentUser()?.id);if(!result.ok){showToast(result.error);render();return;}render();showToast(`已將 ${result.leg?.label||'這一段'} 指定給 ${Organization.get(target)?.name||'目標機構'}`);}));
   document.querySelectorAll('.platform-edit-org-btn').forEach(btn=>btn.addEventListener('click',()=>openEditOrganization(btn.dataset.org)));
+  document.querySelectorAll('.platform-ltc-btn').forEach(btn=>btn.addEventListener('click',()=>openLtcContracts(btn.dataset.org)));
   document.querySelectorAll('.platform-requester-toggle-btn').forEach(btn=>btn.addEventListener('click',()=>{
     const enabled=btn.dataset.enabled==='true',result=Identity.setRequesterIdentity(btn.dataset.user,enabled);
     if(!result.ok){showToast(result.error);return;}
@@ -7073,6 +7106,7 @@ $('oauthBindExistingBtn')?.addEventListener('click',()=>submitOAuthBind_('existi
 $('tempPasswordDoneBtn')?.addEventListener('click',()=>{$('tempPasswordValue').textContent='';closeModal('tempPasswordModal');});
 $('saveStaffBtn')?.addEventListener('click',saveStaff);
 $('saveOrganizationBtn')?.addEventListener('click',saveOrganization);
+$('saveLtcContractBtn')?.addEventListener('click',saveLtcContract);
 $('saveOrganizationDetailsBtn')?.addEventListener('click',saveOrganizationDetails);
 $('saveMemberProfileBtn')?.addEventListener('click',saveMemberProfile);
 $('saveSystemReportBtn')?.addEventListener('click',saveSystemReport);
