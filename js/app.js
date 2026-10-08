@@ -1217,21 +1217,12 @@ function currentBookingCommercialSnapshot(booking){
   const rows=Array.isArray(booking?.commercialSnapshots)?booking.commercialSnapshots:[];
   return rows.find(x=>x.id===booking.activeCommercialSnapshotId)||rows[rows.length-1]||null;
 }
-// 金額以伺服器計算的 serverComputed 為準（#21 報價、#23 補助），沒有才退回快照
-function bookingServerBenefit(booking){return booking?.serverComputed?.benefit||currentBookingCommercialSnapshot(booking)?.benefit||null;}
-function bookingBenefitText(booking){
-  const b=bookingServerBenefit(booking);
-  if(b?.estimatedSubsidy!=null)return `補助估算 NT$${Number(b.estimatedSubsidy).toLocaleString('zh-TW')}${b.rulesetVersion?`（規則 ${b.rulesetVersion}）`:''}`;
-  if(b?.status==='assessment_required')return '補助：請先完成補助試算';
-  if(b?.status==='not_eligible')return '補助：預估不符合資格';
-  if(b?.status==='insufficient_data')return '補助：試算資料不足';
-  return '';
-}
+// 金額以伺服器計算的 serverComputed 為準（#21 報價），沒有才退回快照。
+// 預約畫面暫不顯示補助（#98）：伺服器現在算的是整個月的額度，不是這一趟；改由 #101 依補助試算與長照特約重做。
 function bookingCommercialSummary(booking){
   const q=booking?.serverComputed?.quote||currentBookingCommercialSnapshot(booking)?.quote;
   // 平台不訂車資，沒有估價時就是雙方議定
-  const quoteText=q?.estimatedFare!=null?`預估 NT$${Number(q.estimatedFare).toLocaleString('zh-TW')}`:'車資由雙方議定';
-  return [quoteText,bookingBenefitText(booking)].filter(Boolean).join('・');
+  return q?.estimatedFare!=null?`預估 NT$${Number(q.estimatedFare).toLocaleString('zh-TW')}`:'車資由雙方議定';
 }
 function bookingRevisionSnapshot(booking){
   return {
@@ -5629,7 +5620,7 @@ function requesterNew(){
     </section>
     <section class="wizard-panel ${step===4?'active':''}" data-wizard-panel="4">
       <section class="card"><div class="card-head"><div><h3>確認並送出</h3></div></div>
-                <div class="wizard-review" id="requesterWizardReview"><div class="wizard-review-row"><span>乘車人</span><strong>${escapeHTML(riderName)}${riderIsSelf?'':'（家人）'}</strong></div><div class="wizard-review-row"><span>地點</span><strong id="wizardReviewRoute">${escapeHTML(reviewRoute)}</strong></div><div class="wizard-review-row"><span>時間</span><strong id="wizardReviewTime">${escapeHTML(date)} ${escapeHTML(time)}・${escapeHTML(tripType)}</strong></div>${rider?`<div class="wizard-review-row"><span>固定需求</span><strong>${escapeHTML(fixed)}</strong></div>`:''}${b?`<div class="wizard-review-row"><span>費用／補助</span><strong>${escapeHTML(Booking.commercialSummary(b))}</strong></div>`:''}</div>
+                <div class="wizard-review" id="requesterWizardReview"><div class="wizard-review-row"><span>乘車人</span><strong>${escapeHTML(riderName)}${riderIsSelf?'':'（家人）'}</strong></div><div class="wizard-review-row"><span>地點</span><strong id="wizardReviewRoute">${escapeHTML(reviewRoute)}</strong></div><div class="wizard-review-row"><span>時間</span><strong id="wizardReviewTime">${escapeHTML(date)} ${escapeHTML(time)}・${escapeHTML(tripType)}</strong></div>${rider?`<div class="wizard-review-row"><span>固定需求</span><strong>${escapeHTML(fixed)}</strong></div>`:''}${b?`<div class="wizard-review-row"><span>費用</span><strong>${escapeHTML(Booking.commercialSummary(b))}</strong></div>`:''}</div>
         <div class="wizard-actions"><button class="btn outline wizard-prev-btn" data-prev="3" type="button">上一步</button><div class="right"><button class="btn primary" id="submitRequesterBookingBtn" type="button">${submitLabel}</button></div></div>
       </section>
     </section>

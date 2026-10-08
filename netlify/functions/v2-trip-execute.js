@@ -26,6 +26,7 @@
 const auth = require('./_auth-pg');
 const { runAuthenticated, requireId, writeAudit } = require('./_business-rpc');
 const rules = require('./_trip-execution-rules');
+const { LEDGER_RESERVATION_ENABLED } = require('./_benefit');
 
 exports.handler = (event) => runAuthenticated(event, async (client, body, claims) => {
   const tripId = requireId(body.tripId, '行程 ID ');
@@ -67,11 +68,12 @@ exports.handler = (event) => runAuthenticated(event, async (client, body, claims
     });
   }
 
-  // 補助額度：完成時結算保留的額度；完成後修正（返回上一步）時回轉結算（0009）
+  // 補助額度：完成時結算保留的額度；完成後修正（返回上一步）時回轉結算（0009）。暫停中（#98）
   const before = String((locked.trip_data && locked.trip_data.status) || '');
-  if (!result.out_duplicate && result.out_status === 'completed' && before !== 'completed') {
+  const ledgerActive = LEDGER_RESERVATION_ENABLED && !result.out_duplicate;
+  if (ledgerActive && result.out_status === 'completed' && before !== 'completed') {
     await client.query('select app.settle_trip_benefit($1)', [tripId]);
-  } else if (!result.out_duplicate && before === 'completed' && result.out_status !== 'completed') {
+  } else if (ledgerActive && before === 'completed' && result.out_status !== 'completed') {
     await client.query('select app.reopen_trip_benefit_settlement($1)', [tripId]);
   }
 

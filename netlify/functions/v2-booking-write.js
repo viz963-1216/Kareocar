@@ -10,7 +10,7 @@
  * 另外：
  *   - serverComputed（定位、模糊地址、距離、報價）由伺服器計算，見 _bookings.js
  *   - 補助估算（serverComputed.benefit）由伺服器依 approved 規則版本計算，見 _benefit.js；
- *     同一交易內保留或釋放正式核定額度（benefit_ledger，見 0009）
+ *     同一交易內釋放正式核定額度（benefit_ledger，見 0009）；保留暫停中（#98）
  *   - 退回公開池、不受理、重大修改需重新承接時，同一交易內撤銷原承接機構
  *     （app.revoke_booking_organization），原機構立即讀不到
  *   - 不能刪除預約；接案與取消有各自的端點
@@ -193,10 +193,10 @@ exports.handler = async (event) => {
           await client.query('select app.revoke_booking_organization($1)', [id]);
         }
         // 補助額度帳本（0009）：不受理／過期釋放；新預約或重新估算時（先釋放再）保留。
-        // 金額由資料庫函式從剛存好的 serverComputed.benefit 取得。
+        // 金額由資料庫函式從剛存好的 serverComputed.benefit 取得。保留暫停中（#98，見 _benefit.js）。
         if (['rejected', 'expired'].includes(String(record.state || ''))) {
           await client.query('select app.release_booking_benefit($1, $2)', [id, `booking_${record.state}`]);
-        } else if (benefitRepriced) {
+        } else if (benefitRepriced && benefit.LEDGER_RESERVATION_ENABLED) {
           if (existing) await client.query('select app.release_booking_benefit($1, $2)', [id, 'booking_repriced']);
           await client.query('select app.reserve_booking_benefit($1, $2)', [id, existing ? 'booking_amended' : 'booking_created']);
         }

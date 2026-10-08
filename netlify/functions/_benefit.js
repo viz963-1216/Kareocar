@@ -272,7 +272,14 @@ async function bookingBenefit(client, booking) {
     sourceAssessmentId: latest.id, facts, cmsLevel: facts.cmsLevel });
 }
 
+/**
+ * 預約時保留額度、接送完成時結算（0009 的帳本）。暫停中（#98）：平台沒有車資，現在的估算是
+ * 整個月的額度，在每筆預約保留整月額度會讓第二筆就顯示「額度用完」。有車資、能算單趟金額後再打開。
+ * 釋放不受影響（舊資料若有保留，取消、婉拒、過期時照常釋放）。
+ */
+const LEDGER_RESERVATION_ENABLED = false;
+
 module.exports = {
-  DEFAULT_PROGRAM_CODE, normalizeRulesetInput, rulesetFromRow, validateRuleset, normalizeFacts,
+  DEFAULT_PROGRAM_CODE, LEDGER_RESERVATION_ENABLED, normalizeRulesetInput, rulesetFromRow, validateRuleset, normalizeFacts,
   evaluate, activeRuleset, withRuleset, bookingBenefit, dateOnly
 };

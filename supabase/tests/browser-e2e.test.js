@@ -738,6 +738,10 @@ async function flowFamily(cdp, baseUrl, tokens) {
     await waitFor(page, "!!document.querySelector('.nav-btn.active[data-view=\"requester-bookings\"]')", '送出後回到我的預約');
     record(S, '我的預約顯示這筆是替家人預約（乘車人是家人、標示「家人」）', await evaluate(page,
       `[...document.querySelectorAll('main .list-item h4')].some((h)=>h.innerText.includes(${J(fam.name)})&&h.innerText.includes('家人'))`));
+    // #98：預約畫面暫不顯示補助資訊，補助試算頁照常
+    record(S, '我的預約不顯示補助資訊（#98）', !(await evaluate(page, "/補助(估算|：)/.test(document.querySelector('main').innerText)")));
+    await goView(page, 'benefits');
+    record(S, '補助試算頁照常可以打開（#98）', await evaluate(page, "document.querySelector('main').innerText.includes('補助')"));
 
     const claimed = await claimBooking.handler({ httpMethod: 'POST', headers: { host: '127.0.0.1', cookie: `cr_at=${tokens.dsp}` },
       body: J({ bookingId: booking.id, organizationId: ORG }) });
@@ -750,6 +754,7 @@ async function flowFamily(cdp, baseUrl, tokens) {
       let shown = true;
       try { await waitFor(dsp, `document.querySelector('main').innerText.includes(${J(fam.name)})`, '調度畫面顯示家人', 10000); } catch (_) { shown = false; }
       const text = await evaluate(dsp, "document.querySelector('main').innerText");
+      record(S, '調度畫面不顯示補助資訊（#98）', shown && !/補助(估算|：)/.test(text));
       record(S, '調度畫面顯示服務對象（家人）的姓名與需求，需求者為聯絡人',
         shown && text.includes(fam.aid) && text.includes(`聯絡人：${U.req.name}`), shown ? '' : text.slice(0, 400));
       // 排車後，司機看到的停靠點：乘車人是家人，需求者是聯絡人（#76 故事 13）
