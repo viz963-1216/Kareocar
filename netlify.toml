@@ -100,6 +100,11 @@
   status = 200
 
 [[redirects]]
+  from = "/api/v2/ltc-contracts"
+  to = "/.netlify/functions/v2-ltc-contracts"
+  status = 200
+
+[[redirects]]
   from = "/api/v2/organization-review"
   to = "/.netlify/functions/v2-organization-review"
   status = 200
