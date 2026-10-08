@@ -40,6 +40,8 @@ const mutate = require('../../netlify/functions/v2-state-mutate');
 const bookingWrite = require('../../netlify/functions/v2-booking-write');
 const tripWrite = require('../../netlify/functions/v2-trip-write');
 const claimBooking = require('../../netlify/functions/v2-claim-booking');
+const benefitRuleset = require('../../netlify/functions/v2-benefit-ruleset');
+const { BUNDLED_COPAY } = require('../../netlify/functions/_benefit-fetch');
 const { createServer } = require('../../tools/local-dev-server');
 const F = require('../../tests/_trip-fixtures');
 
@@ -718,6 +720,33 @@ async function flowFamily(cdp, baseUrl, tokens) {
         && relation.data.relationship === 'family' && relation.data.canBook === true && relation.data.canManageProfile === true
         && relation.data.isPrimaryContact === true, J(relation.data));
 
+    // #100/#101：平台核准交通分區規則，需求者先替家人試算（存在伺服器，地區用家人住址）
+    const rulesetCall = (body) => benefitRuleset.handler({ httpMethod: 'POST', headers: { host: '127.0.0.1', cookie: `cr_at=${tokens.root}` }, body: J(body) });
+    const draftRes = JSON.parse((await rulesetCall({ action: 'save_draft', ruleset: { code: 'transportation_primary', version: 'E2E.1', name: '合成交通分區規則',
+      effectiveFrom: '2026-01-01', conditions: { cmsLevels: [2, 3, 4, 5, 6, 7, 8] },
+      calculation: { mode: 'transport_zone', currency: 'TWD', cmsMin: 2, monthlyAmountByZone: { 1: 1680, 2: 1840, 3: 2000, 4: 2400 }, copayByZone: BUNDLED_COPAY },
+      source: { agency: '衛生福利部', title: '合成公告', url: 'https://example.gov.tw/ltc', checkedAt: '2026-09-01' } } })).body);
+    const approved = await rulesetCall({ action: 'approve', id: draftRes.data && draftRes.data.ruleset.id });
+    record(S, '（資料準備）平台核准交通分區補助規則', approved.statusCode === 200, approved.body.slice(0, 200));
+    await evaluate(page, "(()=>{Object.defineProperty(document,'visibilityState',{value:'visible',configurable:true});document.dispatchEvent(new Event('visibilitychange'));return true;})()");
+    await goView(page, 'benefits');
+    let trialShown = true;
+    try { await waitFor(page, "!!document.getElementById('benefitQuickCms')&&!!document.getElementById('benefitQuickRecipient')", '補助試算表單', 8000); } catch (_) { trialShown = false; }
+    record(S, '補助試算頁可以使用', trialShown);
+    await evaluate(page, `(()=>{const el=document.getElementById('benefitQuickRecipient');el.value=${J(recipient.id)};el.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+    await waitFor(page, `document.getElementById('benefitQuickRecipient').value===${J(recipient.id)}&&document.querySelector('main').innerText.includes('新北市板橋區')`, '試算頁顯示家人的地區');
+    await typeConfirmed(page, '#benefitQuickCms', '4');
+    await clickRetry(page, '#benefitQuickRunBtn');
+    const saved = await waitForDb(async () => {
+      const { rows } = await admin.query(`select data from benefit_assessments where care_recipient_id = $1 order by created_at desc limit 1`, [recipient.id]);
+      return rows[0] || null;
+    }, '家人的試算存進資料庫');
+    record(S, '試算存在伺服器：長照等級是填的，地區是家人住址的縣市（#100）',
+      saved.data.facts.cmsLevel === 4 && saved.data.facts.residenceCity === '新北市' && saved.data.createdByUserId === U.req.id, J(saved.data.facts));
+    let resultShown = true;
+    try { await waitFor(page, "/每月補助額度/.test(document.getElementById('benefitQuickResult').innerText)&&/自付比例/.test(document.getElementById('benefitQuickResult').innerText)", '試算結果顯示每月補助額度與自付比例', 10000); } catch (_) { resultShown = false; }
+    record(S, '試算結果顯示每月補助額度與自付比例', resultShown, resultShown ? '' : await evaluate(page, "document.getElementById('benefitQuickResult').innerText"));
+
     await goView(page, 'requester-new');
     await click(page, `[data-recipient-choice=${J(recipient.id)}]`);
     await click(page, '.wizard-next-btn[data-next="2"]');
@@ -732,7 +761,9 @@ async function flowFamily(cdp, baseUrl, tokens) {
     try { await waitFor(page, `document.getElementById('requesterWizardReview').textContent.includes(${J(fam.name)})`, '確認步驟顯示乘車人', 8000); }
     catch (_) { reviewed = false; }
     record(S, '確認步驟的乘車人是家人', reviewed, reviewed ? '' : await evaluate(page, "document.getElementById('requesterWizardReview').textContent"));
-    record(S, '確認步驟不顯示補助資訊（#98）', !(await evaluate(page, "/補助/.test(document.getElementById('requesterWizardReview').textContent)")));
+    record(S, '確認步驟用家人的試算顯示「若由長照特約機構承接」的每月補助額度（#101）', await evaluate(page,
+      "(()=>{const t=document.getElementById('requesterWizardReview').textContent;return t.includes('若由長照特約機構承接')&&t.includes('每月補助額度')&&t.includes('1,840');})()"),
+      await evaluate(page, "document.getElementById('requesterWizardReview').textContent"));
     await click(page, '#submitRequesterBookingBtn');
     const booking = await waitForDb(async () => {
       const { rows } = await admin.query(`select id, owner_user_id, data from app_state where collection = 'bookings' and data->>'recipientId' = $1`, [recipient.id]);
@@ -745,30 +776,8 @@ async function flowFamily(cdp, baseUrl, tokens) {
     await waitFor(page, "!!document.querySelector('.nav-btn.active[data-view=\"requester-bookings\"]')", '送出後回到我的預約');
     record(S, '我的預約顯示這筆是替家人預約（乘車人是家人、標示「家人」）', await evaluate(page,
       `[...document.querySelectorAll('main .list-item h4')].some((h)=>h.innerText.includes(${J(fam.name)})&&h.innerText.includes('家人'))`));
-    // #98：預約畫面暫不顯示補助資訊，補助試算頁照常
-    record(S, '我的預約不顯示補助資訊（#98）', !(await evaluate(page, "/補助(估算|：)/.test(document.querySelector('main').innerText)")));
-    await clickUntil(page, `.booking-history-btn[data-booking=${J(booking.id)}]`, "document.getElementById('bookingHistoryModal').classList.contains('open')", '異動紀錄視窗開啟');
-    record(S, '異動紀錄視窗不顯示補助資訊（#98）', !(await evaluate(page, "/補助/.test(document.getElementById('bookingHistoryList').innerText)")));
-    await click(page, '#bookingHistoryModal [data-close="bookingHistoryModal"]');
-    await goView(page, 'benefits');
-    let trialShown = true;
-    try { await waitFor(page, "!!document.getElementById('benefitQuickCms')&&!!document.getElementById('benefitQuickRecipient')", '補助試算表單', 8000); } catch (_) { trialShown = false; }
-    record(S, '補助試算頁照常可以使用（#98）', trialShown);
-    // #100：替家人試算，存在伺服器；地區由家人的住址判斷
-    await evaluate(page, `(()=>{const el=document.getElementById('benefitQuickRecipient');el.value=${J(recipient.id)};el.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
-    await waitFor(page, `document.getElementById('benefitQuickRecipient').value===${J(recipient.id)}&&document.querySelector('main').innerText.includes('新北市板橋區')`, '試算頁顯示家人的地區');
-    await typeConfirmed(page, '#benefitQuickCms', '4');
-    await clickRetry(page, '#benefitQuickRunBtn');
-    const saved = await waitForDb(async () => {
-      const { rows } = await admin.query(`select data from benefit_assessments where care_recipient_id = $1 order by created_at desc limit 1`, [recipient.id]);
-      return rows[0] || null;
-    }, '家人的試算存進資料庫');
-    record(S, '試算存在伺服器：長照等級是填的，地區是家人住址的縣市（#100）',
-      saved.data.facts.cmsLevel === 4 && saved.data.facts.residenceCity === '新北市' && saved.data.createdByUserId === U.req.id, J(saved.data.facts));
-    let resultShown = true;
-    try { await waitFor(page, "/尚無規則|每月補助額度|預估補助|資料不足|不符合/.test(document.getElementById('benefitQuickResult').innerText)", '試算結果顯示在頁面', 10000); } catch (_) { resultShown = false; }
-    record(S, '試算結果顯示在頁面（重新整理後仍是伺服器保存的最近一次）', resultShown);
-
+    record(S, '我的預約（接案前）顯示「若由長照特約機構承接」的補助資訊（#101）', await evaluate(page,
+      "document.querySelector('main').innerText.includes('若由長照特約機構承接')"));
     const claimed = await claimBooking.handler({ httpMethod: 'POST', headers: { host: '127.0.0.1', cookie: `cr_at=${tokens.dsp}` },
       body: J({ bookingId: booking.id, organizationId: ORG }) });
     record(S, '（資料準備）調度接案', claimed.statusCode === 200, claimed.body);
@@ -780,7 +789,7 @@ async function flowFamily(cdp, baseUrl, tokens) {
       let shown = true;
       try { await waitFor(dsp, `document.querySelector('main').innerText.includes(${J(fam.name)})`, '調度畫面顯示家人', 10000); } catch (_) { shown = false; }
       const text = await evaluate(dsp, "document.querySelector('main').innerText");
-      record(S, '調度畫面不顯示補助資訊（#98）', shown && !/補助(估算|：)/.test(text));
+      record(S, '調度畫面不顯示補助資訊（#102 才開放給承接機構）', shown && !/補助(估算|：)|每月補助額度/.test(text));
       record(S, '調度畫面顯示服務對象（家人）的姓名與需求，需求者為聯絡人',
         shown && text.includes(fam.aid) && text.includes(`聯絡人：${U.req.name}`), shown ? '' : text.slice(0, 400));
       // 排車後，司機看到的停靠點：乘車人是家人，需求者是聯絡人（#76 故事 13）
@@ -798,6 +807,20 @@ async function flowFamily(cdp, baseUrl, tokens) {
     } finally {
       await finishPage(dsp, S);
     }
+
+    // #101：承接機構不是長照特約 → 說明；平台標記長照特約後 → 標示與補助資訊
+    const refresh = () => evaluate(page, "(()=>{Object.defineProperty(document,'visibilityState',{value:'visible',configurable:true});document.dispatchEvent(new Event('visibilitychange'));return true;})()");
+    await refresh();
+    let notLtc = true;
+    try { await waitFor(page, "document.querySelector('main').innerText.includes('不是長照特約')", '我的預約顯示承接機構不是長照特約', 10000); } catch (_) { notLtc = false; }
+    record(S, '承接機構不是長照特約：我的預約說明這趟不適用、沒有金額', notLtc
+      && !(await evaluate(page, "document.querySelector('main').innerText.includes('每月補助額度')")), notLtc ? '' : await evaluate(page, "document.querySelector('main').innerText.slice(0,600)"));
+    await db.withUser(U.root.id, (c) => c.query("select app.save_ltc_contract(null, $1, '新北市', '合成特約 E2E', '2026-01-01'::date, null)", [ORG]));
+    await refresh();
+    let ltc = true;
+    try { await waitFor(page, "[...document.querySelectorAll('main .list-item')].some((el)=>el.querySelector('.pill.green')&&el.querySelector('.pill.green').innerText==='長照特約'&&el.innerText.includes('每月補助額度'))", '我的預約顯示長照特約與補助資訊', 10000); } catch (_) { ltc = false; }
+    record(S, '承接機構是長照特約：承接機構旁標「長照特約」，顯示每月補助額度與自付比例（#101）', ltc
+      && await evaluate(page, "document.querySelector('main').innerText.includes('實際以承接機構核定為準')"), ltc ? '' : await evaluate(page, "document.querySelector('main').innerText.slice(0,600)"));
   } catch (e) {
     record(S, `流程中斷：${e.message}`, false);
     await screenshot(page, 'E-family');

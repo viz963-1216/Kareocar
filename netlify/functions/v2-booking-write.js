@@ -179,6 +179,8 @@ exports.handler = async (event) => {
         await applyRequesterContact(client, { actorUserId: claims.userId, record, existing });
         await applyServerBookingFields(client, id, record);
         const benefitRepriced = await applyServerBenefit(client, record, existing);
+        // 補助顯示狀態每次載入時由伺服器重算（#101），不存前端送來的
+        delete record.benefitView;
 
         const upsert = await client.query(
           `insert into app_state (collection, id, organization_id, booking_id, data)

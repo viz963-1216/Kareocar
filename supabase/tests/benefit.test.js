@@ -100,6 +100,10 @@ function booking(id, extra = {}) {
     record: { id: RECIPIENT, identity: { displayName: '合成長輩' }, addresses: { primary: '新北市板橋區文化路一段188號' } } },
   // 沒有住址的服務對象（#100：地區由住址判斷）
   { collection: 'careRecipients', id: `${RECIPIENT}-NOADDR`, record: { id: `${RECIPIENT}-NOADDR`, identity: { displayName: '合成沒住址' } } },
+  // 還沒試算的服務對象（#101：預約顯示「尚未試算」）
+  { collection: 'careRecipients', id: `${RECIPIENT}-NOASSESS`, record: { id: `${RECIPIENT}-NOASSESS`, identity: { displayName: '合成未試算' }, addresses: { primary: '新北市三重區重新路一段1號' } } },
+  { collection: 'careRecipientRelations', id: `${RECIPIENT}-NOASSESS-REL`,
+    record: { id: `${RECIPIENT}-NOASSESS-REL`, userId: U.req, recipientId: `${RECIPIENT}-NOASSESS`, relationship: 'family', canBook: true, status: 'active' } },
   // 預約端點要求需求者對服務對象有可預約的關係（#78）
   { collection: 'careRecipientRelations', id: `${RECIPIENT}-REL`,
     record: { id: `${RECIPIENT}-REL`, userId: U.req, recipientId: RECIPIENT, relationship: 'family', canBook: true, status: 'active' } }] });
@@ -206,6 +210,42 @@ function booking(id, extra = {}) {
   record('承接機構讀得到服務對象的試算（服務中）', (dspLoad.data.collections.benefitAssessments || []).some((a) => a.recipientId === RECIPIENT));
   const dspAssess = await assess(U.dsp, { recipientId: RECIPIENT, facts: { cmsLevel: 6 } });
   record('承接機構只能讀，不能替服務對象試算（#100）', dspAssess.status === 403, outcome(dspAssess));
+
+  console.log('--- 預約上的補助資訊與長照特約（#101）---');
+  const viewOf = async (userId, id) => {
+    const l = await load(userId);
+    const bk = (l.data.collections.bookings || []).find((x) => x.id === id);
+    return bk ? bk.benefitView : undefined;
+  };
+  const saveLtc = (org, city, from, to, id = null) => db.withUser(U.root, (c) => c.query(
+    'select app.save_ltc_contract($1, $2, $3, $4, $5::date, $6::date) as id', [id, org, city, `合成特約-${org}`, from, to])).then((r) => r.rows[0].id);
+  const notLtc = await viewOf(U.req, 'BKG-BEN-2');
+  record('承接機構沒有長照特約：需求者看到「不是長照特約」與縣市，沒有金額', notLtc && notLtc.state === 'not_ltc'
+    && notLtc.city === '新北市' && notLtc.estimatedSubsidy === undefined, JSON.stringify(notLtc));
+  await saveLtc(ORG, '臺北市', '2026-01-01', null);
+  const otherCity = await viewOf(U.req, 'BKG-BEN-2');
+  record('承接機構的特約在別的縣市：仍是「不是長照特約」', otherCity && otherCity.state === 'not_ltc', JSON.stringify(otherCity));
+  const ltcId = await saveLtc(ORG, '新北市', '2026-01-01', '2026-06-30');
+  const expiredLtc = await viewOf(U.req, 'BKG-BEN-2');
+  record('承接機構的特約在接送日已過期：仍是「不是長照特約」', expiredLtc && expiredLtc.state === 'not_ltc', JSON.stringify(expiredLtc));
+  await saveLtc(ORG, '新北市', '2026-01-01', null, ltcId);
+  const contracted = await viewOf(U.req, 'BKG-BEN-2');
+  record('承接機構在服務對象縣市有有效特約：需求者看到「長照特約」與補助金額', contracted && contracted.state === 'ltc_contracted'
+    && contracted.estimatedSubsidy === 450, JSON.stringify(contracted));
+  await writeBooking(U.req, booking('BKG-BEN-OPEN', { pickupDate: '2099-03-01' }));
+  const preClaim = await viewOf(U.req, 'BKG-BEN-OPEN');
+  record('接案前：顯示「若由長照特約機構承接」的估算', preClaim && preClaim.state === 'pre_claim' && preClaim.estimatedSubsidy === 450, JSON.stringify(preClaim));
+  await writeBooking(U.req, { ...(await bookingRow('BKG-BEN-OPEN')), benefitView: { state: 'ltc_contracted', estimatedSubsidy: 99999 } });
+  record('前端送上的補助顯示狀態不存、載入時由伺服器重算', !('benefitView' in (await bookingRow('BKG-BEN-OPEN')))
+    && (await viewOf(U.req, 'BKG-BEN-OPEN')).state === 'pre_claim');
+  const noAssess = await writeBooking(U.req, booking('BKG-BEN-NOASSESS', { recipientId: `${RECIPIENT}-NOASSESS` }));
+  const noAssessView = await viewOf(U.req, 'BKG-BEN-NOASSESS');
+  record('服務對象還沒試算：預約照常建立，顯示「尚未試算」', noAssess.status === 200 && noAssessView && noAssessView.state === 'assessment_required',
+    `${outcome(noAssess)} ${JSON.stringify(noAssessView)}`);
+  const poolLoad = await load(U.dspB);
+  const poolRow = (poolLoad.data.pool || []).find((x) => x.id === 'BKG-BEN-OPEN');
+  record('需求池（接案前）不含補助資訊', poolRow && !/benefit|subsid|補助/i.test(JSON.stringify(poolRow)), JSON.stringify(poolRow || null).slice(0, 200));
+  record('其他機構讀不到這筆預約（也就讀不到補助資訊）', !((poolLoad.data.collections.bookings || []).some((x) => x.id === 'BKG-BEN-OPEN' || x.id === 'BKG-BEN-2')));
 
   console.log('--- 正式核定額度（#23 第二部分）---');
   const authCall = (userId, body) => call(authorizationFn.handler, 'POST', userId, body);

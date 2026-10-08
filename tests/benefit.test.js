@@ -143,4 +143,33 @@ ok('瀏覽器不再連政府網站或 r.jina.ai（CSP 與前端程式）', () =>
   const app = fs.readFileSync(path.join(__dirname, '..', 'js', 'app.js'), 'utf8');
   assert.ok(!/fetch\([^)]*(jina|gov\.tw)/.test(app) && !app.includes("'https://r.jina.ai/'"));
 });
+
+// #101：預約上的補助資訊狀態（依試算結果、是否已接案、承接機構是否為長照特約）
+const zoneEstimate = { status: 'eligible_estimate', estimatedSubsidy: 1343, estimatedCopay: 496, monthlyLimit: 1840, copayRate: 27, zone: 2,
+  facts: { residenceCity: '新北市' } };
+ok('預約補助狀態：沒有試算 → 尚未試算（不擋預約）', () => {
+  assert.equal(b.bookingBenefitView(null, { claimed: false }).state, 'assessment_required');
+  assert.equal(b.bookingBenefitView({ status: 'assessment_required' }, { claimed: true, ltcActive: true }).state, 'assessment_required');
+});
+ok('預約補助狀態：尚無規則、不符合、資料不足照試算結果，不顯示金額', () => {
+  for (const status of ['ruleset_required', 'not_eligible', 'insufficient_data']) {
+    const v = b.bookingBenefitView({ status, warnings: ['x'], reasons: ['y'] }, { claimed: true, ltcActive: true });
+    assert.equal(v.state, status);
+    assert.equal(v.monthlyLimit, undefined);
+  }
+});
+ok('預約補助狀態：接案前顯示「若由長照特約機構承接」的額度與比例', () => {
+  const v = b.bookingBenefitView(zoneEstimate, { claimed: false });
+  assert.deepEqual([v.state, v.monthlyLimit, v.copayRate, v.zone], ['pre_claim', 1840, 27, 2]);
+});
+ok('預約補助狀態：承接機構是長照特約 → 顯示額度與比例', () => {
+  const v = b.bookingBenefitView(zoneEstimate, { claimed: true, ltcActive: true });
+  assert.deepEqual([v.state, v.monthlyLimit, v.copayRate], ['ltc_contracted', 1840, 27]);
+});
+ok('預約補助狀態：承接機構不是長照特約（含縣市不符、過期）→ 說明原因，不顯示金額', () => {
+  const v = b.bookingBenefitView(zoneEstimate, { claimed: true, ltcActive: false });
+  assert.equal(v.state, 'not_ltc');
+  assert.equal(v.city, '新北市');
+  assert.equal(v.monthlyLimit, undefined);
+});
 console.log(`benefit: ${pass} passed`);
