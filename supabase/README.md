@@ -32,6 +32,7 @@ API 端點與各項業務規則。部署流程與上線檢查清單見 [DEPLOYME
 | `migrations/0023_typed_booking_tables.sql` | 預約與行程搬到正式資料表的擴充（ADR 0005）：寫入 app_state 時觸發器同步到 `bookings`、`booking_legs`（新）、`trips`、`trip_bookings`、`cancellations`，並回填；讀取規則與 app_state 等價、`care_ride_app` 只能讀；`app.typed_sync_diff()` 列出不一致（測試與 `tools/typed-sync-report.sh` 用） |
 | `migrations/0024_pool_reads_typed_bookings.sql` | 需求池 view 改讀 `bookings`（欄位與篩選不變）；`trips` 補 `version` 並更新同步與一致性檢查；`v2-state-load` 的預約與行程改讀正式資料表（#127） |
 | `migrations/0025_scope_reads_typed_bookings.sql` | `app.trip_resource_scope`（排車、寫行程查預約歸屬）與 `app.my_booking_service_organizations` 改讀 `bookings`（#128） |
+| `migrations/0026_anonymize_reads_typed.sql` | 刪除帳號的前置檢查與找出預約／行程、到期匿名化的服務對象與修改紀錄判斷改讀正式資料表（#129） |
 | `rollback/<名稱>.down.sql` | 每支 migration 的回復檔（`0001` 的回復會刪除所有資料，只用在空資料庫或 Staging 重建） |
 | `migrations_archive/` | 壓縮成 baseline 之前的 0001–0008，只供查閱，不再套用 |
 | `seed-test-org.sql` | 建立測試機構與負責人的一次性腳本（`tests/seed-test-org.test.sh` 驗證） |
