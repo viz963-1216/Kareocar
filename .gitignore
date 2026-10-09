@@ -15,3 +15,6 @@ supabase/.temp/
 # Cowork 交付檔案的暫存副本，正本在 netlify/ 與 supabase/ 底下
 Claude outputs/
 SHA256SUMS.txt
+
+# 效能量測的本機結果（基準另存 supabase/tests/perf/baseline.json）
+supabase/tests/perf/results.json
