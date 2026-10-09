@@ -55,7 +55,7 @@ const mutate = (userId, changes) => call(mutateFn.handler, 'POST', userId, { cha
 const writeBookings = (userId, changes) => call(bookingWriteFn.handler, 'POST', userId, { changes });
 const putBooking = (userId, b) => writeBookings(userId, [{ collection: 'bookings', id: b.id, record: b }]);
 const stored = async (id) => {
-  const row = (await admin.query(`select data from app_state where collection = 'bookings' and id = $1`, [id])).rows[0];
+  const row = (await admin.query(`select data from bookings where id = $1`, [id])).rows[0];
   return row ? row.data : null;
 };
 const geocodeCount = () => fx.geoCalls.filter((c) => c[0] === 'geocode').length;

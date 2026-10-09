@@ -90,9 +90,9 @@ const booking = (id, extra = {}) => ({
     return r.ok === true && r.data.count === 1 && r.data.results[0].version === 1;
   });
   await t('擁有者由伺服器決定，不是呼叫端說了算', () =>
-    sql("select owner_user_id from app_state where id='BKG-A'") === 'USR-VICTIM');
+    sql("select owner_user_id from bookings where id='BKG-A'") === 'USR-VICTIM');
   await t('沒帶組織的預約進入公開池（organization_id 為空）', () =>
-    sql("select coalesce(organization_id,'<null>') from app_state where id='BKG-A'") === '<null>');
+    sql("select coalesce(organization_id,'<null>') from bookings where id='BKG-A'") === '<null>');
   await t('再寫一次同一筆會累加版本', async () => {
     const r = parse(await sendBooking(victim, [booking('BKG-A', { passengerCount: 2 })]));
     return r.data.results[0].version === 2;
@@ -102,23 +102,23 @@ const booking = (id, extra = {}) => ({
   console.log('--- 越權寫入 ---');
   await t('攻擊者無法竄改他人的預約（不是假裝成功）', async () => {
     const r = parse(await sendBooking(attacker, [booking('BKG-A', { destination: '攻擊者改的' })]));
-    const untouched = sql("select data->>'destination' from app_state where id='BKG-A'");
+    const untouched = sql("select data->>'destination' from bookings where id='BKG-A'");
     return r.ok !== true && r.error.code === 'FORBIDDEN' && untouched !== '攻擊者改的';
   });
   await t('攻擊者無法把別人的預約塞給自己的組織', async () => {
     const r = parse(await sendBooking(attacker, [booking('BKG-A', { organizationId: 'ORG-TP-002' })]));
-    return r.ok !== true && sql("select coalesce(organization_id,'<null>') from app_state where id='BKG-A'") === '<null>';
+    return r.ok !== true && sql("select coalesce(organization_id,'<null>') from bookings where id='BKG-A'") === '<null>';
   });
   await t('需求者謊報 organizationId 被拒（不能替不是自己的機構建立已承接預約）', async () => {
     const r = parse(await sendBooking(victim, [booking('BKG-LIE', { organizationId: 'ORG-TP-001' })]));
     return r.ok !== true && r.error.code === 'FORBIDDEN'
-      && sql("select count(*) from app_state where id='BKG-LIE'") === '0';
+      && sql("select count(*) from bookings where id='BKG-LIE'") === '0';
   });
   await t('需求者建立第二筆預約', async () =>
     parse(await sendBooking(victim, [booking('BKG-B')])).ok === true);
   await t('預約不能從一般寫入端點寫（COLLECTION_FORBIDDEN）', async () => {
     const r = parse(await send(victim, [booking('BKG-VIA-STATE')]));
-    return r.error.code === 'COLLECTION_FORBIDDEN' && sql("select count(*) from app_state where id='BKG-VIA-STATE'") === '0';
+    return r.error.code === 'COLLECTION_FORBIDDEN' && sql("select count(*) from bookings where id='BKG-VIA-STATE'") === '0';
   });
   await t('調度員為自家組織建立的資料才留得住組織', async () => {
     const r = parse(await send(dispatcher, [{ collection: 'issues', id: 'ISS-1',
@@ -191,7 +191,7 @@ const booking = (id, extra = {}) => ({
     const r = parse(await sendTrip(dispatcher, [{ collection: 'trips', id: 'TRP-1',
       record: { id: 'TRP-1', organizationId: 'ORG-TP-001', state: '被覆蓋' }, expectedRevision: 1 }]));
     return r.ok !== true && r.error.code === 'TRIP_CONFLICT'
-      && sql("select data->>'state' from app_state where id='TRP-1'") !== '被覆蓋';
+      && sql("select data->>'state' from trips where id='TRP-1'") !== '被覆蓋';
   });
 
   console.log('--- 軟刪除 ---');
@@ -205,7 +205,7 @@ const booking = (id, extra = {}) => ({
   });
   await t('預約不能刪除', async () => {
     const r = parse(await sendBooking(victim, [{ collection: 'bookings', id: 'BKG-B', record: { id: 'BKG-B' }, deleted: true }]));
-    return r.error.code === 'VALIDATION_ERROR' && sql("select deleted from app_state where id='BKG-B'") === 'f';
+    return r.error.code === 'VALIDATION_ERROR' && sql("select deleted from bookings where id='BKG-B'") === 'f';
   });
 
   console.log('--- 公開需求池 ---');
@@ -228,7 +228,7 @@ const booking = (id, extra = {}) => ({
     return /已被其他服務單位接走|沒有權限/.test(out);
   });
   await t('承接後組織確實寫進去了（觸發器沒有把它還原）', () =>
-    sql("select organization_id from app_state where id='BKG-A'") === 'ORG-TP-001');
+    sql("select organization_id from bookings where id='BKG-A'") === 'ORG-TP-001');
   await t('不能代表自己沒加入的公司承接', () => {
     const out = psqlOutput("set role care_ride_app; select set_config('app.user_id','USR-ATTACK',false); select * from app.claim_app_state_booking('BKG-B','ORG-TP-001')");
     return /沒有權限/.test(out);
@@ -239,7 +239,7 @@ const booking = (id, extra = {}) => ({
   // 預約」，結果營運方可以直接查原始表拿到完整門牌與預約者是誰——遮蔽只做在
   // view 上，繞過 view 就沒了。現在需求池改由 security definer 的 view 提供。
   await t('營運方無法直接從原始表讀到未承接預約的門牌', () => {
-    const out = psqlOutput("set role care_ride_app; select set_config('app.user_id','USR-DISP1',false); select coalesce(string_agg(data->>'pickupAddress',','),'<none>') from app_state where collection='bookings' and organization_id is null");
+    const out = psqlOutput("set role care_ride_app; select set_config('app.user_id','USR-DISP1',false); select coalesce(string_agg(data->>'pickupAddress',','),'<none>') from bookings where organization_id is null");
     return !/文化路|100號/.test(out);
   });
   await t('營運方仍然看得到遮蔽後的需求池', async () => {

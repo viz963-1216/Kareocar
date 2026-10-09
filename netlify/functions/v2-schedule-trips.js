@@ -151,7 +151,7 @@ exports.handler = async (event) => {
         }
 
         const saved = (await client.query(
-          // 寫正式資料表（ADR 0005）；歸屬規則由觸發器處理，並同步回 app_state
+          // 寫正式資料表（ADR 0005）；歸屬規則由觸發器處理
           `insert into trips (id, organization_id, data, revision)
              values ($1, $2, $3, 1)
            returning organization_id, revision`,

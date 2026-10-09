@@ -32,6 +32,7 @@ process.env.AUTH_SESSION_SECRET = 'synthetic-session-secret-e2e-0123456789';
 // 假的 Supabase Auth 與測試簽章金鑰。本機伺服器與 function 跑在同一個行程，所以登入畫面
 // 送出的帳密會由這個替身驗證、function 端以正式的 JWT 驗證程式驗 cookie 裡的 token
 const fx = require('./_auth-fixture');
+const { selectRow } = require('./_state-tables');
 
 const { Pool } = require('pg');
 const admin = new Pool({ host, port: Number(process.env.PGPORT), database: 'careride_e2e_test', user: 'postgres' });
@@ -309,9 +310,7 @@ async function deviceRows(page, storeName) {
 
 // ---------------------------------------------------------------- 資料
 async function row(collection, id) {
-  const { rows } = await admin.query(
-    'select organization_id, owner_user_id, revision, data from app_state where collection = $1 and id = $2', [collection, id]);
-  return rows[0] || null;
+  return selectRow(admin, collection, id, ['organization_id', 'owner_user_id', 'revision', 'data']);
 }
 async function apiMutate(token, changes) {
   // 預約走 booking-write、行程走 trip-write（與前端的分流相同）
@@ -333,12 +332,12 @@ async function fixtureScheduled(bookingId, tripId) {
   const c = await admin.connect();
   try {
     await c.query('begin');
-    await c.query(`select set_config('app.state_scope_override','1',true)`);
+    // 資料庫擁有者的寫入不套用歸屬規則（0031），直接指定承接機構
     await c.query(
-      `update app_state set organization_id = $1,
+      `update bookings set organization_id = $1,
               data = data || jsonb_build_object('state','scheduled','claimStatus','claimed','status','scheduled',
                                                 'organizationId',$1::text,'tripId',$2::text)
-        where collection = 'bookings' and id = $3`, [ORG, tripId, bookingId]);
+        where id = $3`, [ORG, tripId, bookingId]);
     await c.query('commit');
   } finally { c.release(); }
 }
@@ -351,12 +350,8 @@ async function fixtureTrip(trip) {
   const c = await admin.connect();
   try {
     await c.query('begin');
-    await c.query(`select set_config('app.state_scope_override','1',true)`);
-    await c.query(
-      `insert into app_state (collection, id, trip_id, booking_id, data, revision)
-         values ('trips', $1, $1, $2, $3, 1)`, [trip.id, trip.bookingId || null, JSON.stringify(trip)]);
-    // 觸發器會清掉 INSERT 的組織；UPDATE 在 override 下才保留
-    await c.query(`update app_state set organization_id = $2, revision = 1 where collection = 'trips' and id = $1`, [trip.id, ORG]);
+    // 資料庫擁有者的寫入不套用歸屬規則（0031），直接指定機構
+    await c.query(`insert into trips (id, organization_id, data, revision) values ($1, $2, $3, 1)`, [trip.id, ORG, JSON.stringify(trip)]);
     await c.query('commit');
   } catch (e) { await c.query('rollback'); throw e; } finally { c.release(); }
 }
@@ -771,7 +766,7 @@ async function flowFamily(cdp, baseUrl, tokens) {
       await evaluate(page, "document.getElementById('requesterWizardReview').textContent"));
     await click(page, '#submitRequesterBookingBtn');
     const booking = await waitForDb(async () => {
-      const { rows } = await admin.query(`select id, owner_user_id, data from app_state where collection = 'bookings' and data->>'recipientId' = $1`, [recipient.id]);
+      const { rows } = await admin.query(`select id, owner_user_id, data from bookings where data->>'recipientId' = $1`, [recipient.id]);
       return rows[0] || null;
     }, '家人的預約寫入資料庫');
     const d = booking.data;

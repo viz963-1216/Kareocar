@@ -63,7 +63,7 @@ const assess = (userId, body) => call(assessFn.handler, 'POST', userId, body);
 const writeBooking = (userId, rec) => call(bookingWriteFn.handler, 'POST', userId, { changes: [{ collection: 'bookings', id: rec.id, record: rec }] });
 const load = (userId) => call(loadFn.handler, 'GET', userId);
 const statuses = async () => Object.fromEntries((await admin.query('select version, status from benefit_rulesets order by version')).rows.map((r) => [r.version, r.status]));
-const bookingRow = async (id) => (await admin.query(`select data from app_state where collection = 'bookings' and id = $1`, [id])).rows[0].data;
+const bookingRow = async (id) => (await admin.query(`select data from bookings where id = $1`, [id])).rows[0].data;
 
 const SOURCE = { agency: '衛生福利部', title: '合成長照交通補助公告', url: 'https://example.gov.tw/ltc', checkedAt: '2026-09-01' };
 const draft = (version, amount, extra = {}) => ({ code: 'transportation_primary', version, name: `合成規則 ${version}`,
@@ -305,7 +305,7 @@ function booking(id, extra = {}) {
   const tw = await call(scheduleFn.handler, 'POST', U.dsp, { trips: [trip] });
   record('（前提）排車並建立行程', tw.status === 200, outcome(tw));
   const tripState = async () => {
-    const r = (await admin.query(`select data, organization_id, revision from app_state where collection = 'trips' and id = $1`, [TRIP])).rows[0];
+    const r = (await admin.query(`select data, organization_id, revision from trips where id = $1`, [TRIP])).rows[0];
     return { ...r.data, organizationId: r.organization_id, revision: r.revision };
   };
   for (let i = 0; i < 3; i++) await call(executeFn.handler, 'POST', U.drv, F.completeStep(await tripState(), U.drv, new Date().toISOString()).request);
@@ -366,7 +366,7 @@ function booking(id, extra = {}) {
   record('（前提）承接機構替服務對象建立預約', opsBooking.status === 200, outcome(opsBooking));
   const benefitOf = async (id) => (await bookingRow(id)).serverComputed.benefit;
   // 前面「完成後修正」把行程改回進行中；這裡把它標回已完成，當作已完成的預約
-  await admin.query(`update app_state set data = jsonb_set(data, '{status}', '"completed"') where collection = 'trips' and id = $1`, [TRIP]);
+  await admin.query(`update trips set data = jsonb_set(data, '{status}', '"completed"') where id = $1`, [TRIP]);
   const before = { L3: await benefitOf('BKG-BEN-L3'), L4: await benefitOf('BKG-BEN-L4') };
   const reassessed = await assess(U.req, { recipientId: RECIPIENT, facts: { cmsLevel: 1 } });
   const refreshed = (reassessed.data && reassessed.data.refreshedBookingIds) || [];

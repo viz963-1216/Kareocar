@@ -21,6 +21,7 @@ process.env.DATABASE_URL = isSocket
   : `postgresql://care_ride_app@${host}:${process.env.PGPORT}/careride_access_test?sslmode=disable`;
 process.env.AUTH_SESSION_SECRET = 'synthetic-session-secret-access-0123456789';
 const fx = require('./_auth-fixture');
+const { selectRow } = require('./_state-tables');
 const F = require('../../tests/_trip-fixtures');
 
 const admin = new Pool({ host, port: Number(process.env.PGPORT), database: 'careride_access_test', user: 'postgres' });
@@ -65,8 +66,7 @@ const scheduleTrip = (userId, trip, bookingId) => call(scheduleFn.handler, 'POST
 const claim = (userId, bookingId, organizationId) => call(claimFn.handler, 'POST', userId, { bookingId, organizationId });
 const cancel = (userId, bookingId) => call(cancelFn.handler, 'POST', userId, { bookingId, reasonCode: 'requester_no_longer_needed' });
 const load = (userId) => call(loadFn.handler, 'GET', userId);
-const row = async (collection, id) => (await admin.query(
-  'select organization_id, data from app_state where collection = $1 and id = $2', [collection, id])).rows[0];
+const row = async (collection, id) => selectRow(admin, collection, id, ['organization_id', 'data']);
 const sees = (loaded, collection, id) => ((loaded.data && loaded.data.collections[collection]) || []).some((r) => r.id === id);
 const inPool = (loaded, id) => ((loaded.data && loaded.data.pool) || []).some((r) => r.id === id);
 

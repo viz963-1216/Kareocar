@@ -4,14 +4,24 @@
 #
 #   MIGRATION_DATABASE_URL=… bash tools/typed-sync-report.sh
 #
-# 不一致時列出前 20 筆並以 exit 1 結束；資料庫還沒有 0023 就略過。
+# 不一致時列出前 20 筆並以 exit 1 結束；資料庫還沒有 0023 就略過；0031 收斂之後改成檢查 app_state 沒有殘留。
 set -euo pipefail
 : "${MIGRATION_DATABASE_URL:?需要 MIGRATION_DATABASE_URL}"
 export PGOPTIONS='-c default_transaction_read_only=on'
 q() { psql "$MIGRATION_DATABASE_URL" -X -tAq -v ON_ERROR_STOP=1 -c "$1"; }
 
 if [ "$(q "select to_regprocedure('app.typed_sync_diff()') is not null")" != "t" ]; then
-  echo '還沒有 0023（app.typed_sync_diff），略過同步報告'; exit 0
+  if [ "$(q "select to_regclass('public.booking_legs') is not null")" != "t" ]; then
+    echo '還沒有 0023（app.typed_sync_diff），略過同步報告'; exit 0
+  fi
+  # 0031 收斂之後：預約與行程只在正式資料表，app_state 不應該再有
+  echo '== 已收斂（0031）：預約與行程只在正式資料表 =='
+  q "select '預約：' || count(*) || '（排車段 ' || (select count(*) from booking_legs) || '）' from bookings"
+  q "select '行程：' || count(*) || '（行程與預約的對應 ' || (select count(*) from trip_bookings) || '）' from trips"
+  LEFT="$(q "select count(*) from app_state where collection in ('bookings', 'trips')")"
+  echo "app_state 殘留的預約與行程：${LEFT}"
+  [ "${LEFT}" = "0" ] || { echo 'app_state 還有預約或行程，收斂不完整' >&2; exit 1; }
+  exit 0
 fi
 echo '== 筆數（app_state → 正式資料表）=='
 q "select '預約：' || (select count(*) from app_state where collection = 'bookings') || ' → ' || (select count(*) from bookings)"

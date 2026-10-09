@@ -96,25 +96,33 @@ insert into users (id, display_name, phone_e164, platform_role, active) values
   ('USR-MIG-DRV','合成司機','+886933000001','none',true),
   ('USR-MIG-OTHER','合成其他人','+886933000002','none',true);
 insert into memberships (id, user_id, organization_id, role, status) values ('M-MIG-DRV','USR-MIG-DRV','ORG-MIG','driver','active');
-insert into drivers (id, user_id, organization_id, duty_status, active) values ('DRV-MIG','USR-MIG-DRV','ORG-MIG','on_duty',true);
-insert into app_state (collection, id, data)
-  select 'trips', 'TRP-MIG-' || g,
+insert into drivers (id, user_id, organization_id, duty_status, active) values ('DRV-MIG','USR-MIG-DRV','ORG-MIG','on_duty',true),
+  ('DRV-OTHER','USR-MIG-OTHER','ORG-MIG','on_duty',true);
+-- 行程存在正式資料表 trips（0031 之後 app_state 不再存放行程）；資料庫擁有者的寫入保留指定的機構
+insert into trips (id, organization_id, data)
+  select 'TRP-MIG-' || g, 'ORG-MIG',
          jsonb_build_object('id', 'TRP-MIG-' || g, 'driverId', case when g % 50 = 0 then 'DRV-MIG' else 'DRV-OTHER' end, 'status', 'scheduled')
     from generate_series(1, 2000) g;
-begin;
-select set_config('app.state_scope_override', '1', true);
-update app_state set organization_id = 'ORG-MIG' where collection = 'trips';
-commit;
 SQL
 VISIBLE="$(psql -X -q -tA -v ON_ERROR_STOP=1 -d "$DB" -c 'set role care_ride_app' \
   -c "select set_config('app.user_id', 'USR-MIG-DRV', false)" \
-  -c "select count(*) from app_state where collection = 'trips'" | tail -1)"
+  -c "select count(*) from trips" | tail -1)"
 expect "司機只讀得到指派給自己的行程" "$VISIBLE" 40
 PLAN="$(psql -X -q -tA -v ON_ERROR_STOP=1 -d "$DB" -c 'set role care_ride_app' \
   -c "select set_config('app.user_id', 'USR-MIG-DRV', false)" \
-  -c "explain (analyze, costs off, timing off, summary off) select id from app_state where collection = 'trips'")"
+  -c "explain (analyze, costs off, timing off, summary off) select id from trips")"
 echo "$PLAN" | sed 's/^/    /'
 echo "$PLAN" | grep -Eq 'hashed SubPlan|InitPlan' && r=0 || r=$?; check "司機清單子查詢是 hashed SubPlan／InitPlan（每個查詢算一次）" "$r"
+
+echo "--- 3b. 收斂（0031）：預約與行程只在正式資料表 ---"
+# 讀取規則、檢視與資料庫函式都不能再到 app_state 找預約或行程（那裡已經沒有資料，查了只會得到空的）
+LEGACY_RE="collection[[:space:]]*(=[[:space:]]*'(bookings|trips)'|in[[:space:]]*\\([^)]*'(bookings|trips)')"
+expect "沒有讀取規則到 app_state 找預約或行程" "$(q -c "select coalesce(string_agg(tablename || '.' || policyname, ','), '') from pg_policies
+  where coalesce(qual, '') || ' ' || coalesce(with_check, '') ~ \$re\$$LEGACY_RE\$re\$")" ""
+expect "沒有檢視到 app_state 找預約或行程" "$(q -c "select coalesce(string_agg(viewname, ','), '') from pg_views
+  where schemaname in ('public', 'app') and definition ~ \$re\$$LEGACY_RE\$re\$")" ""
+expect "沒有資料庫函式到 app_state 找預約或行程" "$(q -c "select coalesce(string_agg(p.proname, ','), '') from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace where n.nspname in ('public', 'app') and p.prosrc ~ \$re\$$LEGACY_RE\$re\$")" ""
 
 echo "--- 4. 通知觸發器本身（隔離情境，交易結束即回滾） ---"
 # 合法後端通知：以函式擁有者身分寫入來源證明與通知（等同後端函式的寫入方式）；

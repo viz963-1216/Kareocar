@@ -20,6 +20,7 @@ process.env.DATABASE_URL = isSocket
   : `postgresql://care_ride_app@${host}:${process.env.PGPORT}/careride_privacy_test?sslmode=disable`;
 process.env.AUTH_SESSION_SECRET = 'synthetic-session-secret-privacy-0123456789';
 const fx = require('./_auth-fixture');
+const { selectRow } = require('./_state-tables');
 const F = require('../../tests/_trip-fixtures');
 
 const admin = new Pool({ host, port: Number(process.env.PGPORT), database: 'careride_privacy_test', user: 'postgres' });
@@ -55,7 +56,7 @@ const outcome = (r) => `${r.status} ${r.error ? `${r.error.code} ${r.error.messa
 const consent = (userId, body) => call(consentFn.handler, 'POST', userId, body);
 const settings = (userId, body) => call(settingsFn.handler, 'POST', userId, body);
 const writeBooking = (userId, rec) => call(bookingWriteFn.handler, 'POST', userId, { changes: [{ collection: 'bookings', id: rec.id, record: rec }] });
-const row = async (collection, id) => (await admin.query('select data from app_state where collection = $1 and id = $2', [collection, id])).rows[0];
+const row = async (collection, id) => selectRow(admin, collection, id, ['data']);
 const docs = (privacy, terms) => ({ privacy_notice: { version: privacy, url: 'https://example.org/privacy' }, terms: { version: terms, url: 'https://example.org/terms' } });
 function booking(id, extra = {}) {
   return { id, state: 'open', claimStatus: 'open', status: 'open', requestedByUserId: U.req, name: '合成王小明', phone: '0911222333',
@@ -196,7 +197,7 @@ function booking(id, extra = {}) {
           careRecipient: { displayName: '合成長輩快照', primaryPhone: '0955666777' },
           leg: { pickup: { address: '新北市板橋區文化路一段188號', lat: 25.01 } },
           locations: { pickup: { address: '新北市板橋區文化路一段188號' } } }] }] } });
-  await admin.query(`insert into app_state (collection, id, data) values ('trips', 'TRP-PRV-OLD', $1::jsonb)`, [JSON.stringify(trip)]);
+  await admin.query(`insert into trips (id, data) values ('TRP-PRV-OLD', $1::jsonb)`, [JSON.stringify(trip)]);
   const reqRun = await db.withUser(U.req, (c) => c.query('select * from app.anonymize_expired_records()')).then(() => 'allowed', (e) => e.code);
   record('一般使用者不能執行匿名化', reqRun === '42501', reqRun);
   const res = await scheduled.handler({});
@@ -293,7 +294,7 @@ function booking(id, extra = {}) {
   const delTrip = F.makeTrip({ id: 'TRP-DEL-P', organizationId: 'ORG-REQ-001', driverId: null, vehicleId: null, bookingId: 'BKG-DEL-P',
     startAt: '2025-05-01T01:00:00.000Z', extra: { status: 'completed',
       serviceProofs: [{ id: 'PD1', status: 'active', receiverName: '合成刪除者', stepId: 'x', note: '合成刪除者的證明備註' }] } });
-  await admin.query(`insert into app_state (collection, id, booking_id, data) values ('trips', 'TRP-DEL-P', 'BKG-DEL-P', $1::jsonb)`, [JSON.stringify(delTrip)]);
+  await admin.query(`insert into trips (id, data) values ('TRP-DEL-P', $1::jsonb)`, [JSON.stringify(delTrip)]);
   await admin.query(`insert into notifications (id, booking_id, recipient_user_id, template, payload, status)
     values ('NTF-DEL-P', 'BKG-DEL-P', $1, 'trip_cancelled', $2::jsonb, 'sent')`, [U.req3, JSON.stringify({ bookingId: 'BKG-DEL-P', reason: '合成刪除者的原因' })]);
   await event('tripEvents', 'TEVT-DEL-P', { tripId: 'TRP-DEL-P' }, { tripId: 'TRP-DEL-P', eventType: 'proof_service_captured', metadata: { receiverName: '合成刪除者' } });

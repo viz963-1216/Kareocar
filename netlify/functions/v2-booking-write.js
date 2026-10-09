@@ -183,7 +183,7 @@ exports.handler = async (event) => {
         delete record.benefitView;
 
         const upsert = await client.query(
-          // 寫正式資料表（ADR 0005）；歸屬規則與衍生欄位由觸發器處理，並同步回 app_state
+          // 寫正式資料表（ADR 0005）；歸屬規則與衍生欄位由觸發器處理
           `insert into bookings (id, organization_id, data)
              values ($1, $2, $3)
            on conflict (id) do update
