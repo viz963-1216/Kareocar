@@ -18,3 +18,5 @@ for migration in "$ROOT"/supabase/migrations/*.sql; do
 done
 
 PGDATABASE=careride_schedule_test node "$ROOT/supabase/tests/schedule-trips.test.js"
+
+bash "$ROOT/supabase/tests/assert-typed-sync.sh" careride_schedule_test

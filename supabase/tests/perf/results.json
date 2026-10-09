@@ -1,0 +1,72 @@
+{
+  "generatedAt": "2026-10-09T08:52:21.124Z",
+  "driver": "pg",
+  "runs": 3,
+  "counts": [
+    {
+      "collection": "bookings",
+      "n": 12000
+    },
+    {
+      "collection": "careRecipients",
+      "n": 2000
+    },
+    {
+      "collection": "trips",
+      "n": 6000
+    }
+  ],
+  "measurements": [
+    {
+      "name": "載入資料：需求者",
+      "medianMs": 194.4,
+      "minMs": 182.3,
+      "runs": 3
+    },
+    {
+      "name": "載入資料：調度",
+      "medianMs": 305.4,
+      "minMs": 296.5,
+      "runs": 3
+    },
+    {
+      "name": "載入資料：司機",
+      "medianMs": 186.9,
+      "minMs": 182,
+      "runs": 3
+    },
+    {
+      "name": "需求池",
+      "medianMs": 120,
+      "minMs": 116.1,
+      "runs": 3,
+      "plan": [
+        "（這個驅動取不到查詢計畫）"
+      ]
+    },
+    {
+      "name": "單筆預約讀取（承接機構）",
+      "medianMs": 17.1,
+      "minMs": 15,
+      "runs": 3,
+      "plan": [
+        "（這個驅動取不到查詢計畫）"
+      ]
+    },
+    {
+      "name": "服務對象還沒完成的預約",
+      "medianMs": 22.5,
+      "minMs": 21.1,
+      "runs": 3,
+      "plan": [
+        "（這個驅動取不到查詢計畫）"
+      ]
+    },
+    {
+      "name": "到期匿名化（全部到期）",
+      "medianMs": 2740.4,
+      "minMs": 2539.6,
+      "runs": 3
+    }
+  ]
+}

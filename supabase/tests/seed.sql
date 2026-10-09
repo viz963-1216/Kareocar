@@ -35,18 +35,18 @@ insert into care_recipients (id, display_name, residence_address) values
 insert into care_recipient_contacts (id, care_recipient_id, user_id, name, relation) values
   ('CRC-1','CR-1','USR-VICTIM','受害需求者','子女');
 
-insert into bookings (id, care_recipient_id, requested_by_user_id, organization_id, state,
-                      pickup_address, destination, version) values
-  ('BKG-VICTIM','CR-1','USR-VICTIM','ORG-TP-001','claimed',
-   '台北市大安區復興南路一段100號','台北市中正區公園路20號', 3),
-  ('BKG-OPEN',  'CR-1','USR-VICTIM', null,        'open',
-   '新北市板橋區文化路二段50號','台北市士林區中山北路五段99號', 1);
-
-insert into trips (id, organization_id, driver_id, state, revision) values
-  ('TRIP-1','ORG-TP-001','DRV-1','scheduled', 2);
-
-insert into trip_bookings (id, trip_id, booking_id) values
-  ('TB-1','TRIP-1','BKG-VICTIM');
+-- 預約與行程存在 app_state（API 的資料來源）；正式資料表由 0023 的同步產生（ADR 0005）。
+-- 以 postgres 寫入時 app_state_force_scope 會清掉機構歸屬，種子資料暫時關掉它。
+alter table app_state disable trigger app_state_force_scope;
+insert into app_state (collection, id, owner_user_id, organization_id, booking_id, version, data) values
+  ('bookings','BKG-VICTIM','USR-VICTIM','ORG-TP-001','BKG-VICTIM', 3,
+   '{"id":"BKG-VICTIM","recipientId":"CR-1","requestedByUserId":"USR-VICTIM","state":"claimed","status":"claimed","pickupAddress":"台北市大安區復興南路一段100號","destination":"台北市中正區公園路20號"}'),
+  ('bookings','BKG-OPEN','USR-VICTIM', null,'BKG-OPEN', 1,
+   '{"id":"BKG-OPEN","recipientId":"CR-1","requestedByUserId":"USR-VICTIM","state":"open","status":"open","pickupAddress":"新北市板橋區文化路二段50號","destination":"台北市士林區中山北路五段99號"}');
+insert into app_state (collection, id, organization_id, trip_id, revision, data) values
+  ('trips','TRIP-1','ORG-TP-001','TRIP-1', 2,
+   '{"id":"TRIP-1","organizationId":"ORG-TP-001","driverId":"DRV-1","status":"scheduled","bookingIds":["BKG-VICTIM"]}');
+alter table app_state enable trigger app_state_force_scope;
 
 insert into audit_events (id, event_type, actor_user_id, organization_id) values
   ('AUD-1','booking.created','USR-VICTIM','ORG-TP-001');

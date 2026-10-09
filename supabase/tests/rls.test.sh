@@ -33,10 +33,11 @@ check_err() { # check_err <說明> <輸出> <應包含>
 echo "═══ 攻擊模擬：這些就是上一輪修掉的漏洞 ═══"
 check "攻擊者看不到他人的預約" \
   "$(as USR-ATTACK "select count(*) from bookings where id='BKG-VICTIM';")" "0"
-check "攻擊者更新他人預約：影響 0 列" \
-  "$(as USR-ATTACK "with u as (update bookings set state='cancelled' where id='BKG-VICTIM' returning 1) select count(*) from u;")" "0"
-check "攻擊者無法把自己塞成他人預約的擁有者" \
-  "$(as USR-ATTACK "with u as (update bookings set requested_by_user_id='USR-ATTACK' where id='BKG-VICTIM' returning 1) select count(*) from u;")" "0"
+# 正式資料表只能讀（0023）：寫入只走 API（app_state）與同步，任何人直接改都被拒
+check_err "攻擊者不能直接改正式資料表的預約" \
+  "$(as_raw USR-ATTACK "update bookings set state='cancelled' where id='BKG-VICTIM';")" "permission denied"
+check_err "攻擊者無法把自己塞成他人預約的擁有者" \
+  "$(as_raw USR-ATTACK "update bookings set requested_by_user_id='USR-ATTACK' where id='BKG-VICTIM';")" "permission denied"
 check "攻擊者看不到他人的服務對象" \
   "$(as USR-ATTACK "select count(*) from care_recipients where id='CR-1';")" "0"
 check "攻擊者看不到他人的行程" \
@@ -54,16 +55,19 @@ check "需求者看得到自己的預約" \
   "$(as USR-VICTIM "select count(*) from bookings;")" "2"
 check "需求者看得到自己的服務對象" \
   "$(as USR-VICTIM "select count(*) from care_recipients;")" "1"
-check "需求者可以更新自己的預約" \
-  "$(as USR-VICTIM "with u as (update bookings set special_needs='需要陪同' where id='BKG-VICTIM' returning 1) select count(*) from u;")" "1"
+check_err "需求者也不能直接改正式資料表（寫入只走 API 與同步）" \
+  "$(as_raw USR-VICTIM "update bookings set special_needs='需要陪同' where id='BKG-VICTIM';")" "permission denied"
 check "調度員看得到自家組織的預約" \
   "$(as USR-DISP1 "select count(*) from bookings where organization_id='ORG-TP-001';")" "1"
 check "調度員看得到自家行程" \
   "$(as USR-DISP1 "select count(*) from trips;")" "1"
 check "司機看得到自己被派的行程" \
   "$(as USR-DRV1 "select count(*) from trips;")" "1"
-check "司機看得到該行程上的預約" \
-  "$(as USR-DRV1 "select count(*) from bookings where id='BKG-VICTIM';")" "1"
+# 與 app_state 相同：司機從行程讀到需要的資料，看不到預約本身
+check "司機看不到預約本身（行程裡已有需要的資料）" \
+  "$(as USR-DRV1 "select count(*) from bookings where id='BKG-VICTIM';")" "0"
+check "司機看得到自己行程的預約關聯" \
+  "$(as USR-DRV1 "select count(*) from trip_bookings where trip_id='TRIP-1';")" "1"
 check "B 隊負責人看不到 A 隊的行程" \
   "$(as USR-OWN2 "select count(*) from trips;")" "0"
 check "超級管理者看得到全部預約" \
@@ -84,13 +88,16 @@ check "需求池沒有預約者欄位" \
 
 echo
 echo "═══ 承接競爭：資料庫層的交易保證 ═══"
+# 接案走 API 實際使用的 app.claim_app_state_booking；正式資料表由同步跟著更新
 check "調度員成功承接公開案件" \
-  "$(as USR-DISP1 "select state from app.claim_booking('BKG-OPEN','ORG-TP-001');")" "claimed"
+  "$(as USR-DISP1 "select organization_id from app.claim_app_state_booking('BKG-OPEN','ORG-TP-001');")" "ORG-TP-001"
+check "承接後正式資料表跟著同步" \
+  "$(as_owner USR-ROOT "select organization_id || ' ' || state from bookings where id='BKG-OPEN';")" "ORG-TP-001 claimed"
 check_err "第二個人再搶同一張單會失敗" \
-  "$(as_raw USR-OWN2 "select state from app.claim_booking('BKG-OPEN','ORG-TP-002');")" \
+  "$(as_raw USR-OWN2 "select organization_id from app.claim_app_state_booking('BKG-OPEN','ORG-TP-002');")" \
   "已被其他服務單位接走"
 check_err "不能代表自己沒加入的公司承接" \
-  "$(as_raw USR-DISP1 "select state from app.claim_booking('BKG-VICTIM','ORG-TP-002');")" \
+  "$(as_raw USR-DISP1 "select organization_id from app.claim_app_state_booking('BKG-VICTIM','ORG-TP-002');")" \
   "沒有權限代表這個組織承接案件"
 
 echo

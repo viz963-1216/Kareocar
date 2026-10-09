@@ -25,3 +25,5 @@ done
 export TZ=UTC
 export E2E_ARTIFACT_DIR="${E2E_ARTIFACT_DIR:-$(mktemp -d /tmp/care-ride-e2e-XXXXXX)}"
 PGDATABASE=careride_e2e_test node "$ROOT/supabase/tests/browser-e2e.test.js"
+
+bash "$ROOT/supabase/tests/assert-typed-sync.sh" careride_e2e_test

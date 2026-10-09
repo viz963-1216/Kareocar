@@ -40,6 +40,8 @@ for suite in session identity orgs identity-write state load wiring; do
   if ! node "$HERE/$suite.test.js"; then total_fail=$((total_fail+1)); fi
 done
 
+bash "$HERE/assert-typed-sync.sh" "$PGDATABASE" || total_fail=$((total_fail+1))
+
 # RLS 測試比對的是精確筆數，前面幾支已經加了資料，所以先把種子重灌回去
 echo
 echo "== RLS 政策測試 =="
