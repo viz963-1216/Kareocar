@@ -2166,7 +2166,8 @@ Organization = {
     const organization=this.get(organizationId); if(!organization||organization.active===false) return {ok:false,error:'機構目前不可排車'};
     const rawDriver=store.state.drivers.find(d=>d.id===driverId);
     if(!rawDriver||rawDriver.organizationId!==organizationId||rawDriver.active===false||!activeDriverMembership(rawDriver.userId,organizationId)) return {ok:false,error:'司機不存在、已停用或不屬於目前機構'};
-    if(rawDriver.status!=='on_duty') return {ok:false,error:'此司機目前不是執勤中，不能指派新行程'};
+    // 排車不看司機現在有沒有執勤（未執勤、休息中也能排未來的行程）；只有被機構設為「不可排車」的不能排
+    if(rawDriver.status==='unavailable') return {ok:false,error:'此司機目前被設定為不可排車，不能指派新行程'};
     const vehicle=this.vehicle(vehicleId);
     if(!vehicle||vehicle.organizationId!==organizationId) return {ok:false,error:'車輛不存在或不屬於目前機構'};
     if(vehicle.status!=='available') return {ok:false,error:`車輛目前為「${this.vehicleStatusLabel(vehicle.status)}」，不可排車`};
@@ -2417,7 +2418,7 @@ function availableVehicleForWindow(organizationId,start,end,requirements={},rese
 function feasibility(driver,booking,organizationId){
   const reasons=[];
   if(!driver||driver.active===false) reasons.push('司機資料已停用');
-  if(driver&&driver.status!=='on_duty') reasons.push('司機目前非執勤中');
+  if(driver&&driver.status==='unavailable') reasons.push('司機目前被設定為不可排車');
   if(driver&&!store.state.memberships.some(m=>m.userId===driver.userId&&m.organizationId===organizationId&&m.role==='driver'&&(m.status||'active')==='active')) reasons.push('司機成員資格已失效或不屬於目前機構');
   const pickupAt=Booking.dateTime(booking);
   if(!pickupAt)return {feasible:false,reasons:[...reasons,'預約日期時間無效，請先修正預約'],vehicle:null,previous:null,next:null,pickupAt:null,dropoffAt:null};
@@ -2602,7 +2603,7 @@ function objectiveProfile(name='balanced'){ return DISPATCH_POLICY.objectiveProf
 function planFeasibility(driver,item,otherItems,date,objectiveName='balanced',options={}){
   const reasons=[],blockedDriverIds=new Set(options.blockedDriverIds||[]);
   if(blockedDriverIds.has(driver.id)) reasons.push('此司機在本次局部重排中被標記為不可再指派');
-  if(driver.status!=='on_duty') reasons.push('司機目前非執勤');
+  if(driver.status==='unavailable') reasons.push('司機目前被設定為不可排車');
   if(driver.active===false) reasons.push('司機資料已停用');
   if(!store.state.memberships.some(m=>m.userId===driver.userId&&m.organizationId===item.organizationId&&m.role==='driver'&&(m.status||'active')==='active')) reasons.push('司機成員資格已失效');
   const timeline=[...driverTimeline(driver.id,date,options.excludeTripIds||[]).map(t=>({start:tripStartAt(t),end:tripEndAt(t),from:tripFirstPickupAddress(t),to:tripLastDropoffAddress(t)})),...otherItems.filter(x=>x.driverId===driver.id).map(x=>({start:new Date(x.startAt),end:new Date(x.endAt),from:x.firstPickupAddress,to:x.finalDropoffAddress}))].sort((a,b)=>a.start-b.start);
@@ -2696,7 +2697,7 @@ function marketFitScore(booking,organizationId,actorUserId){
     const route=DispatchRouting.estimate(driver.serviceArea||'',view.pickupAddress,{departureAt:pickupAt});
     const driverConflict=driverTimeline(driver.id,view.pickupDate).some(t=>tripStartAt(t)<endAt&&tripEndAt(t)>windowStart);
     const vehicle=availableVehicleForWindow(organizationId,windowStart,endAt,requirements);
-    return {driver,route,vehicle,driverConflict,exactReady:driver.status==='on_duty'&&!driverConflict&&!!vehicle};
+    return {driver,route,vehicle,driverConflict,exactReady:driver.status!=='unavailable'&&!driverConflict&&!!vehicle};
   });
   const bestExact=candidateRows.filter(x=>x.exactReady).sort((a,b)=>a.route.durationMinutes-b.route.durationMinutes)[0],best=(bestExact||candidateRows.sort((a,b)=>a.route.durationMinutes-b.route.durationMinutes)[0]);
   const area=addressAffinity(best.driver.serviceArea||'',view.pickupAddress),deadhead=Math.max(0,25-Math.round(best.route.durationMinutes*.8)),areaScore=area.score>=68?15:area.score>=30?10:area.score>=16?6:2;
@@ -2766,7 +2767,7 @@ Dispatch = {
     const threshold=fromAt?new Date(fromAt):new Date();
     return store.state.trips.filter(t=>t.organizationId===organizationId&&(bookingId||t.date===date)&&t.status==='scheduled'&&tripStartAt(t)>=threshold).filter(t=>{
       const driver=Organization.driver(t.driverId),membership=driver&&store.state.memberships.find(m=>m.userId===driver.userId&&m.organizationId===organizationId&&m.role==='driver'),vehicle=Organization.vehicle(t.vehicleId);
-      const invalidResource=!driver||driver.active===false||driver.status!=='on_duty'||(membership?.status||'missing')!=='active'||!vehicle||vehicle.status!=='available';
+      const invalidResource=!driver||driver.active===false||driver.status==='unavailable'||(membership?.status||'missing')!=='active'||!vehicle||vehicle.status!=='available';
       const explicit=(driverId&&t.driverId===driverId)||(vehicleId&&t.vehicleId===vehicleId)||(bookingId&&(t.bookingIds||[]).includes(bookingId));
       return driverId||vehicleId||bookingId?!!explicit:invalidResource;
     });
@@ -2818,7 +2819,7 @@ Dispatch = {
     if(!actorUserId||!Identity?.canUser?.(actorUserId,DISPATCH_BOOKING_PERMISSION.SCHEDULE,plan.organizationId)) return {ok:false,error:'你沒有確認調度方案／建立預約行程的權限'};
     if(plan.status!=='draft') return {ok:false,error:'此調度方案已不是待確認狀態，請重新產生最佳化方案'};
     const fresh=this.validatePlanFreshness(plan);if(!fresh.ok){store.mutate(db=>{const p=db.dispatchPlans.find(x=>x.id===planId);if(p){p.staleAt=nowISO();p.staleReason=fresh.staleReason;}});return fresh;}
-    const blocked=plan.items.filter(i=>!i.feasible||!i.driverId||!i.vehicleId||Organization.driver(i.driverId)?.status!=='on_duty'||Organization.vehicle(i.vehicleId)?.status!=='available'); if(blocked.length) return {ok:false,error:`仍有 ${blocked.length} 趟的司機／車輛不可執行，請重新最佳化或改派`};
+    const blocked=plan.items.filter(i=>!i.feasible||!i.driverId||!i.vehicleId||Organization.driver(i.driverId)?.status==='unavailable'||Organization.vehicle(i.vehicleId)?.status!=='available'); if(blocked.length) return {ok:false,error:`仍有 ${blocked.length} 趟的司機／車輛不可執行，請重新最佳化或改派`};
     store.mutate(db=>{ const p=db.dispatchPlans.find(x=>x.id===planId); p.status='confirmed'; p.confirmedAt=nowISO(); p.confirmedByUserId=actorUserId; });
     Audit.log('dispatch_confirmed',`確認調度方案 ${planId}`,{dispatchPlanId:planId,organizationId:plan.organizationId,actorUserId});
     return {ok:true,plan:store.state.dispatchPlans.find(p=>p.id===planId)};
@@ -3967,7 +3968,7 @@ Trip = {
   completeCurrentStep(tripId,actorUserId,options={}){
     const lock=acquireTripMutationLock(tripId,actorUserId);if(!lock.ok)return lock;
     try{
-      store.refreshFromStorage?.();const trip=this.get(tripId);if(!trip)return {ok:false,error:'找不到行程'};if(options.idempotencyKey&&tripMutationReceipt(trip,options.idempotencyKey))return {ok:true,duplicate:true,trip,final:trip.status==='completed'};const step=this.currentStep(trip);if(!step)return {ok:false,error:'沒有可完成的步驟'};const access=tripExecutionAccess(trip,actorUserId);if(!access.ok)return access;if(trip.status==='interrupted')return {ok:false,error:'此行程已中斷，需由調度完成處理並恢復後才能繼續執行步驟'};if(['completed','cancelled','aborted'].includes(trip.status))return {ok:false,error:'此行程已完成、取消或終止，不能再執行步驟'};if(trip.status==='scheduled'){const window=tripExecutionWindowState(trip);if(!window.ok)return {ok:false,tooEarly:true,error:window.error,executionWindow:window};}
+      store.refreshFromStorage?.();const trip=this.get(tripId);if(!trip)return {ok:false,error:'找不到行程'};if(options.idempotencyKey&&tripMutationReceipt(trip,options.idempotencyKey))return {ok:true,duplicate:true,trip,final:trip.status==='completed'};const step=this.currentStep(trip);if(!step)return {ok:false,error:'沒有可完成的步驟'};const access=tripExecutionAccess(trip,actorUserId);if(!access.ok)return access;const execDriver=Organization.driver(trip.driverId);if(trip.status==='scheduled'&&execDriver&&execDriver.userId===actorUserId&&execDriver.status!=='on_duty')return {ok:false,error:'請先按「開始執勤」，再開始執行這趟行程'};if(trip.status==='interrupted')return {ok:false,error:'此行程已中斷，需由調度完成處理並恢復後才能繼續執行步驟'};if(['completed','cancelled','aborted'].includes(trip.status))return {ok:false,error:'此行程已完成、取消或終止，不能再執行步驟'};if(trip.status==='scheduled'){const window=tripExecutionWindowState(trip);if(!window.ok)return {ok:false,tooEarly:true,error:window.error,executionWindow:window};}
       const expectedRevision=options.expectedRevision??trip.revision,expectedStepId=options.expectedStepId||step.id,idempotencyKey=options.idempotencyKey||makeTripMutationKey('complete_step',tripId,expectedStepId,expectedRevision),guard=checkTripMutationGuard(trip,{expectedRevision,expectedStepId,idempotencyKey});if(!guard.ok||guard.duplicate)return guard.duplicate?{ok:true,duplicate:true,trip,final:trip.status==='completed'}:guard;
       if(step.type==='pickup'){const p=validatePassengerStateForStep(trip,step,'onboard');if(!p.ok)return p;}if(step.type==='dropoff'){const p=validatePassengerStateForStep(trip,step,'dropped_off');if(!p.ok)return p;}
       const timestamp=nowISO(),timing=this.classifyTiming(step,timestamp);let final=false,result={ok:false,error:'停靠點執行失敗'};
@@ -6506,7 +6507,7 @@ function openBookingAsTrip(id){
   const best=Dispatch.recommendDrivers(b,orgId(),Identity.currentUser()?.id).find(x=>x.feasible); if(!best){showToast('目前沒有可執行的司機＋車輛組合');return;}
   selectedBookingId=id;selectedBookingLegId=b.activeLegId;selectedCreateTripMutationKey=uid('tripcreate'); $('newPassenger').value=raw.name||''; $('newPhone').value=raw.phone||''; $('newPickup').value=b.pickupAddress||''; $('newDropoff').value=b.destination||''; $('newPickupAt').value=toLocalInput(pickupAt); $('newNeed').value=Booking.needsText(raw)==='一般接送需求'?'':Booking.needsText(raw); $('newDriver').innerHTML=driverOptions(best.driver.id); $('newVehicle').innerHTML=vehicleOptions(best.vehicle?.id||''); $('driverRecommendHint').innerHTML=`<strong>${escapeHTML(b.activeLegLabel)}｜調度建議：${escapeHTML(best.driver.name)}＋${escapeHTML(best.vehicle?.plate||'無可用車輛')}｜效率 ${best.score}/100</strong><br>${best.reasons.map(escapeHTML).join('・')}${b.pickupAccessNote?`<br>上車注意：${escapeHTML(b.pickupAccessNote)}`:''}${b.destinationAccessNote?`<br>目的地注意：${escapeHTML(b.destinationAccessNote)}`:''}`; openModal('createTripModal');
 }
-function driverOptions(selected=''){ return `<option value="">未指派</option>${Organization.drivers(orgId()).map(d=>`<option value="${d.id}" ${d.id===selected?'selected':''}>${escapeHTML(d.name)}｜${d.status==='on_duty'?'執勤中':'目前非執勤'}</option>`).join('')}`; }
+function driverOptions(selected=''){ return `<option value="">未指派</option>${Organization.drivers(orgId()).map(d=>`<option value="${d.id}" ${d.id===selected?'selected':''}>${escapeHTML(d.name)}｜${escapeHTML(Organization.driverStatusLabel(d.status))}</option>`).join('')}`; }
 function vehicleOptions(selected=''){ return `<option value="">未指派</option>${Organization.dispatchableVehicles(orgId()).map(v=>`<option value="${v.id}" ${v.id===selected?'selected':''}>${escapeHTML(v.plate)}｜${escapeHTML(v.model)}｜${v.capacity}人／輪椅${v.wheelchairSlots}</option>`).join('')}`; }
 function canAssignTripResources(){ return Identity.can('trip.manage'); }
 function canManageVehicles(){ return Identity.can('vehicle.manage'); }
