@@ -25,7 +25,7 @@ function sanitize(record) {
 async function applyServerBookingFields(client, id, record) {
   const hash = geo.addressKey(record.pickupAddress, record.destination);
   const stored = (await client.query(
-    `select data->'serverComputed' as sc from app_state where collection = 'bookings' and id = $1`, [id])).rows[0];
+    `select data->'serverComputed' as sc from bookings where id = $1`, [id])).rows[0];
   const current = stored && stored.sc && typeof stored.sc === 'object' ? stored.sc : null;
   record.serverComputed = current && current.addressKey === hash
     ? current
