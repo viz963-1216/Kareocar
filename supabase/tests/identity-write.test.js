@@ -14,7 +14,7 @@ const FN = path.join(__dirname, '..', '..', 'netlify', 'functions');
 const PGHOST = process.env.PGHOST || '/tmp/pgrun';
 const PGPORT = process.env.PGPORT || '5433';
 const PGDATABASE = process.env.PGDATABASE || 'careride';
-process.env.DATABASE_URL = `postgresql://care_ride_app@${encodeURIComponent(PGHOST)}:${PGPORT}/${PGDATABASE}`;
+process.env.DATABASE_URL = `postgresql://care_ride_app@${encodeURIComponent(PGHOST)}:${PGPORT}/${PGDATABASE}?sslmode=disable`;
 process.env.AUTH_SESSION_SECRET = 'test-session-secret-0123456789abcdef';
 
 const sql = (q) => execFileSync('psql', ['-h', PGHOST, '-p', PGPORT, '-U', 'postgres',
