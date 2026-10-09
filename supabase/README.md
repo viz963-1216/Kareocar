@@ -34,6 +34,7 @@ API 端點與各項業務規則。部署流程與上線檢查清單見 [DEPLOYME
 | `migrations/0025_scope_reads_typed_bookings.sql` | `app.trip_resource_scope`（排車、寫行程查預約歸屬）與 `app.my_booking_service_organizations` 改讀 `bookings`（#128） |
 | `migrations/0026_anonymize_reads_typed.sql` | 刪除帳號的前置檢查與找出預約／行程、到期匿名化的服務對象與修改紀錄判斷改讀正式資料表（#129） |
 | `migrations/0027_notify_benefit_reads_typed.sql` | 通知需求者、補助保留／結算、服務對象補助的讀取權限、重新試算要更新的預約改讀正式資料表（#130） |
+| `migrations/0028_booking_child_read_by_current_org.sql` | 預約的異動紀錄（bookingEvents）與修改快照（bookingRevisions）改依預約「現在」的承接機構決定營運方能不能讀：退回後原機構讀不到、新接手的機構看得到之前的紀錄（#131） |
 | `rollback/<名稱>.down.sql` | 每支 migration 的回復檔（`0001` 的回復會刪除所有資料，只用在空資料庫或 Staging 重建） |
 | `migrations_archive/` | 壓縮成 baseline 之前的 0001–0008，只供查閱，不再套用 |
 | `seed-test-org.sql` | 建立測試機構與負責人的一次性腳本（`tests/seed-test-org.test.sh` 驗證） |
