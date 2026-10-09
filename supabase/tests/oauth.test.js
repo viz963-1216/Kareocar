@@ -11,14 +11,10 @@
  * 只允許本機隔離端點與固定測試庫名稱。
  */
 const path = require('path');
-const Module = require('module');
 const { execFileSync } = require('child_process');
 
-const origResolve = Module._resolveFilename;
-Module._resolveFilename = function (request, ...rest) {
-  if (request === 'pg') return require.resolve('./pg-psql-shim.js');
-  return origResolve.call(this, request, ...rest);
-};
+// 預設用真正的 pg；裝不了 pg 的環境才退回 psql 替身（見 _pg-driver.js）
+require('./_pg-driver');
 
 const host = process.env.PGHOST;
 const isSocket = Boolean(host) && host.startsWith('/tmp/care-ride-');
