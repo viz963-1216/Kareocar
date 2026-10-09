@@ -30,6 +30,7 @@ API 端點與各項業務規則。部署流程與上線檢查清單見 [DEPLOYME
 | `migrations/0021_recipient_booking_benefit.sql` | 重新試算時更新預約的補助估算：`app.recipient_refreshable_bookings`（列出還沒完成的預約）、`app.set_booking_benefit`（寫入估算）；只有服務對象建立者與平台超級管理者，已取消／婉拒／過期或行程都已完成的不動 |
 | `migrations/0022_drop_leg_assignment.sql` | 清掉預約去程／回程上的平台指定機構欄位（功能移除，#110；跨機構排車改走需求池，ADR 0004）；只有資料清理 |
 | `migrations/0023_typed_booking_tables.sql` | 預約與行程搬到正式資料表的擴充（ADR 0005）：寫入 app_state 時觸發器同步到 `bookings`、`booking_legs`（新）、`trips`、`trip_bookings`、`cancellations`，並回填；讀取規則與 app_state 等價、`care_ride_app` 只能讀；`app.typed_sync_diff()` 列出不一致（測試與 `tools/typed-sync-report.sh` 用） |
+| `migrations/0024_pool_reads_typed_bookings.sql` | 需求池 view 改讀 `bookings`（欄位與篩選不變）；`trips` 補 `version` 並更新同步與一致性檢查；`v2-state-load` 的預約與行程改讀正式資料表（#127） |
 | `rollback/<名稱>.down.sql` | 每支 migration 的回復檔（`0001` 的回復會刪除所有資料，只用在空資料庫或 Staging 重建） |
 | `migrations_archive/` | 壓縮成 baseline 之前的 0001–0008，只供查閱，不再套用 |
 | `seed-test-org.sql` | 建立測試機構與負責人的一次性腳本（`tests/seed-test-org.test.sh` 驗證） |
