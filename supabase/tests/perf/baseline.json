@@ -1,0 +1,80 @@
+{
+  "generatedAt": "2026-10-09T08:56:40.121Z",
+  "driver": "pg",
+  "runs": 5,
+  "counts": [
+    {
+      "collection": "bookings",
+      "n": 12000
+    },
+    {
+      "collection": "careRecipients",
+      "n": 2000
+    },
+    {
+      "collection": "trips",
+      "n": 6000
+    }
+  ],
+  "measurements": [
+    {
+      "name": "載入資料：需求者",
+      "medianMs": 345.3,
+      "minMs": 341.8,
+      "runs": 5
+    },
+    {
+      "name": "載入資料：調度",
+      "medianMs": 499.4,
+      "minMs": 477.1,
+      "runs": 5
+    },
+    {
+      "name": "載入資料：司機",
+      "medianMs": 343.2,
+      "minMs": 340.7,
+      "runs": 5
+    },
+    {
+      "name": "需求池",
+      "medianMs": 119.5,
+      "minMs": 118.1,
+      "runs": 5,
+      "plan": [
+        "Limit",
+        "Sort",
+        "Result",
+        "Bitmap Heap Scan app_state",
+        "Bitmap Index Scan app_state_pool_idx"
+      ]
+    },
+    {
+      "name": "單筆預約讀取（承接機構）",
+      "medianMs": 2,
+      "minMs": 1.9,
+      "runs": 5,
+      "plan": [
+        "Index Scan app_state app_state_pkey",
+        "ProjectSet",
+        "Result"
+      ]
+    },
+    {
+      "name": "服務對象還沒完成的預約",
+      "medianMs": 9.7,
+      "minMs": 8.5,
+      "runs": 5,
+      "plan": [
+        "Function Scan"
+      ]
+    },
+    {
+      "name": "到期匿名化（全部到期）",
+      "medianMs": 12334.3,
+      "minMs": 12159.7,
+      "runs": 5
+    }
+  ],
+  "source": "GitHub Actions isolated-sql-review（postgres 服務容器，node 24），PR #134",
+  "note": "預約與行程搬到正式資料表（#119）之前的基準；#133 以同一份資料與量測比較"
+}
