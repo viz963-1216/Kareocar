@@ -148,6 +148,19 @@ jobs:
       - name: 備份與還原演練腳本（加密、筆數清單、還原比對；密碼錯、檔案被改、筆數不符、目標非空都失敗）
         run: bash supabase/tests/backup-restore.test.sh
 
+      - name: 效能量測（#125：預約與行程搬表前的基準；只記錄，不因數字失敗）
+        run: bash supabase/tests/run-perf.sh
+        env:
+          PERF_OUT: ${{ runner.temp }}/perf/results-node${{ matrix.node }}.json
+
+      - name: 保存效能量測結果
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-results-node${{ matrix.node }}
+          path: ${{ runner.temp }}/perf
+          retention-days: 30
+
   browser-e2e:
     # 在真的 Chrome 裡操作 index.html：調度接案、司機執行（含離線／返回／服務
     # 證明照片）、需求者取消與通知。Chrome 是 runner 映像內建的，不另外安裝；
