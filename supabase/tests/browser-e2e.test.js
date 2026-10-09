@@ -665,6 +665,8 @@ async function flowSchedule(cdp, baseUrl, tokens) {
     id: vehicleId, organizationId: ORG, plate: 'E2E-0001', model: '合成車', capacity: 4, wheelchairSlots: 1, accessible: true,
     status: 'available', fleetId: null, retiredAt: null, retiredByUserId: null } }])) === 200);
 
+  // 排車不看司機現在有沒有執勤：未執勤的司機也能排未來的行程（只有「不可排車」不能排）
+  await admin.query(`update drivers set duty_status = 'off_duty' where id = $1`, [DRIVER_ID]);
   const page = await openPage(cdp, baseUrl, 'dispatcher-schedule');
   try {
     await login(page, U.dsp);
@@ -679,6 +681,7 @@ async function flowSchedule(cdp, baseUrl, tokens) {
     const trip = tripId ? await row('trips', tripId) : null;
     record(S, '按「建立行程」後預約已排車，行程寫入且屬於調度的機構', Boolean(trip) && trip.organization_id === ORG
       && scheduled.data.tripId === tripId, `tripId=${tripId}`);
+    record(S, '司機未執勤也能排行程給他', Boolean(trip) && trip.data.driverId === DRIVER_ID, trip && trip.data.driverId);
     record(S, '排車只呼叫一次 schedule-trips', page.requests.filter((r) => r.path === '/api/v2/schedule-trips').length === 1);
     record(S, '預約與行程沒有另外經過 booking-write／trip-write',
       !page.requests.some((r) => ['/api/v2/booking-write', '/api/v2/trip-write'].includes(r.path) && r.postData.includes(id)));
@@ -686,6 +689,8 @@ async function flowSchedule(cdp, baseUrl, tokens) {
   } catch (e) {
     record(S, `流程中斷：${e.message}`, false);
     await screenshot(page, 'D-schedule');
+  } finally {
+    await admin.query(`update drivers set duty_status = 'on_duty' where id = $1`, [DRIVER_ID]);
   }
   await finishPage(page, S);
 }
