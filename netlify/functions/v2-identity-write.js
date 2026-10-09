@@ -49,6 +49,9 @@ const MEMBERSHIP_STATES = ['active', 'suspended', 'revoked'];
  * 通過 INSERT 政策的 with check。organizations 的 insert 政策只放行
  * super_admin，所以負責人連「改自己組織的名稱」都會被擋——明明 update 政策
  * 是允許的。拆成兩步之後，各自只會碰到該碰的那條政策。
+ *
+ * update 與 insert 各給自己的參數：真正的 Postgres 遇到 SQL 沒用到的參數會報
+ * 「could not determine data type of parameter $n」（psql 替身的測試抓不到）。
  */
 async function upsert(client, updateSql, updateParams, insertSql, insertParams) {
   const updated = await client.query(updateSql, updateParams);
@@ -80,14 +83,13 @@ async function writeMembership(client, id, r) {
   const orgId = toDbOrgId(r.organizationId);
   if (!userId || !orgId) throw auth.authError('VALIDATION_ERROR', '成員資格缺少使用者或機構');
 
-  const params = [id, userId, orgId, role, status,
-    status === 'revoked' ? new Date().toISOString() : null,
-    status === 'revoked' ? (text(r.revokedByUserId) || null) : null];
+  const revokedAt = status === 'revoked' ? new Date().toISOString() : null;
+  const revokedBy = status === 'revoked' ? (text(r.revokedByUserId) || null) : null;
   return upsert(client,
-    `update memberships set role=$4, status=$5, revoked_at=$6, revoked_by_user_id=$7, updated_at=now()
-      where id=$1 returning id`, params,
+    `update memberships set role=$2, status=$3, revoked_at=$4, revoked_by_user_id=$5, updated_at=now()
+      where id=$1 returning id`, [id, role, status, revokedAt, revokedBy],
     `insert into memberships (id, user_id, organization_id, role, status, revoked_at, revoked_by_user_id)
-      values ($1,$2,$3,$4,$5,$6,$7) returning id`, params);
+      values ($1,$2,$3,$4,$5,$6,$7) returning id`, [id, userId, orgId, role, status, revokedAt, revokedBy]);
 }
 
 const DUTY_STATUSES = ['on_duty', 'break', 'off_duty', 'unavailable'];
@@ -100,12 +102,14 @@ async function writeDriver(client, id, r) {
   // 前端的欄位是 status（開始執勤／休息／結束執勤都改它）；dutyStatus 是載入時帶下來的舊值，只在沒有 status 時才用
   const duty = text(r.status) || text(r.dutyStatus) || 'off_duty';
   if (!DUTY_STATUSES.includes(duty)) throw auth.authError('VALIDATION_ERROR', `司機狀態不合法：${duty}`);
-  const params = [id, userId, orgId, text(r.fleetId) || null, duty, text(r.serviceArea) || null, bool(r.active)];
+  const fleetId = text(r.fleetId) || null;
+  const serviceArea = text(r.serviceArea) || null;
+  const active = bool(r.active);
   return upsert(client,
-    `update drivers set fleet_id=$4, duty_status=$5, service_area=$6, active=$7, updated_at=now()
-      where id=$1 returning id`, params,
+    `update drivers set fleet_id=$2, duty_status=$3, service_area=$4, active=$5, updated_at=now()
+      where id=$1 returning id`, [id, fleetId, duty, serviceArea, active],
     `insert into drivers (id, user_id, organization_id, fleet_id, duty_status, service_area, active)
-      values ($1,$2,$3,$4,$5,$6,$7) returning id`, params);
+      values ($1,$2,$3,$4,$5,$6,$7) returning id`, [id, userId, orgId, fleetId, duty, serviceArea, active]);
 }
 
 const WRITERS = { organizations: writeOrganization, memberships: writeMembership, drivers: writeDriver };
