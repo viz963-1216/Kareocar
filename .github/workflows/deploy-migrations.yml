@@ -109,6 +109,10 @@ jobs:
         env:
           MIGRATION_DATABASE_URL: ${{ secrets.STAGING_MIGRATION_DATABASE_URL }}
         run: bash tools/apply-migrations.sh
+      - name: 預約與行程同步報告（唯讀：app_state 與正式資料表的筆數與一致性）
+        env:
+          MIGRATION_DATABASE_URL: ${{ secrets.STAGING_MIGRATION_DATABASE_URL }}
+        run: bash tools/typed-sync-report.sh
 
   production:
     name: 套用到 Production（人工觸發）
@@ -142,3 +146,7 @@ jobs:
         env:
           MIGRATION_DATABASE_URL: ${{ secrets.PRODUCTION_MIGRATION_DATABASE_URL }}
         run: bash tools/apply-migrations.sh
+      - name: 預約與行程同步報告（唯讀：app_state 與正式資料表的筆數與一致性）
+        env:
+          MIGRATION_DATABASE_URL: ${{ secrets.PRODUCTION_MIGRATION_DATABASE_URL }}
+        run: bash tools/typed-sync-report.sh

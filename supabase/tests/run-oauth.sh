@@ -19,3 +19,5 @@ done
 psql -X -q -v ON_ERROR_STOP=1 -d careride_oauth_test -f "$ROOT/supabase/tests/seed.sql" >/dev/null
 
 PGDATABASE=careride_oauth_test node "$ROOT/supabase/tests/oauth.test.js"
+
+bash "$ROOT/supabase/tests/assert-typed-sync.sh" careride_oauth_test
