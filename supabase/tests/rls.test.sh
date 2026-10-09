@@ -33,11 +33,11 @@ check_err() { # check_err <說明> <輸出> <應包含>
 echo "═══ 攻擊模擬：這些就是上一輪修掉的漏洞 ═══"
 check "攻擊者看不到他人的預約" \
   "$(as USR-ATTACK "select count(*) from bookings where id='BKG-VICTIM';")" "0"
-# 正式資料表只能讀（0023）：寫入只走 API（app_state）與同步，任何人直接改都被拒
-check_err "攻擊者不能直接改正式資料表的預約" \
-  "$(as_raw USR-ATTACK "update bookings set state='cancelled' where id='BKG-VICTIM';")" "permission denied"
-check_err "攻擊者無法把自己塞成他人預約的擁有者" \
-  "$(as_raw USR-ATTACK "update bookings set requested_by_user_id='USR-ATTACK' where id='BKG-VICTIM';")" "permission denied"
+# 正式資料表的寫入規則與 app_state 相同（0029）：只有本人、承接機構的營運方、平台管理者改得到
+check "攻擊者更新他人預約：影響 0 列" \
+  "$(as USR-ATTACK "with u as (update bookings set data = data || '{\"state\":\"cancelled\"}' where id='BKG-VICTIM' returning 1) select count(*) from u;")" "0"
+check "攻擊者無法把自己塞成他人預約的擁有者" \
+  "$(as USR-ATTACK "with u as (update bookings set owner_user_id='USR-ATTACK' where id='BKG-VICTIM' returning 1) select count(*) from u;")" "0"
 check "攻擊者看不到他人的服務對象" \
   "$(as USR-ATTACK "select count(*) from care_recipients where id='CR-1';")" "0"
 check "攻擊者看不到他人的行程" \
@@ -55,8 +55,10 @@ check "需求者看得到自己的預約" \
   "$(as USR-VICTIM "select count(*) from bookings;")" "2"
 check "需求者看得到自己的服務對象" \
   "$(as USR-VICTIM "select count(*) from care_recipients;")" "1"
-check_err "需求者也不能直接改正式資料表（寫入只走 API 與同步）" \
-  "$(as_raw USR-VICTIM "update bookings set special_needs='需要陪同' where id='BKG-VICTIM';")" "permission denied"
+check "需求者可以更新自己的預約（並同步回 app_state）" \
+  "$(as USR-VICTIM "with u as (update bookings set data = data || '{\"specialNeeds\":\"需要陪同\"}' where id='BKG-VICTIM' returning 1) select count(*) from u;")" "1"
+check "需求者不能改掉擁有者（觸發器維持原擁有者）" \
+  "$(as_owner USR-ROOT "select owner_user_id from bookings where id='BKG-VICTIM';")" "USR-VICTIM"
 check "調度員看得到自家組織的預約" \
   "$(as USR-DISP1 "select count(*) from bookings where organization_id='ORG-TP-001';")" "1"
 check "調度員看得到自家行程" \
