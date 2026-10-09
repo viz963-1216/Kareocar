@@ -1,11 +1,7 @@
 const path = require('path');
-const Module = require('module');
 
-const origResolve = Module._resolveFilename;
-Module._resolveFilename = function (request, ...rest) {
-  if (request === 'pg') return require.resolve('./pg-psql-shim.js');
-  return origResolve.call(this, request, ...rest);
-};
+// 預設用真正的 pg；裝不了 pg 的環境才退回 psql 替身（見 _pg-driver.js）
+require('./_pg-driver');
 
 const FN = path.join(__dirname, '..', '..', 'netlify', 'functions');
 const PGHOST = process.env.PGHOST || '/tmp/pgrun';

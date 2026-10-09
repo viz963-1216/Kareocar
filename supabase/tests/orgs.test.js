@@ -10,13 +10,9 @@
  * 涵蓋該身分所有成員資格指向的組織。
  */
 const path = require('path');
-const Module = require('module');
 const { execFileSync } = require('child_process');
-const origResolve = Module._resolveFilename;
-Module._resolveFilename = function (r, ...a) {
-  if (r === 'pg') return require.resolve('./pg-psql-shim.js');
-  return origResolve.call(this, r, ...a);
-};
+// 預設用真正的 pg；裝不了 pg 的環境才退回 psql 替身（見 _pg-driver.js）
+require('./_pg-driver');
 const FN = path.join(__dirname, '..', '..', 'netlify', 'functions');
 const PGHOST = process.env.PGHOST || '/tmp/pgrun';
 const PGPORT = process.env.PGPORT || '5433';

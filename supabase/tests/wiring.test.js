@@ -2,19 +2,14 @@
  * 接線測試：Netlify Function 的實際程式碼，跑在真實 Postgres 上。
  *
  * 驗證的是「登入 → 拿 token → 讀預約」這一整條路徑，包含 RLS 是否真的
- * 在資料庫層把別人的資料擋掉。pg 驅動被替換成 psql 傳輸層（見
- * pg-psql-shim.js），SQL、角色與 RLS 都是真的。
+ * 在資料庫層把別人的資料擋掉。預設用真正的 pg 驅動；裝不了 pg 的環境才退回 psql 替身
+ *（見 _pg-driver.js）。SQL、角色與 RLS 都是真的。
  */
 const path = require('path');
-const Module = require('module');
 const { execFileSync } = require('child_process');
 
-// 把 require('pg') 導向 psql 替身
-const origResolve = Module._resolveFilename;
-Module._resolveFilename = function (request, ...rest) {
-  if (request === 'pg') return require.resolve('./pg-psql-shim.js');
-  return origResolve.call(this, request, ...rest);
-};
+// 預設用真正的 pg；裝不了 pg 的環境才退回 psql 替身（見 _pg-driver.js）
+require('./_pg-driver');
 
 const FN = path.join(__dirname, '..', '..', 'netlify', 'functions');
 const PGHOST = process.env.PGHOST || '/tmp/pgrun';
