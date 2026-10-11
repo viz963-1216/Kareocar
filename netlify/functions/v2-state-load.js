@@ -41,12 +41,23 @@ exports.handler = async (event) => {
       };
 
       // ---- app_state：前端模型原樣取回 ----
+      // 預約與行程讀正式資料表（ADR 0005，0023 同步過去的）；其他集合照舊讀 app_state。
+      // 兩邊的讀取規則等價，回給前端的欄位一模一樣。
       const rows = (await client.query(
         `select collection, id, data, organization_id, owner_user_id, version, revision, updated_at
-           from app_state
-          where not deleted
-            and collection not in ('notifications', 'benefitRulesets', 'benefitRulesetEvents',
-                                   'benefitAssessments', 'benefitAssessmentEvents', 'benefitLatestEstimateRuns')
+           from (
+             select collection, id, data, organization_id, owner_user_id, version, revision, updated_at
+               from app_state
+              where not deleted
+                and collection not in ('bookings', 'trips', 'notifications', 'benefitRulesets', 'benefitRulesetEvents',
+                                       'benefitAssessments', 'benefitAssessmentEvents', 'benefitLatestEstimateRuns')
+             union all
+             select 'bookings', id, data, organization_id, owner_user_id, version, 0, updated_at
+               from bookings where not deleted
+             union all
+             select 'trips', id, data, organization_id, owner_user_id, version, revision, updated_at
+               from trips where not deleted
+           ) r
           order by updated_at
           limit $1`, [MAX_ROWS])).rows;
 
