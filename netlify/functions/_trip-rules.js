@@ -94,7 +94,8 @@ function checkTripWrite({ record, existing, organizationId, canManage, scope, vi
   for (const id of bookingIdsOf(out)) {
     if (had.has(id)) continue;
     const b = scope.bookings.get(id);
-    const owned = b && b.organization_id === organizationId;
+    // 承接機構，或某一段的協力機構（#113）；這一段是不是由行程的機構負責，排車時由 scheduleBookingLeg 再確認
+    const owned = b && (b.organization_id === organizationId || (b.leg_organization_ids || []).includes(organizationId));
     if (!owned) throw ruleError('VALIDATION_ERROR', `預約 ${id} 不屬於此機構，不能排進行程`);
     if (!SCHEDULABLE_BOOKING_STATES.has(b.state)) throw ruleError('VALIDATION_ERROR', `預約 ${id} 目前不能排車（${b.state || 'open'}）`);
   }

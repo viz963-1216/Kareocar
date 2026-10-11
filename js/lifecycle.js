@@ -218,7 +218,7 @@
     if (legPoolStatus(leg) === LEG_POOL_STATUS.IN_POOL) return { ok: false, error: `${legLabel(leg)}在需求池，不能排車` };
     const responsible = legResponsibleOrganization(next, leg);
     if (!responsible) return { ok: false, error: `${leg.label || '這一段'}還沒有承接機構` };
-    if (organizationId && responsible !== organizationId) return { ok: false, error: `${leg.label || '這一段'}的承接機構與行程的機構不同` };
+    if (organizationId && responsible !== organizationId) return { ok: false, error: `${leg.label || '這一段'}由其他機構負責，不能排進這趟行程` };
     if (leg.status !== BOOKING_LEG_STATUS.PENDING) return { ok: false, error: `${leg.label || '這一段'}已經排車或不能再排車` };
     if (!leg.requestedPickupAt || Number.isNaN(new Date(leg.requestedPickupAt).getTime())) {
       return { ok: false, error: `${leg.label || '這一段'}缺少有效的接送時間` };

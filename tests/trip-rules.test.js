@@ -50,8 +50,10 @@ ok('預約：新關聯的必須屬於此機構且可排車；原本就有的不�
   throwsCode(() => sched({ record: rec, scope: scope({ bookings: new Map([['B1', { organization_id: 'ORG-B', state: 'claimed' }]]) }) }), 'VALIDATION_ERROR', /不屬於/);
   throwsCode(() => sched({ record: rec, scope: scope({ bookings: new Map([['B1', { organization_id: ORG, state: 'cancelled' }]]) }) }), 'VALIDATION_ERROR', /不能排車/);
   assert.ok(sched({ record: rec, scope: scope({ bookings: new Map([['B1', { organization_id: ORG, state: 'claimed' }]]) }) }));
-  // #110：平台指定機構已移除，被指定的機構不能把別家的預約排進自己的行程
-  throwsCode(() => sched({ record: rec, scope: scope({ bookings: new Map([['B1', { organization_id: 'ORG-B', state: 'claimed', leg_organization_ids: [ORG] }]]) }) }), 'VALIDATION_ERROR', /不屬於/);
+  // #113：leg_organization_ids 是資料庫裡的協力機構（app.trip_resource_scope 從 booking_legs 產生，一般寫入改不了；
+  // 原本的平台指定機構已移除，#110）。協力機構可以把這筆預約排進自己的行程，是不是自己那一段由 scheduleBookingLeg 確認
+  assert.ok(sched({ record: rec, scope: scope({ bookings: new Map([['B1', { organization_id: 'ORG-B', state: 'claimed', leg_organization_ids: [ORG] }]]) }) }));
+  throwsCode(() => sched({ record: rec, scope: scope({ bookings: new Map([['B1', { organization_id: 'ORG-B', state: 'claimed', leg_organization_ids: ['ORG-C'] }]]) }) }), 'VALIDATION_ERROR', /不屬於/);
   assert.ok(run({ record: rec, existing: { data: rec } }));
 });
 console.log(`trip-rules: ${pass} passed`);

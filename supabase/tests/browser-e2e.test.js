@@ -56,6 +56,7 @@ const U = {
   req: { id: 'USR-E2E-REQ', phone: '0922000001', name: '合成需求者' },
   dsp: { id: 'USR-E2E-DSP', phone: '0922000002', name: '合成調度員' },
   dspB: { id: 'USR-E2E-DSPB', phone: '0922000004', name: '合成調度員 B' },
+  drvB: { id: 'USR-E2E-DRVB', phone: '0922000005', name: '合成司機 B' },
   drv: { id: 'USR-E2E-DRV', phone: '0922000003', name: '合成司機' },
   root: { id: 'USR-E2E-ROOT', phone: '0922000009', name: '合成平台管理者' }
 };
@@ -366,14 +367,17 @@ async function seed() {
       ('${U.req.id}','${U.req.name}','+886${U.req.phone.slice(1)}','none',true),
       ('${U.dsp.id}','${U.dsp.name}','+886${U.dsp.phone.slice(1)}','none',true),
       ('${U.dspB.id}','${U.dspB.name}','+886${U.dspB.phone.slice(1)}','none',true),
+      ('${U.drvB.id}','${U.drvB.name}','+886${U.drvB.phone.slice(1)}','none',true),
       ('${U.drv.id}','${U.drv.name}','+886${U.drv.phone.slice(1)}','none',true),
       ('${U.root.id}','${U.root.name}','+886${U.root.phone.slice(1)}','super_admin',true);
     insert into memberships (id, user_id, organization_id, role, status) values
       ('M-E2E-REQ','${U.req.id}','ORG-REQ-001','requester','active'),
       ('M-E2E-DSP','${U.dsp.id}','${ORG}','dispatcher','active'),
       ('M-E2E-DSPB','${U.dspB.id}','${ORG_B}','dispatcher','active'),
+      ('M-E2E-DRVB','${U.drvB.id}','${ORG_B}','driver','active'),
       ('M-E2E-DRV','${U.drv.id}','${ORG}','driver','active');
-    insert into drivers (id, user_id, organization_id, duty_status, active) values ('${DRIVER_ID}','${U.drv.id}','${ORG}','on_duty',true);
+    insert into drivers (id, user_id, organization_id, duty_status, active) values ('${DRIVER_ID}','${U.drv.id}','${ORG}','on_duty',true),
+      ('DRV-E2E-B','${U.drvB.id}','${ORG_B}','on_duty',true);
   `);
   for (const u of Object.values(U)) fx.addUser(u.id, u.phone, PASSWORD);
   const tokens = {};
@@ -949,6 +953,27 @@ async function flowReleaseLeg(cdp, baseUrl, tokens) {
       try { await waitFor(pageB, "document.querySelector('main').innerText.includes('由其他機構負責')", '協力機構的調度台看到這筆預約', 10000); } catch (_) { shownB = false; }
       const textB = await evaluate(pageB, "document.querySelector('main').innerText");
       record(S, '協力機構的調度台：去程標示由其他機構負責，看得到承接機構名稱', shownB && textB.includes('承接機構：合成承運 E2E'), shownB ? '' : textB.slice(0, 400));
+      // 協力機構把自己那段（回程）排進自己的行程
+      record(S, '（資料準備）協力機構的車輛', (await apiMutate(tokens.dspB, [{ collection: 'vehicles', id: 'VEH-E2E-B', record: {
+        id: 'VEH-E2E-B', organizationId: ORG_B, plate: 'E2E-B001', model: '合成車', capacity: 4, wheelchairSlots: 1, accessible: true,
+        status: 'available', fleetId: null, retiredAt: null, retiredByUserId: null } }])) === 200);
+      // 重新載入資料（不整頁重新整理），讓剛建立的車輛出現在建立行程視窗
+      const loadsBefore = pageB.stateLoads.length;
+      await evaluate(pageB, "(()=>{Object.defineProperty(document,'visibilityState',{value:'visible',configurable:true});document.dispatchEvent(new Event('visibilitychange'));return true;})()");
+      for (let i = 0; i < 40 && pageB.stateLoads.length <= loadsBefore; i++) await sleep(250);
+      await waitFor(pageB, `!!document.querySelector('.booking-create-trip-btn[data-booking=${J(id)}]')`, '協力機構的調度台有「建立回程行程」');
+      await click(pageB, `.booking-create-trip-btn[data-booking=${J(id)}]`);
+      await waitFor(pageB, "document.getElementById('createTripModal').classList.contains('open')&&!!document.getElementById('newDriver').value&&!!document.getElementById('newVehicle').value",
+        '協力機構的建立行程視窗帶入自己的司機與車輛');
+      await click(pageB, '#saveTripBtn');
+      const ret = await waitForDb(async () => {
+        const r = ((await row('bookings', id)).data.legs || []).find((l) => l.direction === 'return');
+        return r && r.status === 'scheduled' ? r : null;
+      }, '協力機構排好回程');
+      const bTrip = ret.tripId ? await row('trips', ret.tripId) : null;
+      record(S, '協力機構在畫面上排回程：行程屬於協力機構、司機是協力機構的司機', Boolean(bTrip) && bTrip.organization_id === ORG_B
+        && bTrip.data.driverId === 'DRV-E2E-B' && ret.scheduledOrganizationId === ORG_B, J({ tripId: ret.tripId, org: bTrip && bTrip.organization_id }));
+      record(S, '去程仍待承接機構排車：預約是部分排車', (await row('bookings', id)).data.state === 'partially_scheduled');
     } finally {
       await finishPage(pageB, S);
     }

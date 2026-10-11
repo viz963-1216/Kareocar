@@ -18,7 +18,11 @@
  * - 事件：預約的 leg_scheduled、行程的 trip_created 由伺服器產生
  * - 通知：預約第一次進入排車時通知需求者；指派的司機收到通知
  *
- * 排車權限依預約的承接機構判斷（平台指定機構已移除，#110；跨機構排車改走需求池，見 ADR 0004）。
+ * 排車權限依「這一段由誰負責」判斷（平台指定機構已移除，#110；跨機構排車改走需求池，見 ADR 0004）：
+ *   - 承接機構照常鎖定、寫回整筆預約
+ *   - 協力機構讀不到整筆預約（#113）：用 app.partner_lock_booking 鎖定並取得內容（只用來判斷，不回給前端），
+ *     寫回只用 app.apply_partner_leg_schedule 把自己那一段標成已排車
+ *   - 每一段能不能排進這趟行程，由 scheduleBookingLeg 確認「這一段由行程的機構負責」
  */
 
 const { json, parseBody, handleError } = require('./_http');
@@ -105,18 +109,23 @@ exports.handler = async (event) => {
       const bookingIds = [...new Set(plan.flatMap((p) => p.refs.map((r) => r.bookingId)))].sort();
       const bookings = new Map();
       for (const id of bookingIds) {
-        const row = (await client.query(
+        let partner = false;
+        let row = (await client.query(
           `select data, organization_id, version from bookings where id = $1 and not deleted for update`,
           [id])).rows[0];
+        if (!row) {
+          row = (await client.query('select data, organization_id, version from app.partner_lock_booking($1)', [id])).rows[0];
+          partner = Boolean(row);
+        }
         if (!row) fail('NOT_FOUND', `找不到預約 ${id}，或你沒有權限排這筆預約`);
-        if (!(await isOps(row.organization_id))) fail('FORBIDDEN', `沒有權限排預約 ${id}`);
+        if (!partner && !(await isOps(row.organization_id))) fail('FORBIDDEN', `沒有權限排預約 ${id}`);
         // 前端拿到的版本是資料列的 version（v2-state-load 用它覆蓋），每次寫入由觸發器 +1
         if (id in expectedVersions) {
           const seen = Number(expectedVersions[id]);
           const actual = Number(row.version);
           if (seen !== actual) fail('BOOKING_CONFLICT', '預約已被其他人更新，請重新整理後再排車');
         }
-        bookings.set(id, { before: row.data || {}, current: row.data || {}, organizationId: row.organization_id, events: [] });
+        bookings.set(id, { before: row.data || {}, current: row.data || {}, organizationId: row.organization_id, events: [], partner, legs: [] });
       }
 
       const savedTrips = [];
@@ -140,6 +149,7 @@ exports.handler = async (event) => {
           const r = lifecycle.scheduleBookingLeg(b.current, { legId: ref.legId, tripId: trip.id, organizationId, at });
           if (!r.ok) fail('BOOKING_CONFLICT', `預約 ${ref.bookingId}：${r.error}`);
           b.current = r.booking;
+          b.legs.push({ legId: r.leg.id, tripId: trip.id });
           b.events.push({
             id: `bevt_${auth.randomHex(8)}`, bookingId: ref.bookingId, eventType: 'leg_scheduled', action: 'schedule',
             fromState: r.from, toState: r.to, actorUserId: claims.userId, organizationId, tripId: trip.id,
@@ -179,8 +189,15 @@ exports.handler = async (event) => {
 
       const savedBookings = [];
       for (const [id, b] of bookings) {
-        await client.query(
-          `update bookings set data = $2 where id = $1`, [id, JSON.stringify(b.current)]);
+        if (b.partner) {
+          // 協力機構只改自己那一段（行程的機構必須是那一段的協力機構），預約狀態由資料庫依各段重算
+          for (const l of b.legs) {
+            await client.query('select * from app.apply_partner_leg_schedule($1, $2, $3, $4)', [id, l.legId, l.tripId, at]);
+          }
+        } else {
+          await client.query(
+            `update bookings set data = $2 where id = $1`, [id, JSON.stringify(b.current)]);
+        }
         for (const e of b.events) {
           await client.query(
             `insert into app_state (collection, id, organization_id, booking_id, data) values ('bookingEvents', $1, $2, $3, $4)`,
