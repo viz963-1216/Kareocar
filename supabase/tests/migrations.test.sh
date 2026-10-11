@@ -124,6 +124,20 @@ expect "沒有檢視到 app_state 找預約或行程" "$(q -c "select coalesce(s
 expect "沒有資料庫函式到 app_state 找預約或行程" "$(q -c "select coalesce(string_agg(p.proname, ','), '') from pg_proc p
   join pg_namespace n on n.oid = p.pronamespace where n.nspname in ('public', 'app') and p.prosrc ~ \$re\$$LEGACY_RE\$re\$")" ""
 
+echo "--- 3c. 行程與預約的對應（0032，與 App 端 bookingIdsOf 相同）---"
+q -q <<'SQL'
+insert into trips (id, organization_id, data) values
+  ('TRP-TB-A', 'ORG-MIG', '{"bookingId":"BKG-TB-1"}'),
+  ('TRP-TB-B', 'ORG-MIG', '{"bookingIds":["BKG-TB-2","BKG-TB-3"]}'),
+  ('TRP-TB-C', 'ORG-MIG', '{"bookingLegRefs":[{"bookingId":"BKG-TB-4","legId":"L1"}],"bookingIds":["BKG-TB-4","BKG-TB-5"]}'),
+  ('TRP-TB-D', 'ORG-MIG', '{"bookingId":"BKG-TB-6","bookingIds":["BKG-TB-6"]}');
+SQL
+expect "只有 bookingId、只有 bookingIds、有去程／回程引用、兩者重複，對應都完整且不重複" \
+  "$(q -c "select string_agg(trip_id || ':' || booking_id || ':' || coalesce(leg_id, '-'), ' ' order by trip_id, booking_id) from trip_bookings where trip_id like 'TRP-TB-%'")" \
+  "TRP-TB-A:BKG-TB-1:- TRP-TB-B:BKG-TB-2:- TRP-TB-B:BKG-TB-3:- TRP-TB-C:BKG-TB-4:L1 TRP-TB-C:BKG-TB-5:- TRP-TB-D:BKG-TB-6:-"
+q -q -c "update trips set data = '{\"bookingIds\":[\"BKG-TB-7\"]}' where id = 'TRP-TB-A'"
+expect "行程改掛別的預約後，舊的對應拿掉" "$(q -c "select string_agg(booking_id, ',') from trip_bookings where trip_id = 'TRP-TB-A'")" "BKG-TB-7"
+
 echo "--- 4. 通知觸發器本身（隔離情境，交易結束即回滾） ---"
 # 合法後端通知：以函式擁有者身分寫入來源證明與通知（等同後端函式的寫入方式）；
 # 另一則是沒有來源證明的一般通知
