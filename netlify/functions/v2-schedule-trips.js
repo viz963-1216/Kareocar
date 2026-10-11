@@ -106,7 +106,7 @@ exports.handler = async (event) => {
       const bookings = new Map();
       for (const id of bookingIds) {
         const row = (await client.query(
-          `select data, organization_id, version from app_state where collection = 'bookings' and id = $1 and not deleted for update`,
+          `select data, organization_id, version from bookings where id = $1 and not deleted for update`,
           [id])).rows[0];
         if (!row) fail('NOT_FOUND', `找不到預約 ${id}，或你沒有權限排這筆預約`);
         if (!(await isOps(row.organization_id))) fail('FORBIDDEN', `沒有權限排預約 ${id}`);
@@ -124,7 +124,7 @@ exports.handler = async (event) => {
         const organizationId = text(trip.organizationId) || null;
         if (planRow && organizationId !== planRow.organization_id) fail('VALIDATION_ERROR', '行程的機構與排車建議不同');
         const exists = (await client.query(
-          `select 1 from app_state where collection = 'trips' and id = $1`, [trip.id])).rows.length > 0;
+          `select 1 from trips where id = $1`, [trip.id])).rows.length > 0;
         if (exists) fail('TRIP_CONFLICT', `行程 ${trip.id} 已經存在，請重新整理`);
 
         let record;
@@ -151,10 +151,11 @@ exports.handler = async (event) => {
         }
 
         const saved = (await client.query(
-          `insert into app_state (collection, id, organization_id, trip_id, booking_id, data, revision)
-             values ('trips', $1, $2, $1, $3, $4, 1)
+          // 寫正式資料表（ADR 0005）；歸屬規則由觸發器處理，並同步回 app_state
+          `insert into trips (id, organization_id, data, revision)
+             values ($1, $2, $3, 1)
            returning organization_id, revision`,
-          [trip.id, organizationId, text(record.bookingId) || null, JSON.stringify(record)])).rows[0];
+          [trip.id, organizationId, JSON.stringify(record)])).rows[0];
         if (!saved || saved.organization_id !== organizationId) fail('FORBIDDEN', '沒有權限替這個機構排車');
 
         const events = [tripEvent(trip.id, 1, 'trip_created', {
@@ -179,7 +180,7 @@ exports.handler = async (event) => {
       const savedBookings = [];
       for (const [id, b] of bookings) {
         await client.query(
-          `update app_state set data = $2 where collection = 'bookings' and id = $1`, [id, JSON.stringify(b.current)]);
+          `update bookings set data = $2 where id = $1`, [id, JSON.stringify(b.current)]);
         for (const e of b.events) {
           await client.query(
             `insert into app_state (collection, id, organization_id, booking_id, data) values ('bookingEvents', $1, $2, $3, $4)`,

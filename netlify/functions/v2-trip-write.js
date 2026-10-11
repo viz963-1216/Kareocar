@@ -43,12 +43,12 @@ function tripBookingIds(trip) {
 async function unscheduleBookingsOfTrip(client, { tripId, trip, actorUserId, at }) {
   for (const bookingId of tripBookingIds(trip)) {
     const row = (await client.query(
-      `select data, organization_id from app_state where collection = 'bookings' and id = $1 and not deleted for update`,
+      `select data, organization_id from bookings where id = $1 and not deleted for update`,
       [bookingId])).rows[0];
     if (!row) continue;
     const r = lifecycle.unscheduleTripLegs(row.data || {}, { tripId, at });
     if (!r.changed) continue;
-    await client.query(`update app_state set data = $2 where collection = 'bookings' and id = $1`, [bookingId, JSON.stringify(r.booking)]);
+    await client.query(`update bookings set data = $2 where id = $1`, [bookingId, JSON.stringify(r.booking)]);
     const event = { id: `bevt_${auth.randomHex(8)}`, bookingId, eventType: 'leg_unscheduled', action: 'unschedule',
       fromState: r.from, toState: r.to, actorUserId, organizationId: row.organization_id || null, tripId,
       source: 'trip_cancelled', bookingVersion: r.booking.version, metadata: { legIds: r.legIds }, createdAt: at };
@@ -83,8 +83,8 @@ exports.handler = async (event) => {
         incoming.id = id;
 
         const existing = (await client.query(
-          `select data, organization_id, revision from app_state
-            where collection = 'trips' and id = $1 and not deleted
+          `select data, organization_id, revision from trips
+            where id = $1 and not deleted
             for update`, [id])).rows[0] || null;
         const organizationId = existing ? existing.organization_id : (text(incoming.organizationId) || null);
         const canManage = admin || (Boolean(organizationId) && (await client.query(
@@ -106,14 +106,14 @@ exports.handler = async (event) => {
         }
 
         const upsert = await client.query(
-          `insert into app_state (collection, id, organization_id, trip_id, booking_id, data, revision)
-             values ('trips', $1, $2, $1, $3, $4, 1)
-           on conflict (collection, id) do update
+          // 寫正式資料表（ADR 0005）；歸屬規則由觸發器處理，並同步回 app_state
+          `insert into trips (id, organization_id, data, revision)
+             values ($1, $2, $3, 1)
+           on conflict (id) do update
              set data = excluded.data, deleted = false,
-                 booking_id = coalesce(excluded.booking_id, app_state.booking_id),
-                 revision = app_state.revision + 1
+                 revision = trips.revision + 1
            returning organization_id, version, revision, updated_at`,
-          [id, organizationId, text(record.bookingId) || null, JSON.stringify(record)]);
+          [id, organizationId, JSON.stringify(record)]);
         if (!upsert.rows.length) throw auth.authError('FORBIDDEN', `沒有權限寫入行程 ${id}`);
         const saved = upsert.rows[0];
         if (saved.organization_id !== organizationId) {

@@ -72,7 +72,7 @@ async function assertRecipientBookable(client, { actorUserId, record, existing, 
   if (opsOrg) {
     // 承接機構：本機構服務過（有本機構承接的預約）、掛在本機構，或是呼叫者自己建立的服務對象
     const { rows: served } = await client.query(
-      `select 1 where exists (select 1 from app_state b where b.collection = 'bookings' and not b.deleted
+      `select 1 where exists (select 1 from bookings b where not b.deleted
                                 and b.organization_id = $1 and b.data->>'recipientId' = $2)
                    or exists (select 1 from app_state r where r.collection = 'careRecipients' and not r.deleted
                                 and r.id = $2 and (r.organization_id = $1 or r.owner_user_id = $3))`,
@@ -151,8 +151,8 @@ exports.handler = async (event) => {
         incoming.id = id;
 
         const existing = (await client.query(
-          `select data, organization_id, owner_user_id from app_state
-            where collection = 'bookings' and id = $1 and not deleted
+          `select data, organization_id, owner_user_id from bookings
+            where id = $1 and not deleted
             for update`, [id])).rows[0] || null;
         const roles = {
           admin,
@@ -183,9 +183,10 @@ exports.handler = async (event) => {
         delete record.benefitView;
 
         const upsert = await client.query(
-          `insert into app_state (collection, id, organization_id, booking_id, data)
-             values ('bookings', $1, $2, $1, $3)
-           on conflict (collection, id) do update
+          // 寫正式資料表（ADR 0005）；歸屬規則與衍生欄位由觸發器處理，並同步回 app_state
+          `insert into bookings (id, organization_id, data)
+             values ($1, $2, $3)
+           on conflict (id) do update
              set data = excluded.data, deleted = false
            returning version, updated_at`,
           [id, existing ? null : (text(record.organizationId) || null), JSON.stringify(record)]);
@@ -204,7 +205,7 @@ exports.handler = async (event) => {
         }
 
         const saved = (await client.query(
-          `select organization_id, version, updated_at from app_state where collection = 'bookings' and id = $1`, [id])).rows[0];
+          `select organization_id, version, updated_at from bookings where id = $1`, [id])).rows[0];
         results.push({
           collection: 'bookings', id, state: record.state || 'open',
           organizationId: saved ? saved.organization_id : null,
