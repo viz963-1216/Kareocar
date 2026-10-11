@@ -848,11 +848,12 @@ async function flowSplitConsent(cdp, baseUrl) {
   try {
     await login(page, U.req);
     await goView(page, 'requester-new');
-    await click(page, '[data-recipient-choice]');
-    await click(page, '.wizard-next-btn[data-next="2"]');
+    await waitFor(page, "!!document.querySelector('.wizard-panel.active [data-recipient-choice]')", '乘車人選項出現');
+    await clickRetry(page, '.wizard-panel.active [data-recipient-choice]');
+    await clickRetry(page, '.wizard-next-btn[data-next="2"]');
     await typeConfirmed(page, '#rqPickup', '新北市板橋區中山路一段161號');
     await typeConfirmed(page, '#rqDestination', destination);
-    await click(page, '.wizard-next-btn[data-next="3"]');
+    await clickRetry(page, '.wizard-next-btn[data-next="3"]');
     await evaluate(page, setValue('rqDate', dayOffset(6)));
     record(S, '單程預約不顯示「同意分段載送」', !(await evaluate(page, visible('rqSplitLegConsent'))));
     await evaluate(page, setValue('rqTripType', '來回'));
@@ -873,8 +874,8 @@ async function flowSplitConsent(cdp, baseUrl) {
     record(S, '我的預約顯示同意分段載送', await evaluate(page, "document.querySelector('main').innerText.includes('同意分段載送')"));
 
     await click(page, `.requester-edit-booking-btn[data-booking=${J(created.id)}]`);
-    await click(page, '.wizard-next-btn[data-next="2"]');
-    await click(page, '.wizard-next-btn[data-next="3"]');
+    await clickRetry(page, '.wizard-next-btn[data-next="2"]');
+    await clickRetry(page, '.wizard-next-btn[data-next="3"]');
     record(S, '修改預約時勾選框是預約上的值（已勾選）', await evaluate(page, "document.getElementById('rqSplitLegConsent').checked===true"));
     await click(page, '#rqSplitLegConsent');
     await clickRetry(page, '.wizard-next-btn[data-next="4"]');
