@@ -38,6 +38,7 @@ process.env.DATABASE_URL = isSocket
 process.env.AUTH_SESSION_SECRET = 'synthetic-session-secret-flow-0123456789';
 // access token 以測試金鑰簽發，function 端走正式的 JWT 驗證；必須在載入 function 之前
 const fx = require('./_auth-fixture');
+const { selectRow } = require('./_state-tables');
 
 const admin = new Pool({ host, port: Number(process.env.PGPORT), database: 'careride_flow_test', user: 'postgres' });
 const db = require('../../netlify/functions/_db');
@@ -94,10 +95,7 @@ const idsIn = (r, collection) => ((r.data && r.data.collections && r.data.collec
 const nowIso = () => new Date().toISOString();
 
 async function row(collection, id) {
-  const { rows } = await admin.query(
-    `select organization_id, owner_user_id, deleted, version, revision, data
-       from app_state where collection = $1 and id = $2`, [collection, id]);
-  return rows[0] || null;
+  return selectRow(admin, collection, id, ['organization_id', 'owner_user_id', 'deleted', 'version', 'revision', 'data']);
 }
 const snapshot = async (collection, id) => JSON.stringify(await row(collection, id));
 /** 司機裝置上看到的行程：資料列 data 加上伺服器的 revision（與 state-load 相同）。 */
@@ -190,14 +188,12 @@ async function fixtureScheduled(bookingId, tripId) {
   const c = await admin.connect();
   try {
     await c.query('begin');
-    // app_state_force_scope 會還原 UPDATE 的 organization_id；用與 claim 函式
-    // 相同的交易級旗標，只作用在這筆 fixture。
-    await c.query(`select set_config('app.state_scope_override','1',true)`);
+    // 資料庫擁有者的寫入不套用歸屬規則（0031），直接指定承接機構
     await c.query(
-      `update app_state set organization_id = $1,
+      `update bookings set organization_id = $1,
               data = data || jsonb_build_object('state','scheduled','claimStatus','claimed','status','scheduled',
                                                 'organizationId',$1::text,'tripId',$2::text)
-        where collection = 'bookings' and id = $3`, [ORG_A, tripId, bookingId]);
+        where id = $3`, [ORG_A, tripId, bookingId]);
     await c.query('commit');
   } finally { c.release(); }
 }
@@ -210,13 +206,9 @@ async function fixtureTrip(trip, organizationId = ORG_A) {
   const c = await admin.connect();
   try {
     await c.query('begin');
-    await c.query(`select set_config('app.state_scope_override','1',true)`);
-    await c.query(
-      `insert into app_state (collection, id, trip_id, booking_id, data, revision)
-         values ('trips', $1, $1, $2, $3, 1)`, [trip.id, trip.bookingId || null, JSON.stringify(trip)]);
-    // 觸發器會清掉 INSERT 的組織；UPDATE 在 override 下才保留
-    await c.query(`update app_state set organization_id = $2, revision = 1 where collection = 'trips' and id = $1`,
-      [trip.id, organizationId]);
+    // 資料庫擁有者的寫入不套用歸屬規則（0031），直接指定機構
+    await c.query(`insert into trips (id, organization_id, data, revision) values ($1, $2, $3, 1)`,
+      [trip.id, organizationId, JSON.stringify(trip)]);
     await c.query('commit');
   } catch (e) { await c.query('rollback'); throw e; } finally { c.release(); }
   return { status: 200 };

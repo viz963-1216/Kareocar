@@ -37,6 +37,7 @@ API 端點與各項業務規則。部署流程與上線檢查清單見 [DEPLOYME
 | `migrations/0028_booking_child_read_by_current_org.sql` | 預約的異動紀錄（bookingEvents）與修改快照（bookingRevisions）改依預約「現在」的承接機構決定營運方能不能讀：退回後原機構讀不到、新接手的機構看得到之前的紀錄（#131） |
 | `migrations/0029_typed_write_bidirectional_sync.sql` | 正式資料表可以直接寫：與 app_state 相同的歸屬規則（擁有者、機構、版本）與寫入權限，衍生欄位與子資料由觸發器產生；過渡期雙向同步（寫正式資料表同步回 app_state，寫 app_state 同步過來）（#132） |
 | `migrations/0030_writers_use_typed_tables.sql` | 接案、撤銷承接、更新補助估算、需求者取消、司機執行、到期匿名化、核准刪除帳號改寫正式資料表（#132） |
+| `migrations/0031_typed_tables_contract.sql` | 搬表收斂（ADR 0005 第 4 步）：拿掉雙向同步與 `typed_sync_diff`，刪掉 app_state 裡的預約與行程與只為它們存在的欄位、索引、司機讀取規則與 `app.claim_booking`；歸屬規則只套用在應用程式連線（資料庫擁有者可信任）；補助試算讀取規則與依服務對象找預約的函式改看 `bookings.care_recipient_id`；補上 NOT VALID 外鍵（預約→需求者、行程→司機、取消→取消的人）（#133） |
 | `rollback/<名稱>.down.sql` | 每支 migration 的回復檔（`0001` 的回復會刪除所有資料，只用在空資料庫或 Staging 重建） |
 | `migrations_archive/` | 壓縮成 baseline 之前的 0001–0008，只供查閱，不再套用 |
 | `seed-test-org.sql` | 建立測試機構與負責人的一次性腳本（`tests/seed-test-org.test.sh` 驗證） |

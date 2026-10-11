@@ -100,8 +100,8 @@ const parse = (res) => ({ status: res.statusCode, ...JSON.parse(res.body) });
     return out === '0' && Number(total) > 0;
   });
 
-  // 「讀預約」與「公開需求池」兩段已移除：它們打的是 v2-bookings，讀 typed
-  // bookings 表。預約資料現在寫在 app_state，那條路徑已經沒有人走。等價的驗證
+  // 「讀預約」與「公開需求池」兩段已移除：它們打的是已經拿掉的 v2-bookings
+  // 端點。預約的讀寫現在走 v2-state-load 與 v2-booking-write。等價的驗證
   // 在 state.test.js（寫入與遮蔽）與 load.test.js（每個身分讀得到什麼）。
 
   console.log('--- 撤銷 session 後舊 token 失效 ---');

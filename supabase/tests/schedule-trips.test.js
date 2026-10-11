@@ -22,6 +22,7 @@ process.env.DATABASE_URL = isSocket
   : `postgresql://care_ride_app@${host}:${process.env.PGPORT}/careride_schedule_test?sslmode=disable`;
 process.env.AUTH_SESSION_SECRET = 'synthetic-session-secret-schedule-0123456789';
 const fx = require('./_auth-fixture');
+const { selectRow } = require('./_state-tables');
 const F = require('../../tests/_trip-fixtures');
 
 const admin = new Pool({ host, port: Number(process.env.PGPORT), database: 'careride_schedule_test', user: 'postgres' });
@@ -57,8 +58,7 @@ async function call(handler, userId, body) {
   return { status: res.statusCode, ...parsed };
 }
 const outcome = (r) => `${r.status} ${r.error ? `${r.error.code} ${r.error.message}` : 'ok'}`;
-const row = async (collection, id) => (await admin.query(
-  'select organization_id, data, version, revision from app_state where collection = $1 and id = $2', [collection, id])).rows[0];
+const row = async (collection, id) => selectRow(admin, collection, id, ['organization_id', 'data', 'version', 'revision']);
 const count = async (collection, where, params) => Number((await admin.query(
   `select count(*)::int as n from app_state where collection = $1 and ${where}`, [collection, ...params])).rows[0].n);
 const notifications = async (bookingId) => Number((await admin.query(

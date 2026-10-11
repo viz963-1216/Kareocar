@@ -61,10 +61,10 @@ const ntfs = async (where = 'true', params = []) => (await admin.query(
 const templatesFor = async (userId) => (await ntfs('recipient_user_id = $1', [userId])).map((n) => n.template);
 const loadIds = async (userId) => (((await call(loadFn.handler, 'GET', userId)).data || {}).collections || {}).notifications || [];
 async function tripState() {
-  const r = (await admin.query(`select data, organization_id, revision from app_state where collection = 'trips' and id = $1`, [TRIP])).rows[0];
+  const r = (await admin.query(`select data, organization_id, revision from trips where id = $1`, [TRIP])).rows[0];
   return { ...r.data, organizationId: r.organization_id, revision: r.revision };
 }
-const bookingData = async () => (await admin.query(`select data from app_state where collection = 'bookings' and id = $1`, [BOOKING])).rows[0].data;
+const bookingData = async () => (await admin.query(`select data from bookings where id = $1`, [BOOKING])).rows[0].data;
 const execute = (userId, request) => call(executeFn.handler, 'POST', userId, request);
 
 (async () => {

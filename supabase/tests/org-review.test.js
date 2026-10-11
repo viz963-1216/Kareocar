@@ -116,7 +116,7 @@ function openBooking(id) {
   const claimPending = await claim(U.app1, 'BKG-ORG-1', org1);
   record('pending 機構不能接案', claimPending.status === 403 && claimPending.error.code === 'FORBIDDEN', outcome(claimPending));
   record('接案被拒後預約仍未被承接',
-    (await admin.query(`select organization_id from app_state where collection='bookings' and id='BKG-ORG-1'`)).rows[0].organization_id === null);
+    (await admin.query(`select organization_id from bookings where id='BKG-ORG-1'`)).rows[0].organization_id === null);
 
   console.log('--- 只有平台管理員能審核 ---');
   const selfApprove = await review(U.app1, org1, 'approve');

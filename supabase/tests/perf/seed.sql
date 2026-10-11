@@ -7,8 +7,6 @@
   \set scale 1
 \endif
 
-alter table app_state disable trigger app_state_force_scope;
-
 insert into organizations (id, org_type, name, active, review_status)
 select 'ORG-P-' || g, 'transport_provider', '合成機構 ' || g, true, 'approved' from generate_series(1, 30) g;
 
@@ -28,16 +26,20 @@ select 'M-PV-' || g, 'USR-PV-' || g, 'ORG-P-' || ((g - 1) % 30 + 1), 'driver', '
 insert into drivers (id, user_id, organization_id, duty_status, active)
 select 'DRV-P-' || g, 'USR-PV-' || g, 'ORG-P-' || ((g - 1) % 30 + 1), 'on_duty', true from generate_series(1, 150) g;
 
+-- 服務對象仍在 app_state（app_state_force_scope 會清掉 postgres 寫入的擁有者，暫時關掉它）；
+-- 預約與行程寫正式資料表（ADR 0005），以 postgres 寫入時保留指定的機構與擁有者
+alter table app_state disable trigger app_state_force_scope;
 insert into app_state (collection, id, owner_user_id, data)
 select 'careRecipients', 'CR-P-' || g, 'USR-PR-' || g,
        jsonb_build_object('id', 'CR-P-' || g, 'identity', jsonb_build_object('displayName', '合成長輩 ' || g),
          'addresses', jsonb_build_object('primary', '新北市板橋區文化路一段' || g || '號'),
          'governance', jsonb_build_object('createdByUserId', 'USR-PR-' || g))
   from generate_series(1, 2000 * :scale) g;
+alter table app_state enable trigger app_state_force_scope;
 
 -- 預約：前 1/4 在需求池（沒有承接機構），其餘已承接；一半已排車（去程有行程）
-insert into app_state (collection, id, owner_user_id, organization_id, booking_id, data)
-select 'bookings', 'BKG-P-' || g, 'USR-PR-' || r, case when g % 4 = 0 then null else 'ORG-P-' || o end, 'BKG-P-' || g,
+insert into bookings (id, owner_user_id, organization_id, data)
+select 'BKG-P-' || g, 'USR-PR-' || r, case when g % 4 = 0 then null else 'ORG-P-' || o end,
        jsonb_build_object('id', 'BKG-P-' || g, 'requestedByUserId', 'USR-PR-' || r, 'recipientId', 'CR-P-' || r,
          'state', s, 'status', s, 'claimStatus', case when g % 4 = 0 then 'open' else 'claimed' end,
          'name', '合成乘客 ' || g, 'phone', '09' || lpad(g::text, 8, '0'),
@@ -53,8 +55,8 @@ select 'bookings', 'BKG-P-' || g, 'USR-PR-' || r, case when g % 4 = 0 then null 
                case when g % 4 = 0 then 'open' when g % 2 = 0 then 'scheduled' else 'claimed' end as s
           from generate_series(1, 12000 * :scale) g) x;
 
-insert into app_state (collection, id, organization_id, revision, data)
-select 'trips', 'TRP-P-' || g, 'ORG-P-' || ((g * 2 - 1) % 30 + 1), 1,
+insert into trips (id, organization_id, revision, data)
+select 'TRP-P-' || g, 'ORG-P-' || ((g * 2 - 1) % 30 + 1), 1,
        jsonb_build_object('id', 'TRP-P-' || g, 'organizationId', 'ORG-P-' || ((g * 2 - 1) % 30 + 1),
          'driverId', 'DRV-P-' || ((g - 1) % 150 + 1), 'status', case when g % 3 = 0 then 'completed' else 'scheduled' end,
          'date', to_char(current_date + ((g * 2) % 60) - 20, 'YYYY-MM-DD'), 'bookingIds', jsonb_build_array('BKG-P-' || (g * 2)),
@@ -62,5 +64,4 @@ select 'trips', 'TRP-P-' || g, 'ORG-P-' || ((g * 2 - 1) % 30 + 1), 1,
                                     jsonb_build_object('type', 'dropoff', 'bookingId', 'BKG-P-' || (g * 2), 'name', '合成乘客')))
   from generate_series(1, 6000 * :scale) g;
 
-alter table app_state enable trigger app_state_force_scope;
 analyze;

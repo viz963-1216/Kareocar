@@ -85,7 +85,9 @@ async function load(userId) {
 
 (async () => {
   const counts = (await admin.query(
-    `select collection, count(*)::int n from app_state where collection in ('bookings','trips','careRecipients') group by 1 order by 1`)).rows;
+    `select 'bookings' as collection, count(*)::int n from bookings
+      union all select 'careRecipients', count(*)::int from app_state where collection = 'careRecipients'
+      union all select 'trips', count(*)::int from trips order by 1`)).rows;
   console.log(`驅動：${driver}；資料：${counts.map((c) => `${c.collection} ${c.n}`).join('、')}`);
 
   console.log('--- 載入資料（v2-state-load）---');
@@ -96,7 +98,7 @@ async function load(userId) {
   console.log('--- 查詢（care_ride_app ＋ RLS）---');
   const POOL_SQL = 'select * from app_state_booking_pool order by pickup_at nulls last limit 500';
   await measure('需求池', () => db.withUser('USR-PD-1', (c) => c.query(POOL_SQL)), () => explainAs('USR-PD-1', POOL_SQL));
-  const ONE_SQL = `select data from app_state where collection = 'bookings' and id = $1`;
+  const ONE_SQL = `select data from bookings where id = $1`;
   await measure('單筆預約讀取（承接機構）', () => db.withUser('USR-PD-5', (c) => c.query(ONE_SQL, ['BKG-P-5'])),
     () => explainAs('USR-PD-5', ONE_SQL, ['BKG-P-5']));
   const REFRESH_SQL = 'select * from app.recipient_refreshable_bookings($1)';
