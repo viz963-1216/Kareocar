@@ -137,6 +137,14 @@ async function newClaimed(id) {
   record('承接機構 A 看得到完整預約', sees(aSees, 'bookings', 'BKG-ACC-1'));
   const bBefore = await load(U.dspB);
   record('其他機構 B 看不到這筆預約', !sees(bBefore, 'bookings', 'BKG-ACC-1') && !JSON.stringify(bBefore.data.collections).includes('188號'));
+  // #131：預約的異動紀錄與修改快照，依預約「現在」的承接機構決定誰看得到
+  await admin.query(`alter table app_state disable trigger app_state_force_scope;
+    insert into app_state (collection, id, organization_id, booking_id, data) values
+    ('bookingEvents', 'EVT-ACC-1', $1, 'BKG-ACC-1', '{"id":"EVT-ACC-1","bookingId":"BKG-ACC-1","eventType":"claimed"}'),
+    ('bookingRevisions', 'REV-ACC-1', $1, 'BKG-ACC-1', '{"id":"REV-ACC-1","bookingId":"BKG-ACC-1","snapshot":{"pickupAddress":"新北市板橋區文化路一段188號"}}');
+    alter table app_state enable trigger app_state_force_scope;`.replace(/\$1/g, `'${ORG_A}'`));
+  const aChildren = await load(U.dspA);
+  record('（前提）承接機構 A 看得到這筆預約的異動紀錄與修改快照', sees(aChildren, 'bookingEvents', 'EVT-ACC-1') && sees(aChildren, 'bookingRevisions', 'REV-ACC-1'));
   const release = await opsUpdate(U.dspA, 'BKG-ACC-1', { state: 'open', claimStatus: 'open', status: 'open', organizationId: null, claimedByUserId: null, claimedAt: null });
   const released = await row('bookings', 'BKG-ACC-1');
   record('A 退回公開池：organization_id 清空，記下前一個承接機構', release.status === 200 && released.organization_id === null
@@ -151,8 +159,13 @@ async function newClaimed(id) {
   const stillOpen = await row('bookings', 'BKG-ACC-1');
   record('退回後 A 不能再寫這筆預約', [400, 403].includes(aWriteBack.status) && aWriteBack2.status === 403
     && stillOpen.organization_id === null && stillOpen.data.state === 'open', `${outcome(aWriteBack)} / ${outcome(aWriteBack2)}`);
+  record('退回後 A 也讀不到這筆預約的異動紀錄與修改快照（#131）',
+    !sees(aAfter, 'bookingEvents', 'EVT-ACC-1') && !sees(aAfter, 'bookingRevisions', 'REV-ACC-1'));
   const bClaim = await claim(U.dspB, 'BKG-ACC-1', ORG_B);
-  record('B 可以重新接案並看到完整預約', bClaim.status === 200 && sees(await load(U.dspB), 'bookings', 'BKG-ACC-1'), outcome(bClaim));
+  const bAfterClaim = await load(U.dspB);
+  record('B 可以重新接案並看到完整預約', bClaim.status === 200 && sees(bAfterClaim, 'bookings', 'BKG-ACC-1'), outcome(bClaim));
+  record('重新接案的 B 看得到這筆預約之前的異動紀錄與修改快照（#131）',
+    sees(bAfterClaim, 'bookingEvents', 'EVT-ACC-1') && sees(bAfterClaim, 'bookingRevisions', 'REV-ACC-1'));
 
   console.log('--- 不受理 ---');
   record('（前提）A 接第二筆', await newClaimed('BKG-ACC-3'));
