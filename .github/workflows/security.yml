@@ -34,7 +34,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
       - name: 安裝依賴（依 package-lock.json）
@@ -97,7 +97,7 @@ jobs:
         run: node tools/zap-check-report.js zap/report.json .zap/accepted-high.txt
       - name: 保存報告
         if: always() && steps.target.outputs.skip != 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: zap-baseline-report
           path: zap/
