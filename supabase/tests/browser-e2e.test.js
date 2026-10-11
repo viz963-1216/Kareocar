@@ -50,10 +50,12 @@ const ARTIFACT_DIR = process.env.E2E_ARTIFACT_DIR || fs.mkdtempSync(path.join(os
 fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
 const PASSWORD = 'E2e-Synthetic-Pass-2026';
 const ORG = 'ORG-E2E-A';
+const ORG_B = 'ORG-E2E-B';
 const DRIVER_ID = 'DRV-E2E-1';
 const U = {
   req: { id: 'USR-E2E-REQ', phone: '0922000001', name: '合成需求者' },
   dsp: { id: 'USR-E2E-DSP', phone: '0922000002', name: '合成調度員' },
+  dspB: { id: 'USR-E2E-DSPB', phone: '0922000004', name: '合成調度員 B' },
   drv: { id: 'USR-E2E-DRV', phone: '0922000003', name: '合成司機' },
   root: { id: 'USR-E2E-ROOT', phone: '0922000009', name: '合成平台管理者' }
 };
@@ -359,14 +361,17 @@ async function fixtureTrip(trip) {
 async function seed() {
   await admin.query(`
     insert into organizations (id, org_type, name, active) values ('${ORG}','transport_provider','合成承運 E2E',true);
+    insert into organizations (id, org_type, name, contact_phone, active) values ('${ORG_B}','transport_provider','合成承運 E2E-B','02-7777-8888',true);
     insert into users (id, display_name, phone_e164, platform_role, active) values
       ('${U.req.id}','${U.req.name}','+886${U.req.phone.slice(1)}','none',true),
       ('${U.dsp.id}','${U.dsp.name}','+886${U.dsp.phone.slice(1)}','none',true),
+      ('${U.dspB.id}','${U.dspB.name}','+886${U.dspB.phone.slice(1)}','none',true),
       ('${U.drv.id}','${U.drv.name}','+886${U.drv.phone.slice(1)}','none',true),
       ('${U.root.id}','${U.root.name}','+886${U.root.phone.slice(1)}','super_admin',true);
     insert into memberships (id, user_id, organization_id, role, status) values
       ('M-E2E-REQ','${U.req.id}','ORG-REQ-001','requester','active'),
       ('M-E2E-DSP','${U.dsp.id}','${ORG}','dispatcher','active'),
+      ('M-E2E-DSPB','${U.dspB.id}','${ORG_B}','dispatcher','active'),
       ('M-E2E-DRV','${U.drv.id}','${ORG}','driver','active');
     insert into drivers (id, user_id, organization_id, duty_status, active) values ('${DRIVER_ID}','${U.drv.id}','${ORG}','on_duty',true);
   `);
@@ -922,6 +927,50 @@ async function flowReleaseLeg(cdp, baseUrl, tokens) {
     await waitForDb(async () => (await poolOf()) === 'primary', '回程收回');
     record(S, '按「收回回程」：回程回到由本機構負責', true);
     await waitFor(page, `!!document.querySelector('.booking-leg-release-btn[data-leg=${J(`${id}_return`)}]')`, '收回後又可以退回');
+
+    // #113：再退回回程，第二家機構在需求池接下，成為協力機構
+    await click(page, `.booking-leg-release-btn[data-leg=${J(`${id}_return`)}]`);
+    await waitForDb(async () => (await poolOf()) === 'in_pool', '回程再次退回需求池');
+    const pageB = await openPage(cdp, baseUrl, 'dispatcher-b-claim-leg');
+    try {
+      await login(pageB, U.dspB);
+      await goView(pageB, 'demand-market');
+      await waitFor(pageB, `!!document.querySelector('.demand-leg-claim-btn[data-leg=${J(`${id}_return`)}]')`, '第二家機構的需求池有「接下回程」');
+      record(S, '第二家機構在需求池看到「只有回程」', await evaluate(pageB, "document.querySelector('main').innerText.includes('只有回程')"));
+      await click(pageB, `.demand-leg-claim-btn[data-leg=${J(`${id}_return`)}]`);
+      const partnered = await waitForDb(async () => {
+        const r = ((await row('bookings', id)).data.legs || []).find((l) => l.direction === 'return');
+        return r && r.poolStatus === 'partner' ? r : null;
+      }, '回程由第二家機構負責');
+      record(S, '按「接下回程」：回程的協力機構是第二家機構', partnered.partnerOrganizationId === ORG_B, J(partnered));
+      await goView(pageB, 'dispatch-home');
+      await evaluate(pageB, `(()=>{const d=document.getElementById('operationDateInput');d.value=${J(date)};d.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+      let shownB = true;
+      try { await waitFor(pageB, "document.querySelector('main').innerText.includes('由其他機構負責')", '協力機構的調度台看到這筆預約', 10000); } catch (_) { shownB = false; }
+      const textB = await evaluate(pageB, "document.querySelector('main').innerText");
+      record(S, '協力機構的調度台：去程標示由其他機構負責，看得到承接機構名稱', shownB && textB.includes('承接機構：合成承運 E2E'), shownB ? '' : textB.slice(0, 400));
+    } finally {
+      await finishPage(pageB, S);
+    }
+    await evaluate(page, "(()=>{Object.defineProperty(document,'visibilityState',{value:'visible',configurable:true});document.dispatchEvent(new Event('visibilitychange'));return true;})()");
+    let shownA = true;
+    try { await waitFor(page, "document.querySelector('main').innerText.includes('合成承運 E2E-B（協力機構・02-7777-8888）')", '承接機構看到協力機構名稱電話', 10000); } catch (_) { shownA = false; }
+    record(S, '承接機構的調度台：回程顯示協力機構名稱與電話，不能再退回或收回', shownA
+      && !(await evaluate(page, `!!document.querySelector('[data-leg=${J(`${id}_return`)}]')`)), shownA ? '' : await evaluate(page, "document.querySelector('main').innerText.slice(0,600)"));
+    const pageR = await openPage(cdp, baseUrl, 'requester-split-view');
+    try {
+      await login(pageR, U.req);
+      await goView(pageR, 'requester-bookings');
+      let both = true;
+      try { await waitFor(pageR, "document.querySelector('main').innerText.includes('載送：合成承運 E2E-B（協力機構）')&&document.querySelector('main').innerText.includes('承接：合成承運 E2E')", '我的預約分段顯示兩家機構', 10000); } catch (_) { both = false; }
+      record(S, '需求者的我的預約分段顯示兩家機構', both, both ? '' : await evaluate(pageR, "document.querySelector('main').innerText.split('\\n').filter((t)=>/去程|回程|承接：|載送：/.test(t)).join(' / ').slice(0,800)"));
+      await goView(pageR, 'requester-home');
+      let noted = true;
+      try { await waitFor(pageR, "document.querySelector('main').innerText.includes('回程由 合成承運 E2E-B 載送')", '需求者收到通知', 10000); } catch (_) { noted = false; }
+      record(S, '需求者收到「回程由第二家機構載送」的通知', noted, noted ? '' : await evaluate(pageR, "document.querySelector('main').innerText.slice(0,600)"));
+    } finally {
+      await finishPage(pageR, S);
+    }
   } catch (e) {
     record(S, `流程中斷：${e.message}`, false);
     await screenshot(page, 'H-release-leg');

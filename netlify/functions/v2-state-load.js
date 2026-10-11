@@ -61,6 +61,10 @@ exports.handler = async (event) => {
           order by updated_at
           limit $1`, [MAX_ROWS])).rows;
 
+      // 協力機構（#113，ADR 0004）：一般的預約讀取規則讀不到整筆預約，改由 app.partner_booking_views
+      // 只回傳協力機構可以看的欄位（自己那一段完整、另一段只標示由其他機構負責）
+      const partnerViews = (await client.query('select id, organization_id, version, updated_at, data from app.partner_booking_views()')).rows;
+
       // 預約上的補助資訊（#101）：承接機構在服務對象居住縣市、接送當天是否有有效的長照特約。
       // 需求者讀不到 ltc_contracts，用 security definer 的 app.ltc_contract_active 判斷；同樣的組合只查一次。
       const ltcCache = new Map();
@@ -91,6 +95,12 @@ exports.handler = async (event) => {
           ...(row.collection === 'trips' ? { revision: row.revision } : {}),
           updatedAt: row.updated_at
         });
+      }
+      // 同一筆預約已經能整筆讀到（例如也是承接機構的成員）時，不再放協力機構的檢視
+      const seenBookings = new Set((collections.bookings || []).map((b) => b.id));
+      for (const row of partnerViews) {
+        if (seenBookings.has(row.id)) continue;
+        push('bookings', { ...row.data, id: row.id, organizationId: row.organization_id || null, version: row.version, updatedAt: row.updated_at });
       }
 
       // ---- 通知：notifications 資料表，RLS 只放行收件人本人 ----

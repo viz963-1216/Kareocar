@@ -241,4 +241,35 @@ ok('一般預約寫入：去程／回程的需求池欄位沿用資料庫的值�
   assert.ok(whole.record.legs.every((l) => L.legPoolStatus(l) === 'primary'));
 });
 
+// ---------------------------------------------------------------- 接下單一段成為協力機構（#113）
+const claimReturn = (b, org = 'ORG-B') => L.claimLeg(b, { legId: 'B1_return', organizationId: org, organizationName: '合成 B', organizationPhone: '02-3333-4444', actorUserId: 'UB', at: AT });
+ok('接下單一段：別家機構接下在需求池的回程，成為協力機構；預約仍由承接機構負責', () => {
+  const released = releaseReturn(roundTrip()).booking;
+  const r = claimReturn(released);
+  assert.equal(r.ok, true, r.error);
+  const ret = r.booking.legs[1];
+  assert.equal(L.legPoolStatus(ret), 'partner');
+  assert.equal(ret.partnerOrganizationId, 'ORG-B'); assert.equal(ret.partnerOrganizationName, '合成 B'); assert.equal(ret.partnerOrganizationPhone, '02-3333-4444');
+  assert.ok(!('releasedAt' in ret));
+  assert.equal(r.booking.organizationId, 'ORG-A');
+  assert.equal(L.legResponsibleOrganization(r.booking, ret), 'ORG-B');
+  assert.equal(L.legResponsibleOrganization(r.booking, r.booking.legs[0]), 'ORG-A');
+});
+ok('接下單一段被拒：不在需求池、承接機構自己、預約不在承接中', () => {
+  assert.match(claimReturn(roundTrip()).error, /不在需求池/);
+  const released = releaseReturn(roundTrip()).booking;
+  assert.match(claimReturn(released, 'ORG-A').error, /承接機構/);
+  assert.match(claimReturn({ ...released, state: 'cancelled' }).error, /承接/);
+  assert.match(claimReturn(claimReturn(released).booking, 'ORG-C').error, /已經有其他機構/);
+});
+ok('待排車的段依負責機構：承接機構不再看到交給協力機構的段，協力機構的資料只列自己那段', () => {
+  const partnered = claimReturn(releaseReturn(roundTrip()).booking).booking;
+  assert.equal(L.nextPendingLeg(partnered).id, 'B1_outbound', '承接機構：去程');
+  assert.equal(L.nextPendingLeg(partnered, 'ORG-B').id, 'B1_return', '協力機構：回程');
+  const outScheduled = L.scheduleBookingLeg(partnered, { tripId: 'T1', organizationId: 'ORG-A', at: AT }).booking;
+  assert.equal(L.nextPendingLeg(outScheduled), null, '承接機構排完去程就沒有待排車的段');
+  assert.equal(L.nextPendingLeg({ ...outScheduled, partnerView: true, partnerOrganizationId: 'ORG-B' }).id, 'B1_return',
+    '協力機構讀到的預約（partnerView）預設看自己那段');
+});
+
 console.log(`lifecycle: ${pass} passed`);
