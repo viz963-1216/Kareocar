@@ -168,4 +168,77 @@ ok('退回部分排車只由伺服器在取消行程時做，一般預約寫入�
   assert.ok(!(L.bookingWriteTransitions('ops').scheduled || []).includes('partially_scheduled'));
 });
 
+// ---------------------------------------------------------------- 退回一段到需求池、收回（#112，ADR 0004）
+const roundTrip = (extra = {}) => ({ ...claimedBooking([legOf('B1', 'outbound', 1), legOf('B1', 'return', 2, { requestedPickupAt: '2099-01-01T08:00:00.000Z' })]),
+  tripType: '來回', splitLegConsent: true, ...extra });
+const releaseReturn = (b, org = 'ORG-A') => L.releaseLeg(b, { legId: 'B1_return', organizationId: org, actorUserId: 'U1', at: AT });
+ok('退回一段：承接機構把還沒排車的回程放回需求池，不改傳入的預約', () => {
+  const b = roundTrip();
+  const r = releaseReturn(b);
+  assert.equal(r.ok, true, r.error);
+  const ret = r.booking.legs.find((l) => l.id === 'B1_return');
+  assert.equal(L.legPoolStatus(ret), 'in_pool');
+  assert.equal(ret.releasedByOrganizationId, 'ORG-A');
+  assert.equal(L.legPoolStatus(r.booking.legs[0]), 'primary');
+  assert.equal(r.booking.organizationId, 'ORG-A', '預約仍由承接機構負責');
+  assert.equal(r.booking.version, 4);
+  assert.equal(L.legPoolStatus(b.legs[1]), 'primary', '傳入的預約不變');
+});
+ok('退回一段：在需求池的那一段沒有負責機構，也不會被當成下一個待排車的段', () => {
+  const r = releaseReturn(roundTrip());
+  assert.equal(L.legResponsibleOrganization(r.booking, r.booking.legs[1]), null);
+  const s = L.scheduleBookingLeg(r.booking, { tripId: 'T1', organizationId: 'ORG-A', at: AT });
+  assert.equal(s.ok, true, s.error); assert.equal(s.leg.id, 'B1_outbound');
+  assert.equal(s.to, 'partially_scheduled', '回程在需求池，排完去程只算部分排車');
+  const again = L.scheduleBookingLeg(s.booking, { legId: 'B1_return', tripId: 'T2', organizationId: 'ORG-A', at: AT });
+  assert.equal(again.ok, false); assert.match(again.error, /需求池/);
+});
+ok('退回一段被拒：需求者沒同意分段載送、沒有這個欄位、單程', () => {
+  assert.match(releaseReturn(roundTrip({ splitLegConsent: false })).error, /沒有同意分段載送/);
+  const noField = roundTrip(); delete noField.splitLegConsent;
+  assert.match(releaseReturn(noField).error, /沒有同意分段載送/);
+  const oneWay = { ...claimedBooking([legOf('B1', 'outbound', 1)]), tripType: '單程' };
+  assert.match(L.releaseLeg(oneWay, { legId: 'B1_outbound', organizationId: 'ORG-A', actorUserId: 'U1', at: AT }).error, /來回/);
+});
+ok('退回一段被拒：那一段已排車、不是承接機構、預約不在承接中、另一段已在需求池、找不到那一段', () => {
+  const scheduled = L.scheduleBookingLeg(roundTrip(), { legId: 'B1_return', tripId: 'T1', organizationId: 'ORG-A', at: AT }).booking;
+  assert.match(releaseReturn(scheduled).error, /已經排車/);
+  assert.match(releaseReturn(roundTrip(), 'ORG-B').error, /承接機構/);
+  assert.match(releaseReturn(roundTrip({ state: 'open', organizationId: null })).error, /承接/);
+  const oneOut = L.releaseLeg(roundTrip(), { legId: 'B1_outbound', organizationId: 'ORG-A', actorUserId: 'U1', at: AT }).booking;
+  assert.match(releaseReturn(oneOut).error, /整筆退回/);
+  assert.match(L.releaseLeg(roundTrip(), { legId: 'NOPE', organizationId: 'ORG-A', actorUserId: 'U1', at: AT }).error, /找不到/);
+  assert.match(releaseReturn(releaseReturn(roundTrip()).booking).error, /已經在需求池/);
+});
+ok('收回一段：承接機構把還在需求池的那一段拿回來；不在需求池或不是承接機構被拒', () => {
+  const released = releaseReturn(roundTrip()).booking;
+  const r = L.reclaimLeg(released, { legId: 'B1_return', organizationId: 'ORG-A', at: AT });
+  assert.equal(r.ok, true, r.error);
+  const ret = r.booking.legs[1];
+  assert.equal(L.legPoolStatus(ret), 'primary');
+  assert.ok(!('releasedAt' in ret) && !('releasedByOrganizationId' in ret));
+  assert.equal(L.legResponsibleOrganization(r.booking, ret), 'ORG-A');
+  assert.match(L.reclaimLeg(roundTrip(), { legId: 'B1_return', organizationId: 'ORG-A', at: AT }).error, /不在需求池/);
+  assert.match(L.reclaimLeg(released, { legId: 'B1_return', organizationId: 'ORG-B', at: AT }).error, /承接機構/);
+});
+ok('整筆退回時去程／回程的需求池狀態一併清掉', () => {
+  const released = releaseReturn(roundTrip()).booking;
+  const cleared = L.clearLegPool(released);
+  assert.ok(cleared.legs.every((l) => L.legPoolStatus(l) === 'primary' && !('releasedAt' in l)));
+});
+ok('一般預約寫入：去程／回程的需求池欄位沿用資料庫的值，整筆退回時清掉', () => {
+  const stored = releaseReturn(roundTrip()).booking;
+  const forged = JSON.parse(JSON.stringify(stored));
+  forged.legs[1].poolStatus = 'primary'; delete forged.legs[1].releasedAt;
+  forged.legs[0].poolStatus = 'in_pool';
+  const kept = bookingRules.checkBookingWrite({ actorUserId: 'U1', record: forged,
+    existing: { data: stored, organization_id: 'ORG-A', owner_user_id: 'U9' }, roles: { opsOfExisting: true } }).record;
+  assert.equal(L.legPoolStatus(kept.legs[1]), 'in_pool'); assert.equal(kept.legs[1].releasedAt, AT);
+  assert.equal(L.legPoolStatus(kept.legs[0]), 'primary');
+  const whole = bookingRules.checkBookingWrite({ actorUserId: 'U1', record: { ...stored, state: 'open' },
+    existing: { data: stored, organization_id: 'ORG-A', owner_user_id: 'U9' }, roles: { opsOfExisting: true } });
+  assert.equal(whole.revoke, true);
+  assert.ok(whole.record.legs.every((l) => L.legPoolStatus(l) === 'primary'));
+});
+
 console.log(`lifecycle: ${pass} passed`);

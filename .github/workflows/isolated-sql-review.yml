@@ -118,6 +118,9 @@ jobs:
       - name: 排車 command 整合測試（預約與行程一筆交易、部分失敗全部不寫入、版本衝突、來回、共乘與排車建議）
         run: bash supabase/tests/run-schedule-trips.sh
 
+      - name: 跨機構排車整合測試（來回預約的一段退回需求池、需求池只列那一段的模糊資訊、收回；ADR 0004）
+        run: bash supabase/tests/run-split-legs.sh
+
       - name: 通知整合測試（承接、排車、指派、改派、完成各自通知正確收件人；收件人只讀得到自己的）
         run: bash supabase/tests/run-notifications.sh
 

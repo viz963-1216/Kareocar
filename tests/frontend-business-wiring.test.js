@@ -36,7 +36,8 @@ console.log('--- 端點設定 ---');
 t('APP_CONFIG 有 claim-booking 端點', html.includes("claimBookingUrl: '/api/v2/claim-booking'"));
 t('APP_CONFIG 有 cancel-booking 端點', html.includes("cancelBookingUrl: '/api/v2/cancel-booking'"));
 t('APP_CONFIG 有 trip-execute 端點', html.includes("tripExecuteUrl: '/api/v2/trip-execute'"));
-for (const name of ['claim-booking', 'cancel-booking', 'trip-execute']) {
+t('APP_CONFIG 有 booking-leg 端點（退回一段、收回，#112）', html.includes("bookingLegUrl: '/api/v2/booking-leg'"));
+for (const name of ['claim-booking', 'cancel-booking', 'trip-execute', 'booking-leg']) {
   t(`netlify.toml 將 /api/v2/${name} 導向 function`,
     toml.includes(`from = "/api/v2/${name}"`) && toml.includes(`to = "/.netlify/functions/v2-${name}"`));
 }

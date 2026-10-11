@@ -83,6 +83,10 @@ function keepLegScheduling(out, before) {
       else if (prev) delete next[k];
       else next[k] = k === 'status' ? lifecycle.BOOKING_LEG_STATUS.PENDING : null; // 新增的段一律從待排車開始
     }
+    // 需求池狀態（退回一段、協力機構）只由專用端點寫入（#112，ADR 0004）
+    for (const k of lifecycle.LEG_POOL_FIELDS) {
+      if (prev && k in prev) next[k] = prev[k]; else delete next[k];
+    }
     return next;
   });
 }
@@ -174,6 +178,8 @@ function checkBookingWrite({ actorUserId, record, existing, roles }) {
   if (revoke) {
     out.claimedByUserId = null;
     out.claimedAt = null;
+    // 整筆退回或不受理：退回需求池的那一段也一起回到整筆預約裡
+    if (Array.isArray(out.legs)) out.legs = lifecycle.clearLegPool(out).legs;
   }
   return { record: out, revoke };
 }

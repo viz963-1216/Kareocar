@@ -178,6 +178,11 @@
   status = 200
 
 [[redirects]]
+  from = "/api/v2/booking-leg"
+  to = "/.netlify/functions/v2-booking-leg"
+  status = 200
+
+[[redirects]]
   from = "/api/v2/trip-execute"
   to = "/.netlify/functions/v2-trip-execute"
   status = 200
