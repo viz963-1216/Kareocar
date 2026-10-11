@@ -829,6 +829,61 @@ async function flowFamily(cdp, baseUrl, tokens) {
   await finishPage(page, S);
 }
 
+// ================================================================ G. 來回預約同意分段載送（#111）
+async function flowSplitConsent(cdp, baseUrl) {
+  const S = 'G 同意分段載送';
+  const destination = '台北市中正區公園路20號';
+  const visible = (id) => `(()=>{const el=document.getElementById(${J(id)});return !!el&&!el.closest('.hidden')&&el.offsetParent!==null;})()`;
+  const setValue = (id, value) => `(()=>{const el=document.getElementById(${J(id)});el.value=${J(value)};el.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`;
+  const page = await openPage(cdp, baseUrl, 'requester-split');
+  try {
+    await login(page, U.req);
+    await goView(page, 'requester-new');
+    await click(page, '[data-recipient-choice]');
+    await click(page, '.wizard-next-btn[data-next="2"]');
+    await typeConfirmed(page, '#rqPickup', '新北市板橋區中山路一段161號');
+    await typeConfirmed(page, '#rqDestination', destination);
+    await click(page, '.wizard-next-btn[data-next="3"]');
+    await evaluate(page, setValue('rqDate', dayOffset(6)));
+    record(S, '單程預約不顯示「同意分段載送」', !(await evaluate(page, visible('rqSplitLegConsent'))));
+    await evaluate(page, setValue('rqTripType', '來回'));
+    record(S, '改成來回：顯示「同意分段載送」而且預設勾選', await evaluate(page, visible('rqSplitLegConsent'))
+      && await evaluate(page, "document.getElementById('rqSplitLegConsent').checked===true"));
+    await evaluate(page, setValue('rqReturnDate', dayOffset(6)));
+    await evaluate(page, setValue('rqReturnTime', '16:00'));
+    await clickRetry(page, '.wizard-next-btn[data-next="4"]');
+    record(S, '確認步驟顯示同意分段載送', await evaluate(page, "document.getElementById('requesterWizardReview').textContent.includes('・同意分段載送')"),
+      await evaluate(page, "document.getElementById('requesterWizardReview').textContent"));
+    await click(page, '#submitRequesterBookingBtn');
+    const created = await waitForDb(async () => {
+      const { rows } = await admin.query(`select id, data from bookings where owner_user_id = $1 and data->>'destination' = $2 and data->>'tripType' = '來回'`, [U.req.id, destination]);
+      return rows[0] || null;
+    }, '來回預約寫入資料庫');
+    record(S, '資料庫的預約存下同意分段載送', created.data.splitLegConsent === true, J({ splitLegConsent: created.data.splitLegConsent }));
+    await waitFor(page, "!!document.querySelector('.nav-btn.active[data-view=\"requester-bookings\"]')", '送出後回到我的預約');
+    record(S, '我的預約顯示同意分段載送', await evaluate(page, "document.querySelector('main').innerText.includes('同意分段載送')"));
+
+    await click(page, `.requester-edit-booking-btn[data-booking=${J(created.id)}]`);
+    await click(page, '.wizard-next-btn[data-next="2"]');
+    await click(page, '.wizard-next-btn[data-next="3"]');
+    record(S, '修改預約時勾選框是預約上的值（已勾選）', await evaluate(page, "document.getElementById('rqSplitLegConsent').checked===true"));
+    await click(page, '#rqSplitLegConsent');
+    await clickRetry(page, '.wizard-next-btn[data-next="4"]');
+    await click(page, '#submitRequesterBookingBtn');
+    const amended = await waitForDb(async () => {
+      const r = await row('bookings', created.id);
+      return r && r.data.splitLegConsent === false ? r : null;
+    }, '修改後不同意分段載送寫入資料庫');
+    record(S, '修改預約取消同意：資料庫改成不同意', amended.data.splitLegConsent === false);
+    await waitFor(page, "!!document.querySelector('.nav-btn.active[data-view=\"requester-bookings\"]')", '修改後回到我的預約');
+    record(S, '我的預約顯示不同意分段載送', await evaluate(page, "document.querySelector('main').innerText.includes('不同意分段載送')"));
+  } catch (e) {
+    record(S, `流程中斷：${e.message}`, false);
+    await screenshot(page, 'G-split');
+  }
+  await finishPage(page, S);
+}
+
 // ================================================================ F. 登入方式開關與客服聯絡（#79）
 async function flowPublicSettings(cdp, baseUrl) {
   const S = 'F 登入方式與客服聯絡';
@@ -939,6 +994,8 @@ async function flowPublicSettings(cdp, baseUrl) {
     await flowSchedule(cdp, baseUrl, tokens);
     console.log('--- E：需求者替家人預約 ---');
     await flowFamily(cdp, baseUrl, tokens);
+    console.log('--- G：來回預約同意分段載送 ---');
+    await flowSplitConsent(cdp, baseUrl);
     console.log('--- F：登入方式開關與客服聯絡 ---');
     await flowPublicSettings(cdp, baseUrl);
   } catch (e) {
