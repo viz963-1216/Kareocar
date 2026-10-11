@@ -1154,7 +1154,7 @@ function bookingPermissionError(permission){
 }
 const BOOKING_CREATE_INPUT_FIELDS = Object.freeze([
   'recipientId','name','phone','pickupDate','pickupTime','pickupAddress','pickupAccessNote','destination','destinationAccessNote',
-  'tripType','returnDate','returnTime','aidNeed','companions','specialNeed','note','consent','poolingConsent','serviceJurisdiction'
+  'tripType','returnDate','returnTime','aidNeed','companions','specialNeed','note','consent','poolingConsent','splitLegConsent','serviceJurisdiction'
 ]);
 
 function sanitizeBookingCreateInput(input={}){
@@ -1170,12 +1170,14 @@ const BOOKING_COMMERCIAL_SNAPSHOT_SCHEMA_VERSION=1;
 const BOOKING_REVISION_SCHEMA_VERSION=1;
 const BOOKING_EDITABLE_FIELDS=Object.freeze([
   'pickupDate','pickupTime','pickupAddress','pickupAccessNote','destination','destinationAccessNote',
-  'tripType','returnDate','returnTime','aidNeed','companions','specialNeed','note','poolingConsent'
+  'tripType','returnDate','returnTime','aidNeed','companions','specialNeed','note','poolingConsent','splitLegConsent'
 ]);
 const BOOKING_RECONFIRM_FIELDS=new Set(['pickupDate','pickupTime','pickupAddress','pickupAccessNote','destination','destinationAccessNote','tripType','returnDate','returnTime','aidNeed','companions','specialNeed','poolingConsent']);
 function bookingEditablePayload(booking={}){
   const out={};
   BOOKING_EDITABLE_FIELDS.forEach(k=>out[k]=booking[k]??'');
+  // 沒有這個欄位的來回預約視為沒有同意分段載送（#111），比較前後時不算修改
+  out.splitLegConsent=booking.tripType==='來回'?booking.splitLegConsent===true:'';
   return out;
 }
 function bookingChangedFields(before={},after={}){
@@ -1315,6 +1317,8 @@ function normalizeBookingPayload(input={}){
   out.destination=String(out.destination||'').trim();
   out.destinationAccessNote=String(out.destinationAccessNote||'').trim();
   out.tripType=String(out.tripType||'單程').trim()||'單程';
+  // 同意分段載送（#111）：只有來回預約有，值是 true／false；單程不存
+  if(out.tripType==='來回')out.splitLegConsent=out.splitLegConsent===true; else delete out.splitLegConsent;
   out.returnDate=String(out.returnDate||'').trim();
   out.returnTime=String(out.returnTime||'').trim();
   out.aidNeed=String(out.aidNeed||'').trim();
@@ -5497,7 +5501,7 @@ function requesterDraftMeaningful(d){
 function collectRequesterDraftFromDom(){
   if(editingRequesterBookingId)return null;
   const get=id=>$(id)?.value??'';
-  return {step:Math.max(1,Math.min(4,Number(requesterWizardStep)||1)),recipientId:requesterRecipientChoice||null,pickupAddress:get('rqPickup').trim(),pickupAccessNote:get('rqPickupAccessNote').trim(),destination:get('rqDestination').trim(),destinationAccessNote:get('rqDestinationAccessNote').trim(),pickupDate:get('rqDate'),pickupTime:get('rqTime'),tripType:get('rqTripType')||'單程',returnDate:get('rqReturnDate'),returnTime:get('rqReturnTime'),aidNeed:get('rqAidNeed'),companions:get('rqCompanions'),specialNeed:get('rqSpecialNeed').trim(),poolingConsent:get('rqPoolingConsent')||'no',note:get('rqNote').trim(),updatedAt:nowISO()};
+  return {step:Math.max(1,Math.min(4,Number(requesterWizardStep)||1)),recipientId:requesterRecipientChoice||null,pickupAddress:get('rqPickup').trim(),pickupAccessNote:get('rqPickupAccessNote').trim(),destination:get('rqDestination').trim(),destinationAccessNote:get('rqDestinationAccessNote').trim(),pickupDate:get('rqDate'),pickupTime:get('rqTime'),tripType:get('rqTripType')||'單程',returnDate:get('rqReturnDate'),returnTime:get('rqReturnTime'),aidNeed:get('rqAidNeed'),companions:get('rqCompanions'),specialNeed:get('rqSpecialNeed').trim(),poolingConsent:get('rqPoolingConsent')||'no',splitLegConsent:$('rqSplitLegConsent')?.checked!==false,note:get('rqNote').trim(),updatedAt:nowISO()};
 }
 function saveRequesterDraftFromDom({markDirty=true}={}){
   if(editingRequesterBookingId)return null;const d=collectRequesterDraftFromDom(),key=requesterDraftKey();if(!d||!key)return null;
@@ -5536,7 +5540,7 @@ function requesterDraftInlineNotice(){
 }
 function bindRequesterDraftAutosave(){
   if(editingRequesterBookingId)return;
-  ['rqPickup','rqPickupAccessNote','rqDestination','rqDestinationAccessNote','rqDate','rqTime','rqTripType','rqReturnDate','rqReturnTime','rqAidNeed','rqCompanions','rqSpecialNeed','rqPoolingConsent','rqNote'].forEach(id=>{const el=$(id);if(!el)return;const handler=()=>saveRequesterDraftFromDom({markDirty:true});el.addEventListener('input',handler);el.addEventListener('change',handler);});
+  ['rqPickup','rqPickupAccessNote','rqDestination','rqDestinationAccessNote','rqDate','rqTime','rqTripType','rqReturnDate','rqReturnTime','rqAidNeed','rqCompanions','rqSpecialNeed','rqPoolingConsent','rqSplitLegConsent','rqNote'].forEach(id=>{const el=$(id);if(!el)return;const handler=()=>saveRequesterDraftFromDom({markDirty:true});el.addEventListener('input',handler);el.addEventListener('change',handler);});
 }
 function requesterHasUnsavedDraftOnPage(){const d=collectRequesterDraftFromDom();return requesterDraftMeaningful(d);}
 
@@ -5591,6 +5595,7 @@ function requesterNew(){
         <div class="form-2"><div class="form-field"><label for="rqDate">去程日期</label><input id="rqDate" type="date" min="${dateKey()}" value="${escapeHTML(date)}" /></div><div class="form-field"><label for="rqTime">去程時間</label><input id="rqTime" type="time" value="${escapeHTML(time)}" /></div></div>
         <div class="form-field"><label for="rqTripType">行程類型</label><select id="rqTripType"><option value="單程" ${tripType==='單程'?'selected':''}>單程</option><option value="來回" ${tripType==='來回'?'selected':''}>來回</option></select></div>
         <div class="form-2 ${tripType==='來回'?'':'hidden'}" id="rqReturnFields"><div class="form-field"><label for="rqReturnDate">回程日期</label><input id="rqReturnDate" type="date" min="${dateKey()}" value="${escapeHTML(returnDate)}" /></div><div class="form-field"><label for="rqReturnTime">回程時間</label><input id="rqReturnTime" type="time" value="${escapeHTML(returnTime)}" /></div></div>
+        <div class="form-field ${tripType==='來回'?'':'hidden'}" id="rqSplitLegConsentField"><label class="checkbox-row" for="rqSplitLegConsent"><input id="rqSplitLegConsent" type="checkbox" ${(b?b.splitLegConsent===true:draft?.splitLegConsent!==false)?'checked':''} /> 同意分段載送</label><p class="muted small">承接的機構沒辦法兩段都載時，去程或回程可以由別家接送機構載送；整筆預約仍由承接機構負責聯絡。</p></div>
         <div class="form-2"><div class="form-field"><label for="rqAidNeed">輪椅／輔具</label><select id="rqAidNeed"><option value="" ${aid===''?'selected':''}>${rider?'同平常':'無'}</option><option value="手動輪椅" ${aid==='手動輪椅'?'selected':''}>手動輪椅</option><option value="電動輪椅" ${aid==='電動輪椅'?'selected':''}>電動輪椅</option><option value="助行器" ${aid==='助行器'?'selected':''}>助行器</option><option value="其他輔具" ${aid==='其他輔具'?'selected':''}>其他輔具</option></select></div><div class="form-field"><label for="rqCompanions">陪同人數</label><select id="rqCompanions"><option value="" ${companions===''?'selected':''}>${rider?'同平常':'無'}</option>${(rider?[0,1,2,3,4,5,6]:[1,2,3,4,5,6]).map(n=>`<option value="${n}" ${companions===String(n)?'selected':''}>${n?`${n} 人`:'這次沒有'}</option>`).join('')}</select></div></div>
         <div class="form-field"><label for="rqSpecialNeed">特殊需求 <span class="field-optional">選填</span></label><input id="rqSpecialNeed" value="${escapeHTML(b?.specialNeed??draft?.specialNeed??'')}" placeholder="例如：需要協助上下車、不可久候" /></div>
         <div class="form-field"><label for="rqPoolingConsent">共乘</label><select id="rqPoolingConsent"><option value="no" ${(b?.poolingConsent??draft?.poolingConsent??'no')==='no'?'selected':''}>不共乘</option><option value="yes" ${(b?.poolingConsent??draft?.poolingConsent??'no')==='yes'?'selected':''}>可以共乘</option></select></div>
@@ -5608,7 +5613,7 @@ function requesterNew(){
 function requesterBookings(){
   const rows=requesterBookingsRows(),userId=Identity.currentUser()?.id;
   return `<div class="page-head"><div><h2>我的預約</h2></div><div class="page-actions"><button type="button" class="btn primary" id="requesterNewBookingBtn">＋ 預約接送</button></div></div>
-  <div class="list">${rows.map(b=>{const canCancel=Identity.can('booking.cancel_own')&&Booking.canCancelOwn(b.id,userId).ok,canEdit=Identity.can('booking.edit_own')&&Booking.canEditOwn(b.id,userId).ok;return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(b.pickupDate)} ${escapeHTML(b.pickupTime)}｜${escapeHTML(b.name)}${bookingRequesterContact(b)?' <span class="pill gray">家人</span>':''}</h4><p>承接機構：${escapeHTML(bookingServiceOrgName(b))}${bookingLtcTag(b)}<br>${bookingLegSummary(b)}<br>${escapeHTML(Booking.needsText(b))}・${Dispatch.bookingPoolingConsented(b)?'可共乘':'不共乘'}<br><span class="muted small">${escapeHTML(Booking.commercialSummary(b))}</span>${['cancelled','rejected','expired'].includes(Booking.stateOf(b))?'':`<br><span class="booking-benefit">${bookingBenefitHtml(bookingBenefitViewOf(b),b.recipientId)}</span>`}</p></div>${bookingStatusPill(b.status)}</div><div class="item-actions">${canEdit?`<button type="button" class="btn primary sm requester-edit-booking-btn" data-booking="${b.id}">修改預約</button>`:''}${canCancel?`<button type="button" class="btn danger sm requester-cancel-booking-btn" data-booking="${b.id}">取消預約</button>`:''}<button type="button" class="btn outline sm booking-history-btn" data-booking="${b.id}">異動紀錄</button>${['partially_scheduled','scheduled'].includes(b.status)&&!canCancel?'<span class="muted small">要更改請聯絡承接機構</span>':''}</div></div>`;}).join('')||'<div class="empty">還沒有預約</div>'}</div>`;
+  <div class="list">${rows.map(b=>{const canCancel=Identity.can('booking.cancel_own')&&Booking.canCancelOwn(b.id,userId).ok,canEdit=Identity.can('booking.edit_own')&&Booking.canEditOwn(b.id,userId).ok;return `<div class="list-item"><div class="list-item-head"><div><h4>${escapeHTML(b.pickupDate)} ${escapeHTML(b.pickupTime)}｜${escapeHTML(b.name)}${bookingRequesterContact(b)?' <span class="pill gray">家人</span>':''}</h4><p>承接機構：${escapeHTML(bookingServiceOrgName(b))}${bookingLtcTag(b)}<br>${bookingLegSummary(b)}<br>${escapeHTML(Booking.needsText(b))}・${Dispatch.bookingPoolingConsented(b)?'可共乘':'不共乘'}${b.tripType==='來回'?(b.splitLegConsent===true?'・同意分段載送':'・不同意分段載送'):''}<br><span class="muted small">${escapeHTML(Booking.commercialSummary(b))}</span>${['cancelled','rejected','expired'].includes(Booking.stateOf(b))?'':`<br><span class="booking-benefit">${bookingBenefitHtml(bookingBenefitViewOf(b),b.recipientId)}</span>`}</p></div>${bookingStatusPill(b.status)}</div><div class="item-actions">${canEdit?`<button type="button" class="btn primary sm requester-edit-booking-btn" data-booking="${b.id}">修改預約</button>`:''}${canCancel?`<button type="button" class="btn danger sm requester-cancel-booking-btn" data-booking="${b.id}">取消預約</button>`:''}<button type="button" class="btn outline sm booking-history-btn" data-booking="${b.id}">異動紀錄</button>${['partially_scheduled','scheduled'].includes(b.status)&&!canCancel?'<span class="muted small">要更改請聯絡承接機構</span>':''}</div></div>`;}).join('')||'<div class="empty">還沒有預約</div>'}</div>`;
 }
 function demandMarket(){
   const userId=Identity.currentUser()?.id,rows=Booking.openDemand(demandMarketDate||null,userId),membershipOrgId=Identity.membershipOrganizationId(),canClaim=Identity.can('booking.market.claim')&&!!membershipOrgId;
@@ -5733,7 +5738,7 @@ async function submitRequesterBooking(){
     {id:'rqDate',message:'請選擇接送日期'},{id:'rqTime',message:'請選擇接送時間'},{id:'rqPickup',message:'請輸入上車地址'},{id:'rqDestination',message:'請輸入目的地'},
     ...(roundTrip?[{id:'rqReturnDate',message:'來回預約需要回程日期'},{id:'rqReturnTime',message:'來回預約需要回程時間'}]:[])
   ]))return;
-  const input={pickupDate:$('rqDate').value,pickupTime:$('rqTime').value,pickupAddress:$('rqPickup').value.trim(),pickupAccessNote:$('rqPickupAccessNote').value.trim(),destination:$('rqDestination').value.trim(),destinationAccessNote:$('rqDestinationAccessNote').value.trim(),tripType:$('rqTripType').value,returnDate:roundTrip?$('rqReturnDate').value:'',returnTime:roundTrip?$('rqReturnTime').value:'',aidNeed:$('rqAidNeed').value,companions:$('rqCompanions').value,specialNeed:$('rqSpecialNeed').value.trim(),poolingConsent:$('rqPoolingConsent').value,note:$('rqNote').value.trim(),...(editing?{}:{recipientId:requesterRecipientChoice||null})};
+  const input={pickupDate:$('rqDate').value,pickupTime:$('rqTime').value,pickupAddress:$('rqPickup').value.trim(),pickupAccessNote:$('rqPickupAccessNote').value.trim(),destination:$('rqDestination').value.trim(),destinationAccessNote:$('rqDestinationAccessNote').value.trim(),tripType:$('rqTripType').value,returnDate:roundTrip?$('rqReturnDate').value:'',returnTime:roundTrip?$('rqReturnTime').value:'',aidNeed:$('rqAidNeed').value,companions:$('rqCompanions').value,specialNeed:$('rqSpecialNeed').value.trim(),poolingConsent:$('rqPoolingConsent').value,...(roundTrip?{splitLegConsent:$('rqSplitLegConsent').checked}:{}),note:$('rqNote').value.trim(),...(editing?{}:{recipientId:requesterRecipientChoice||null})};
   if(!editing||editing.pickupAddress!==input.pickupAddress||editing.destination!==input.destination){
     const checked=await checkBookingAddresses_(input.pickupAddress,input.destination);
     if(!checked.ok){if(checked.toast)showToast(checked.error);else routeFieldError(checked.error,[['上車','rqPickup'],['目的地','rqDestination']]);return;}
@@ -6885,7 +6890,7 @@ function requesterWizardValidateStep(step){
 function refreshRequesterWizardReview(){
   const route=$('wizardReviewRoute'),time=$('wizardReviewTime');
   if(route)route.textContent=`${$('rqPickup')?.value.trim()||'尚未填上車地址'} → ${$('rqDestination')?.value.trim()||'尚未填目的地'}`;
-  if(time){const type=$('rqTripType')?.value||'單程',out=`${$('rqDate')?.value||'—'} ${$('rqTime')?.value||'—'}`,ret=type==='來回'?`；回程 ${$('rqReturnDate')?.value||'—'} ${$('rqReturnTime')?.value||'—'}`:'';time.textContent=`${out}・${type}${ret}`;}
+  if(time){const type=$('rqTripType')?.value||'單程',out=`${$('rqDate')?.value||'—'} ${$('rqTime')?.value||'—'}`,ret=type==='來回'?`；回程 ${$('rqReturnDate')?.value||'—'} ${$('rqReturnTime')?.value||'—'}`:'',split=type==='來回'?($('rqSplitLegConsent')?.checked?'・同意分段載送':'・不同意分段載送'):'';time.textContent=`${out}・${type}${ret}${split}`;}
 }
 function goRequesterWizardStep(next){
   const target=Math.max(1,Math.min(4,Number(next)||1));
@@ -6977,7 +6982,7 @@ function bindViewEvents(){
   $('submitRequesterBookingBtn')?.addEventListener('click',submitRequesterBooking);
   $('cancelRequesterEditBtn')?.addEventListener('click',()=>{editingRequesterBookingId='';currentView='requester-bookings';renderNav();render();});
   document.querySelectorAll('.requester-edit-booking-btn').forEach(btn=>btn.addEventListener('click',()=>{const allowed=Booking.canEditOwn(btn.dataset.booking,Identity.currentUser()?.id);if(!allowed.ok){showToast(allowed.error);render();return;}editingRequesterBookingId=btn.dataset.booking;currentView='requester-new';requesterWizardStep=1;renderNav();render();}));
-  $('rqTripType')?.addEventListener('change',e=>{$('rqReturnFields')?.classList.toggle('hidden',e.currentTarget.value!=='來回');});
+  $('rqTripType')?.addEventListener('change',e=>{const oneWay=e.currentTarget.value!=='來回';$('rqReturnFields')?.classList.toggle('hidden',oneWay);$('rqSplitLegConsentField')?.classList.toggle('hidden',oneWay);});
   $('rqDate')?.addEventListener('change',e=>{const r=$('rqReturnDate');if(r&&$('rqTripType')?.value==='來回'&&(!r.value||r.value<e.currentTarget.value))r.value=e.currentTarget.value;});
   document.querySelectorAll('.requester-cancel-booking-btn').forEach(btn=>btn.addEventListener('click',()=>{
     if(!Identity.can('booking.cancel_own')){showToast('你沒有取消預約權限');return;}

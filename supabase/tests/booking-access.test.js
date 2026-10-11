@@ -361,6 +361,37 @@ async function newClaimed(id) {
   const bLoad110 = await load(U.dspB);
   record('被寫入指定的機構讀不到這筆預約', !sees(bLoad110, 'bookings', 'BKG-ACC-110'));
 
+  console.log('--- 同意分段載送（#111）---');
+  const roundTrip = (id, extra = {}) => booking(id, {
+    tripType: '來回', returnDate: '2099-01-01', returnTime: '15:00',
+    legs: [F.outboundLeg(id), { id: `${id}_return`, direction: 'return', sequence: 2, label: '回程', status: 'pending',
+      requestedPickupAt: '2099-01-01T07:00:00.000Z' }],
+    ...extra
+  });
+  const consentOf = async (id) => { const r = await row('bookings', id); return r ? r.data.splitLegConsent : 'NO_ROW'; };
+  const rtCreated = await writeBooking(U.req, roundTrip('BKG-ACC-S1', { splitLegConsent: true }));
+  record('來回預約建立時存下「同意分段載送」', rtCreated.status === 200 && await consentOf('BKG-ACC-S1') === true, outcome(rtCreated));
+  const rtOff = await writeBooking(U.req, roundTrip('BKG-ACC-S2', { splitLegConsent: false }));
+  record('需求者可以不同意分段載送', rtOff.status === 200 && await consentOf('BKG-ACC-S2') === false, outcome(rtOff));
+  const rtBad = await writeBooking(U.req, roundTrip('BKG-ACC-S3', { splitLegConsent: 'yes' }));
+  record('同意分段載送不是是／否時被拒、沒有寫入', rtBad.status === 400 && rtBad.error.code === 'VALIDATION_ERROR'
+    && await consentOf('BKG-ACC-S3') === 'NO_ROW', outcome(rtBad));
+  const oneWay = await writeBooking(U.req, booking('BKG-ACC-S4', { splitLegConsent: true }));
+  record('單程預約不存同意分段載送', oneWay.status === 200 && await consentOf('BKG-ACC-S4') === undefined, outcome(oneWay));
+  const amendOff = await writeBooking(U.req, { ...(await row('bookings', 'BKG-ACC-S1')).data, splitLegConsent: false });
+  record('修改預約可以取消同意', amendOff.status === 200 && await consentOf('BKG-ACC-S1') === false, outcome(amendOff));
+  const amendBad = await writeBooking(U.req, { ...(await row('bookings', 'BKG-ACC-S1')).data, splitLegConsent: 1 });
+  record('修改時型別不對被拒、維持原本的值', amendBad.status === 400 && await consentOf('BKG-ACC-S1') === false, outcome(amendBad));
+  const amendKeep = await writeBooking(U.req, (({ splitLegConsent, ...rest }) => ({ ...rest, pickupTime: '09:30' }))((await row('bookings', 'BKG-ACC-S1')).data));
+  record('修改時沒帶這個欄位：沿用原本的值', amendKeep.status === 200 && await consentOf('BKG-ACC-S1') === false, outcome(amendKeep));
+  record('（前提）A 接下來回預約', (await claim(U.dspA, 'BKG-ACC-S1', ORG_A)).status === 200);
+  const amendClaimed = await writeBooking(U.req, { ...(await row('bookings', 'BKG-ACC-S1')).data, splitLegConsent: true });
+  const afterClaimed = await row('bookings', 'BKG-ACC-S1');
+  record('已承接後需求者仍可改同意分段載送，承接機構不變', amendClaimed.status === 200 && afterClaimed.data.splitLegConsent === true
+    && afterClaimed.organization_id === ORG_A, outcome(amendClaimed));
+  const toOneWay = await writeBooking(U.req, { ...afterClaimed.data, tripType: '單程', returnDate: '', returnTime: '', legs: [F.outboundLeg('BKG-ACC-S1')] });
+  record('來回改成單程：同意分段載送拿掉', toOneWay.status === 200 && await consentOf('BKG-ACC-S1') === undefined, outcome(toOneWay));
+
   const failed = results.filter((r) => !r.ok);
   console.log(`\n結果：${results.length - failed.length} 通過 / ${failed.length} 失敗`);
   process.exitCode = failed.length ? 1 : 0;

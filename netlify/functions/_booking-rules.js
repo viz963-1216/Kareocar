@@ -7,6 +7,7 @@
  *   - 誰可以把預約從哪個狀態改到哪個狀態（需求者本人、承接機構的負責人或調度員、平台管理者）
  *   - 由伺服器決定的欄位一律沿用資料庫裡的值（需求者、承接人、取消紀錄等）
  *   - 進入排車後，需求者不能再改時間與地址
+ *   - 同意分段載送（來回預約才有）只能是 true／false
  *
  * 接案走 v2-claim-booking、需求者取消走 v2-cancel-booking，這裡一律不接受。
  * 承接機構退回公開池、不受理、或需求者重大修改需重新承接時，呼叫端在同一交易內
@@ -36,6 +37,19 @@ const REQUESTER_LOCKED = [
   'pickupDate', 'pickupTime', 'pickupAddress', 'destination', 'returnDate', 'returnTime',
   'tripType', 'passengerCount', 'wheelchairSlots', 'name', 'phone'
 ];
+
+/**
+ * 同意分段載送（#111，ADR 0004）：只有來回預約有意義，值必須是 true／false。
+ * 單程預約一律不存；修改時沒帶這個欄位就沿用原本的值。沒有這個欄位視為沒有同意。
+ */
+function applySplitLegConsent(out, before) {
+  if (String(out.tripType || '單程') !== '來回') { delete out.splitLegConsent; return; }
+  if (!('splitLegConsent' in out)) {
+    if (before && typeof before.splitLegConsent === 'boolean') out.splitLegConsent = before.splitLegConsent;
+    return;
+  }
+  if (typeof out.splitLegConsent !== 'boolean') throw ruleError('VALIDATION_ERROR', '同意分段載送只能是同意或不同意');
+}
 
 // 「某一段由哪家機構負責」不能經一般寫入指定（#110；跨機構排車改走需求池，見 ADR 0004）
 const LEG_ASSIGNMENT_FIELDS = ['assignedOrganizationId', 'assignedAt', 'assignedByUserId'];
@@ -123,6 +137,7 @@ function checkBookingWrite({ actorUserId, record, existing, roles }) {
       delete out[k];
     }
     stripLegAssignment(out);
+    applySplitLegConsent(out, null);
     return { record: out, revoke: false };
   }
 
@@ -153,6 +168,7 @@ function checkBookingWrite({ actorUserId, record, existing, roles }) {
   }
   keepLegScheduling(out, before);
   stripLegAssignment(out);
+  applySplitLegConsent(out, before);
   const revoke = Boolean(existing.organization_id) && REVOKE_STATES.has(toState);
   out.organizationId = revoke ? null : (existing.organization_id || null);
   if (revoke) {
