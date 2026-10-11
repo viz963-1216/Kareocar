@@ -75,14 +75,89 @@
   const LEG_SCHEDULING_FIELDS = Object.freeze(['status', 'tripId', 'scheduledOrganizationId', 'scheduledAt']);
   const legsOf = (booking) => (booking && Array.isArray(booking.legs) ? booking.legs : []);
 
-  /** 下一個還沒排車的 leg（依 sequence）。 */
+  // ---------------------------------------------------------------- 去程／回程在需求池的狀態（ADR 0004）
+  // primary：承接機構負責；in_pool：在需求池等別家接；partner：協力機構負責；unclaimed：沒有機構承接
+  const LEG_POOL_STATUS = Object.freeze({ PRIMARY: 'primary', IN_POOL: 'in_pool', PARTNER: 'partner', UNCLAIMED: 'unclaimed' });
+  // 只由退回／接單一段／收回等專用端點寫入的欄位；一般預約寫入一律沿用資料庫的值
+  const LEG_POOL_FIELDS = Object.freeze(['poolStatus', 'partnerOrganizationId', 'releasedAt', 'releasedByUserId', 'releasedByOrganizationId']);
+  const legPoolStatus = (leg) => (leg && leg.poolStatus) || LEG_POOL_STATUS.PRIMARY;
+  const legLabel = (leg) => (leg && leg.label) || '這一段';
+
+  /** 下一個還沒排車、由承接機構負責的 leg（依 sequence）。在需求池或沒有機構承接的段不算。 */
   function nextPendingLeg(booking) {
-    return legsOf(booking).filter((l) => l.status === BOOKING_LEG_STATUS.PENDING)
+    return legsOf(booking).filter((l) => l.status === BOOKING_LEG_STATUS.PENDING && legPoolStatus(l) === LEG_POOL_STATUS.PRIMARY)
       .sort((a, b) => (Number(a.sequence) || 0) - (Number(b.sequence) || 0))[0] || null;
   }
-  /** 這個 leg 由哪個機構負責：已排車的機構，否則是預約的承接機構（平台指定機構已移除，#110）。 */
+  /**
+   * 這個 leg 由哪個機構負責：已排車的機構；協力機構；在需求池或沒有機構承接時沒有；否則是承接機構。
+   * （平台指定機構已移除，#110）
+   */
   function legResponsibleOrganization(booking, leg) {
-    return (leg && leg.scheduledOrganizationId) || (booking && booking.organizationId) || null;
+    if (leg && leg.scheduledOrganizationId) return leg.scheduledOrganizationId;
+    const pool = legPoolStatus(leg);
+    if (pool === LEG_POOL_STATUS.PARTNER) return (leg && leg.partnerOrganizationId) || null;
+    if (pool === LEG_POOL_STATUS.IN_POOL || pool === LEG_POOL_STATUS.UNCLAIMED) return null;
+    return (booking && booking.organizationId) || null;
+  }
+
+  function clearPoolFields(leg) {
+    for (const k of LEG_POOL_FIELDS) delete leg[k];
+  }
+
+  /**
+   * 承接機構把來回預約中還沒排車的一段退回需求池（#112）。不改傳入的物件，回傳新的預約。
+   * 規則：需求者同意分段載送、是來回、預約在承接中、那一段由呼叫的承接機構負責且還沒排車、
+   * 另一段不在需求池（兩段都要退回請用整筆退回）。
+   *
+   * @param {{ legId: string, organizationId: string, actorUserId: string, at: string }} p
+   * @returns {{ ok: true, booking, leg } | { ok: false, error: string }}
+   */
+  function releaseLeg(booking, { legId, organizationId, actorUserId, at }) {
+    if (!booking) return { ok: false, error: '找不到預約' };
+    if (String(booking.tripType || '單程') !== '來回') return { ok: false, error: '只有來回預約可以退回其中一段' };
+    if (booking.splitLegConsent !== true) return { ok: false, error: '需求者沒有同意分段載送，不能只退回其中一段' };
+    const state = String(booking.state || '').trim() || 'open';
+    if (!['claimed', 'partially_scheduled'].includes(state) || !booking.organizationId) {
+      return { ok: false, error: '預約不在承接中，不能退回其中一段' };
+    }
+    if (!organizationId || organizationId !== booking.organizationId) return { ok: false, error: '只有承接機構可以退回其中一段' };
+    const next = JSON.parse(JSON.stringify(booking));
+    const leg = legsOf(next).find((l) => l.id === legId);
+    if (!leg) return { ok: false, error: '找不到這一段' };
+    if (legPoolStatus(leg) === LEG_POOL_STATUS.IN_POOL) return { ok: false, error: `${legLabel(leg)}已經在需求池` };
+    if (legPoolStatus(leg) !== LEG_POOL_STATUS.PRIMARY) return { ok: false, error: `${legLabel(leg)}不是由承接機構負責` };
+    if (leg.status !== BOOKING_LEG_STATUS.PENDING) return { ok: false, error: `${legLabel(leg)}已經排車或已取消，不能退回需求池` };
+    if (legsOf(next).some((l) => l.id !== leg.id && legPoolStatus(l) === LEG_POOL_STATUS.IN_POOL)) {
+      return { ok: false, error: '另一段已經在需求池；兩段都不載請用整筆退回' };
+    }
+    leg.poolStatus = LEG_POOL_STATUS.IN_POOL;
+    leg.releasedAt = at;
+    leg.releasedByUserId = actorUserId || null;
+    leg.releasedByOrganizationId = organizationId;
+    next.updatedAt = at;
+    next.version = Math.max(1, Number(next.version) || 1) + 1;
+    return { ok: true, booking: next, leg };
+  }
+
+  /** 承接機構把還在需求池、還沒有別家接的那一段收回（#112）。不改傳入的物件。 */
+  function reclaimLeg(booking, { legId, organizationId, at }) {
+    if (!booking) return { ok: false, error: '找不到預約' };
+    if (!organizationId || organizationId !== booking.organizationId) return { ok: false, error: '只有承接機構可以收回' };
+    const next = JSON.parse(JSON.stringify(booking));
+    const leg = legsOf(next).find((l) => l.id === legId);
+    if (!leg) return { ok: false, error: '找不到這一段' };
+    if (legPoolStatus(leg) !== LEG_POOL_STATUS.IN_POOL) return { ok: false, error: `${legLabel(leg)}不在需求池，不能收回` };
+    clearPoolFields(leg);
+    next.updatedAt = at;
+    next.version = Math.max(1, Number(next.version) || 1) + 1;
+    return { ok: true, booking: next, leg };
+  }
+
+  /** 整筆退回需求池、不受理時：去程／回程回到由（下一家）承接機構負責。不改傳入的物件。 */
+  function clearLegPool(booking) {
+    const next = JSON.parse(JSON.stringify(booking));
+    for (const leg of legsOf(next)) if (leg && typeof leg === 'object') clearPoolFields(leg);
+    return next;
   }
 
   /**
@@ -104,6 +179,7 @@
     const next = JSON.parse(JSON.stringify(booking));
     const leg = (legId && legsOf(next).find((l) => l.id === legId)) || (!legId && nextPendingLeg(next)) || null;
     if (!leg) return { ok: false, error: '沒有待排車的去程或回程' };
+    if (legPoolStatus(leg) === LEG_POOL_STATUS.IN_POOL) return { ok: false, error: `${legLabel(leg)}在需求池，不能排車` };
     const responsible = legResponsibleOrganization(next, leg);
     if (!responsible) return { ok: false, error: `${leg.label || '這一段'}還沒有承接機構` };
     if (organizationId && responsible !== organizationId) return { ok: false, error: `${leg.label || '這一段'}的承接機構與行程的機構不同` };
@@ -190,6 +266,7 @@
     BOOKING_STATES, BOOKING_EDGES, BOOKING_REVOKE_STATES, BOOKING_SCHEDULING_STATES,
     bookingTargets, bookingWriteTransitions,
     BOOKING_LEG_STATUS, LEG_SCHEDULING_FIELDS, nextPendingLeg, legResponsibleOrganization, scheduleBookingLeg, unscheduleTripLegs,
+    LEG_POOL_STATUS, LEG_POOL_FIELDS, legPoolStatus, releaseLeg, reclaimLeg, clearLegPool,
     TRIP_STATUSES, TRIP_STATUS_TRANSITIONS, TRIP_CORRECTION_TRANSITIONS,
     canTripTransition
   });

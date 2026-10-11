@@ -884,6 +884,51 @@ async function flowSplitConsent(cdp, baseUrl) {
   await finishPage(page, S);
 }
 
+// ================================================================ H. 承接機構退回一段到需求池、收回（#112）
+async function flowReleaseLeg(cdp, baseUrl, tokens) {
+  const S = 'H 退回一段';
+  const id = 'BKG-E2E-SPLIT';
+  const date = dayOffset(7);
+  const booking = { ...openBooking(id), pickupDate: date, pickupTime: '09:00', tripType: '來回', returnDate: date, returnTime: '16:00',
+    splitLegConsent: true,
+    legs: [
+      { id: `${id}_outbound`, schemaVersion: 1, sequence: 1, direction: 'outbound', label: '去程', status: 'pending',
+        requestedPickupAt: `${date}T01:00:00.000Z`, pickup: null, dropoff: null, tripId: null, scheduledOrganizationId: null, scheduledAt: null },
+      { id: `${id}_return`, schemaVersion: 1, sequence: 2, direction: 'return', label: '回程', status: 'pending',
+        requestedPickupAt: `${date}T08:00:00.000Z`, pickup: null, dropoff: null, tripId: null, scheduledOrganizationId: null, scheduledAt: null }] };
+  record(S, '（資料準備）需求者建立同意分段載送的來回預約', (await apiMutate(tokens.req, [{ collection: 'bookings', id, record: booking }])) === 200);
+  const claimed = await claimBooking.handler({ httpMethod: 'POST', headers: { host: '127.0.0.1', cookie: `cr_at=${tokens.dsp}` },
+    body: J({ bookingId: id, organizationId: ORG }) });
+  record(S, '（資料準備）調度接案', claimed.statusCode === 200, claimed.body);
+  const poolOf = async () => (((await row('bookings', id)).data.legs || []).find((l) => l.direction === 'return') || {}).poolStatus || 'primary';
+  const page = await openPage(cdp, baseUrl, 'dispatcher-release-leg');
+  try {
+    await login(page, U.dsp);
+    await goView(page, 'dispatch-home');
+    await evaluate(page, `(()=>{const d=document.getElementById('operationDateInput');d.value=${J(date)};d.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+    await waitFor(page, `!!document.querySelector('.booking-leg-release-btn[data-leg=${J(`${id}_return`)}]')`, '調度畫面有「回程退回需求池」按鈕');
+    record(S, '還沒排車的去程、回程都有「退回需求池」按鈕', await evaluate(page,
+      `!!document.querySelector('.booking-leg-release-btn[data-leg=${J(`${id}_outbound`)}]')`));
+    await evaluate(page, 'window.confirm=()=>true');
+    await click(page, `.booking-leg-release-btn[data-leg=${J(`${id}_return`)}]`);
+    await waitForDb(async () => (await poolOf()) === 'in_pool', '回程退回需求池');
+    record(S, '按「回程退回需求池」：資料庫的回程在需求池', true);
+    await waitFor(page, `!!document.querySelector('.booking-leg-reclaim-btn[data-leg=${J(`${id}_return`)}]')`, '回程出現「收回」按鈕');
+    record(S, '畫面標示回程在需求池，去程不能再退回（另一段已在需求池）', await evaluate(page,
+      `document.querySelector('main').innerText.includes('在需求池，等待其他機構接案')&&!document.querySelector('.booking-leg-release-btn[data-leg=${J(`${id}_outbound`)}]')`));
+    record(S, '退回只呼叫一次 booking-leg，沒有經過 booking-write', page.requests.filter((r) => r.path === '/api/v2/booking-leg').length === 1
+      && !page.requests.some((r) => r.path === '/api/v2/booking-write' && r.postData.includes(id)));
+    await click(page, `.booking-leg-reclaim-btn[data-leg=${J(`${id}_return`)}]`);
+    await waitForDb(async () => (await poolOf()) === 'primary', '回程收回');
+    record(S, '按「收回回程」：回程回到由本機構負責', true);
+    await waitFor(page, `!!document.querySelector('.booking-leg-release-btn[data-leg=${J(`${id}_return`)}]')`, '收回後又可以退回');
+  } catch (e) {
+    record(S, `流程中斷：${e.message}`, false);
+    await screenshot(page, 'H-release-leg');
+  }
+  await finishPage(page, S);
+}
+
 // ================================================================ F. 登入方式開關與客服聯絡（#79）
 async function flowPublicSettings(cdp, baseUrl) {
   const S = 'F 登入方式與客服聯絡';
@@ -996,6 +1041,8 @@ async function flowPublicSettings(cdp, baseUrl) {
     await flowFamily(cdp, baseUrl, tokens);
     console.log('--- G：來回預約同意分段載送 ---');
     await flowSplitConsent(cdp, baseUrl);
+    console.log('--- H：承接機構退回一段到需求池、收回 ---');
+    await flowReleaseLeg(cdp, baseUrl, tokens);
     console.log('--- F：登入方式開關與客服聯絡 ---');
     await flowPublicSettings(cdp, baseUrl);
   } catch (e) {
