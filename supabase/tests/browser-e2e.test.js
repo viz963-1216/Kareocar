@@ -676,7 +676,7 @@ async function flowSchedule(cdp, baseUrl, tokens) {
     await login(page, U.dsp);
     await goView(page, 'dispatch-home');
     await evaluate(page, `(()=>{const d=document.getElementById('operationDateInput');d.value=${J(date)};d.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
-    await click(page, `.booking-create-trip-btn[data-booking=${J(id)}]`);
+    await clickRetry(page, `.booking-create-trip-btn[data-booking=${J(id)}]`);
     await waitFor(page, "document.getElementById('createTripModal').classList.contains('open')&&!!document.getElementById('newDriver').value&&!!document.getElementById('newVehicle').value",
       '建立行程視窗帶入司機與車輛');
     await click(page, '#saveTripBtn');
@@ -803,7 +803,7 @@ async function flowFamily(cdp, baseUrl, tokens) {
       record(S, '調度畫面顯示服務對象（家人）的姓名與需求，需求者為聯絡人',
         shown && text.includes(fam.aid) && text.includes(`聯絡人：${U.req.name}`), shown ? '' : text.slice(0, 400));
       // 排車後，司機看到的停靠點：乘車人是家人，需求者是聯絡人（#76 故事 13）
-      await click(dsp, `.booking-create-trip-btn[data-booking=${J(booking.id)}]`);
+      await clickRetry(dsp, `.booking-create-trip-btn[data-booking=${J(booking.id)}]`);
       await waitFor(dsp, "document.getElementById('createTripModal').classList.contains('open')&&!!document.getElementById('newDriver').value&&!!document.getElementById('newVehicle').value",
         '排車視窗帶入司機與車輛');
       await click(dsp, '#saveTripBtn');
@@ -849,11 +849,16 @@ async function flowSplitConsent(cdp, baseUrl) {
     await login(page, U.req);
     await goView(page, 'requester-new');
     await waitFor(page, "!!document.querySelector('.wizard-panel.active [data-recipient-choice]')", '乘車人選項出現');
-    await clickRetry(page, '.wizard-panel.active [data-recipient-choice]');
-    await clickRetry(page, '.wizard-next-btn[data-next="2"]');
+    // 選了乘車人才能到第 2 步；畫面重新繪製時點擊可能落空，沒切過去就整組再做一次
+    for (let attempt = 1; ; attempt++) {
+      await clickRetry(page, '.wizard-panel.active [data-recipient-choice]');
+      await clickRetry(page, '.wizard-next-btn[data-next="2"]');
+      try { await waitFor(page, "!!document.querySelector('.wizard-panel.active[data-wizard-panel=\"2\"]')", '切到第 2 步', 5000); break; }
+      catch (e) { if (attempt >= 3) throw e; }
+    }
     await typeConfirmed(page, '#rqPickup', '新北市板橋區中山路一段161號');
     await typeConfirmed(page, '#rqDestination', destination);
-    await clickRetry(page, '.wizard-next-btn[data-next="3"]');
+    await clickUntil(page, '.wizard-next-btn[data-next="3"]', "!!document.querySelector('.wizard-panel.active[data-wizard-panel=\"3\"]')", '切到第 3 步');
     await evaluate(page, setValue('rqDate', dayOffset(6)));
     record(S, '單程預約不顯示「同意分段載送」', !(await evaluate(page, visible('rqSplitLegConsent'))));
     await evaluate(page, setValue('rqTripType', '來回'));
@@ -861,7 +866,7 @@ async function flowSplitConsent(cdp, baseUrl) {
       && await evaluate(page, "document.getElementById('rqSplitLegConsent').checked===true"));
     await evaluate(page, setValue('rqReturnDate', dayOffset(6)));
     await evaluate(page, setValue('rqReturnTime', '16:00'));
-    await clickRetry(page, '.wizard-next-btn[data-next="4"]');
+    await clickUntil(page, '.wizard-next-btn[data-next="4"]', "!!document.querySelector('.wizard-panel.active[data-wizard-panel=\"4\"]')", '切到第 4 步');
     record(S, '確認步驟顯示同意分段載送', await evaluate(page, "document.getElementById('requesterWizardReview').textContent.includes('・同意分段載送')"),
       await evaluate(page, "document.getElementById('requesterWizardReview').textContent"));
     await click(page, '#submitRequesterBookingBtn');
@@ -874,11 +879,11 @@ async function flowSplitConsent(cdp, baseUrl) {
     record(S, '我的預約顯示同意分段載送', await evaluate(page, "document.querySelector('main').innerText.includes('同意分段載送')"));
 
     await click(page, `.requester-edit-booking-btn[data-booking=${J(created.id)}]`);
-    await clickRetry(page, '.wizard-next-btn[data-next="2"]');
-    await clickRetry(page, '.wizard-next-btn[data-next="3"]');
+    await clickUntil(page, '.wizard-next-btn[data-next="2"]', "!!document.querySelector('.wizard-panel.active[data-wizard-panel=\"2\"]')", '切到第 2 步');
+    await clickUntil(page, '.wizard-next-btn[data-next="3"]', "!!document.querySelector('.wizard-panel.active[data-wizard-panel=\"3\"]')", '切到第 3 步');
     record(S, '修改預約時勾選框是預約上的值（已勾選）', await evaluate(page, "document.getElementById('rqSplitLegConsent').checked===true"));
     await click(page, '#rqSplitLegConsent');
-    await clickRetry(page, '.wizard-next-btn[data-next="4"]');
+    await clickUntil(page, '.wizard-next-btn[data-next="4"]', "!!document.querySelector('.wizard-panel.active[data-wizard-panel=\"4\"]')", '切到第 4 步');
     await click(page, '#submitRequesterBookingBtn');
     const amended = await waitForDb(async () => {
       const r = await row('bookings', created.id);
@@ -920,7 +925,7 @@ async function flowReleaseLeg(cdp, baseUrl, tokens) {
     record(S, '還沒排車的去程、回程都有「退回需求池」按鈕', await evaluate(page,
       `!!document.querySelector('.booking-leg-release-btn[data-leg=${J(`${id}_outbound`)}]')`));
     await evaluate(page, 'window.confirm=()=>true');
-    await click(page, `.booking-leg-release-btn[data-leg=${J(`${id}_return`)}]`);
+    await clickRetry(page, `.booking-leg-release-btn[data-leg=${J(`${id}_return`)}]`);
     await waitForDb(async () => (await poolOf()) === 'in_pool', '回程退回需求池');
     record(S, '按「回程退回需求池」：資料庫的回程在需求池', true);
     await waitFor(page, `!!document.querySelector('.booking-leg-reclaim-btn[data-leg=${J(`${id}_return`)}]')`, '回程出現「收回」按鈕');
@@ -928,13 +933,13 @@ async function flowReleaseLeg(cdp, baseUrl, tokens) {
       `document.querySelector('main').innerText.includes('在需求池，等待其他機構接案')&&!document.querySelector('.booking-leg-release-btn[data-leg=${J(`${id}_outbound`)}]')`));
     record(S, '退回只呼叫一次 booking-leg，沒有經過 booking-write', page.requests.filter((r) => r.path === '/api/v2/booking-leg').length === 1
       && !page.requests.some((r) => r.path === '/api/v2/booking-write' && r.postData.includes(id)));
-    await click(page, `.booking-leg-reclaim-btn[data-leg=${J(`${id}_return`)}]`);
+    await clickRetry(page, `.booking-leg-reclaim-btn[data-leg=${J(`${id}_return`)}]`);
     await waitForDb(async () => (await poolOf()) === 'primary', '回程收回');
     record(S, '按「收回回程」：回程回到由本機構負責', true);
     await waitFor(page, `!!document.querySelector('.booking-leg-release-btn[data-leg=${J(`${id}_return`)}]')`, '收回後又可以退回');
 
     // #113：再退回回程，第二家機構在需求池接下，成為協力機構
-    await click(page, `.booking-leg-release-btn[data-leg=${J(`${id}_return`)}]`);
+    await clickRetry(page, `.booking-leg-release-btn[data-leg=${J(`${id}_return`)}]`);
     await waitForDb(async () => (await poolOf()) === 'in_pool', '回程再次退回需求池');
     const pageB = await openPage(cdp, baseUrl, 'dispatcher-b-claim-leg');
     try {
@@ -942,7 +947,7 @@ async function flowReleaseLeg(cdp, baseUrl, tokens) {
       await goView(pageB, 'demand-market');
       await waitFor(pageB, `!!document.querySelector('.demand-leg-claim-btn[data-leg=${J(`${id}_return`)}]')`, '第二家機構的需求池有「接下回程」');
       record(S, '第二家機構在需求池看到「只有回程」', await evaluate(pageB, "document.querySelector('main').innerText.includes('只有回程')"));
-      await click(pageB, `.demand-leg-claim-btn[data-leg=${J(`${id}_return`)}]`);
+      await clickRetry(pageB, `.demand-leg-claim-btn[data-leg=${J(`${id}_return`)}]`);
       const partnered = await waitForDb(async () => {
         const r = ((await row('bookings', id)).data.legs || []).find((l) => l.direction === 'return');
         return r && r.poolStatus === 'partner' ? r : null;
