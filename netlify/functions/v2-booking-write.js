@@ -18,6 +18,8 @@
  *   - 預約帶服務對象（recipientId）時，需求者必須是這位服務對象的建立者、且有未撤銷的可預約關係（#78）；
  *     承接機構的負責人或調度員只能用本機構服務過或自己建立的服務對象（總驗收收緊）
  *   - 替家人預約時的聯絡人（contacts.requester）由伺服器依登入的需求者寫入，之後沿用資料庫的值（#82）
+ *   - 解除協力關係（#114）：寫回之前通知被解除的協力機構（app.notify_booking_orgs 只通知現在的協力機構）；
+ *     需求者只改服務需求時，寫回之後通知承接機構與協力機構
  *
  * 整批在同一筆交易裡，任何一筆不合規則就整批不寫入。
  */
@@ -182,6 +184,19 @@ exports.handler = async (event) => {
         // 補助顯示狀態每次載入時由伺服器重算（#101），不存前端送來的
         delete record.benefitView;
 
+        // 解除協力關係：要在寫回之前通知（之後就不再是這筆預約的協力機構）
+        for (const d of checked.partnerRemoved || []) {
+          await client.query('select app.notify_booking_orgs($1, $2, $3::jsonb, $4)', [id, 'leg_partner_removed',
+            JSON.stringify({ legLabel: d.label, reason: d.reason }), [d.organizationId]]);
+          await client.query(
+            `insert into app_state (collection, id, organization_id, booking_id, data) values ('bookingEvents', $1, $2, $3, $4)`,
+            [`bevt_${auth.randomHex(8)}`, existing.organization_id, id, JSON.stringify({
+              bookingId: id, eventType: 'leg_partner_removed', action: 'leg_partner_removed', fromState: record.state, toState: record.state,
+              actorUserId: claims.userId, organizationId: existing.organization_id, reasonCode: d.reason, reasonText: '', source: 'booking_write',
+              metadata: { legId: d.legId, label: d.label, partnerOrganizationId: d.organizationId }, createdAt: new Date().toISOString()
+            })]);
+        }
+
         const upsert = await client.query(
           // 寫正式資料表（ADR 0005）；歸屬規則與衍生欄位由觸發器處理
           `insert into bookings (id, organization_id, data)
@@ -194,6 +209,12 @@ exports.handler = async (event) => {
 
         if (checked.revoke) {
           await client.query('select app.revoke_booking_organization($1)', [id]);
+        }
+        // 需求者只改服務需求：通知承接機構與協力機構（#114）
+        if (checked.needsChanged && existing && existing.organization_id && roles.ownsExisting && !roles.opsOfExisting) {
+          const orgs = [existing.organization_id, ...new Set((record.legs || [])
+            .filter((l) => l && l.poolStatus === 'partner' && l.partnerOrganizationId).map((l) => l.partnerOrganizationId))];
+          await client.query('select app.notify_booking_orgs($1, $2, $3::jsonb, $4)', [id, 'booking_needs_changed', '{}', orgs]);
         }
         // 補助額度帳本（0009）：不受理／過期釋放；新預約或重新估算時（先釋放再）保留。
         // 金額由資料庫函式從剛存好的 serverComputed.benefit 取得。保留暫停中（#98，見 _benefit.js）。

@@ -20,6 +20,16 @@ exports.handler = (event) => runAuthenticated(event, async (client, body, claims
   const reasonCode = optionalText(body.reasonCode, 60);
   const reasonText = optionalText(body.reasonText, 500);
 
+  // 通知承接機構與協力機構（#114）：要在取消之前（取消後承接機構與協力關係都會解除）
+  const current = (await client.query(
+    `select organization_id, data from bookings where id = $1 and not deleted`, [bookingId])).rows[0];
+  if (current && current.organization_id) {
+    const orgs = [current.organization_id, ...new Set(((current.data && current.data.legs) || [])
+      .filter((l) => l && l.poolStatus === 'partner' && l.partnerOrganizationId).map((l) => l.partnerOrganizationId))];
+    await client.query('select app.notify_booking_orgs($1, $2, $3::jsonb, $4)',
+      [bookingId, 'booking_cancelled_ops', JSON.stringify({ reasonCode }), orgs]);
+  }
+
   const { rows } = await client.query(
     'select * from app.cancel_app_state_booking($1, $2, $3)', [bookingId, reasonCode, reasonText]);
   const cancelledTripIds = rows[0].out_cancelled_trip_ids || [];
