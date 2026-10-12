@@ -29,6 +29,7 @@ const bookingWriteFn = require('../../netlify/functions/v2-booking-write');
 const claimFn = require('../../netlify/functions/v2-claim-booking');
 const mutateFn = require('../../netlify/functions/v2-state-mutate');
 const loadFn = require('../../netlify/functions/v2-state-load');
+const legFn = require('../../netlify/functions/v2-booking-leg');
 const authorizationFn = require('../../netlify/functions/v2-benefit-authorization');
 const cancelFn = require('../../netlify/functions/v2-cancel-booking');
 const tripWriteFn = require('../../netlify/functions/v2-trip-write');
@@ -340,6 +341,37 @@ function booking(id, extra = {}) {
     && !((await load(U.dspB)).data.collections.benefitLedger || []).length);
   const revoked = await authCall(U.dsp, { action: 'revoke', id: AUTH, organizationId: ORG, reason: '合成撤銷' });
   record('沒有保留額度時可以撤銷核定', revoked.status === 200, outcome(revoked));
+
+  console.log('--- 每一段依負責機構判斷長照特約（#117）---');
+  const legViews = async (userId, id) => {
+    const bk = ((await load(userId)).data.collections.bookings || []).find((x) => x.id === id);
+    return bk ? (bk.legBenefitViews || null) : undefined;
+  };
+  const rt = await writeBooking(U.req, booking('BKG-BEN-RT', { tripType: '來回', returnDate: '2099-04-10', returnTime: '16:00', pickupDate: '2099-04-10',
+    splitLegConsent: true, legs: [F.outboundLeg('BKG-BEN-RT', '2099-04-10T01:00:00.000Z'),
+      { id: 'BKG-BEN-RT_return', direction: 'return', sequence: 2, label: '回程', status: 'pending', requestedPickupAt: '2099-04-10T08:00:00.000Z' }] }));
+  const rtClaim = await call(claimFn.handler, 'POST', U.dsp, { bookingId: 'BKG-BEN-RT', organizationId: ORG });
+  const rtRel = await call(legFn.handler, 'POST', U.dsp, { action: 'release', bookingId: 'BKG-BEN-RT', legId: 'BKG-BEN-RT_return' });
+  const rtPart = await call(legFn.handler, 'POST', U.dspB, { action: 'claim', bookingId: 'BKG-BEN-RT', legId: 'BKG-BEN-RT_return', organizationId: ORG_B });
+  record('（前提）來回預約：去程由長照特約的 A、回程由不是特約的 B 載送', [rt, rtClaim, rtRel, rtPart].every((r) => r.status === 200),
+    [rt, rtClaim, rtRel, rtPart].map(outcome).join(' / '));
+  const reqLegs = await legViews(U.req, 'BKG-BEN-RT');
+  record('需求者：去程是長照特約（有金額），回程不是長照特約', reqLegs && reqLegs['BKG-BEN-RT_outbound'].state === 'ltc_contracted'
+    && reqLegs['BKG-BEN-RT_outbound'].estimatedSubsidy === 450 && reqLegs['BKG-BEN-RT_return'].state === 'not_ltc'
+    && reqLegs['BKG-BEN-RT_return'].estimatedSubsidy === undefined, JSON.stringify(reqLegs));
+  const aLegs = await legViews(U.dsp, 'BKG-BEN-RT');
+  record('承接機構的調度：去程是長照特約', aLegs && aLegs['BKG-BEN-RT_outbound'].state === 'ltc_contracted', JSON.stringify(aLegs));
+  const bLegs = await legViews(U.dspB, 'BKG-BEN-RT');
+  record('協力機構的調度：只看到自己那段（回程，不是長照特約）', bLegs && bLegs['BKG-BEN-RT_return'] && bLegs['BKG-BEN-RT_return'].state === 'not_ltc'
+    && !bLegs['BKG-BEN-RT_outbound'], JSON.stringify(bLegs));
+  await saveLtc(ORG_B, '新北市', '2026-01-01', null);
+  const bLegs2 = await legViews(U.dspB, 'BKG-BEN-RT');
+  record('協力機構也是長照特約時：回程顯示長照特約與金額', bLegs2 && bLegs2['BKG-BEN-RT_return'].state === 'ltc_contracted'
+    && bLegs2['BKG-BEN-RT_return'].estimatedSubsidy === 450, JSON.stringify(bLegs2));
+  await admin.query(`delete from ltc_contracts where organization_id = $1`, [ORG_B]);
+  const rtPool = await call(legFn.handler, 'POST', U.dspB, { action: 'release', bookingId: 'BKG-BEN-RT', legId: 'BKG-BEN-RT_return' });
+  const poolLegs = await legViews(U.req, 'BKG-BEN-RT');
+  record('那段回到需求池：顯示「若由長照特約機構承接」', rtPool.status === 200 && poolLegs['BKG-BEN-RT_return'].state === 'pre_claim', JSON.stringify(poolLegs));
 
   console.log('--- 承接機構改變、重新試算（#102）---');
   const viewOf2 = async (userId, id) => {

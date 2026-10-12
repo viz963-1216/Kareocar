@@ -20,6 +20,7 @@ const { withUser, translateDbError } = require('./_db');
 const auth = require('./_auth-pg');
 const session = require('./_session');
 const benefit = require('./_benefit');
+const lifecycle = require('../../js/lifecycle.js');
 const { consentStatus, retentionYears } = require('./_consent');
 
 const MAX_ROWS = 5000;
@@ -76,6 +77,19 @@ exports.handler = async (event) => {
         }
         return ltcCache.get(key);
       };
+      // 每一段依那段實際負責的機構判斷長照特約（#117）：協力機構負責的段看協力機構、在需求池的段是「接案前」
+      const legBenefitViews = async (record, org) => {
+        const sb = record.serverComputed && record.serverComputed.benefit;
+        const city = sb && sb.facts && sb.facts.residenceCity;
+        const out = {};
+        for (const leg of Array.isArray(record.legs) ? record.legs : []) {
+          if (!leg || !leg.id || leg.maskedForPartner) continue;
+          const legOrg = lifecycle.legResponsibleOrganization({ ...record, organizationId: org }, leg);
+          const date = benefit.dateOnly(leg.direction === 'return' ? (record.returnDate || record.pickupDate) : record.pickupDate);
+          out[leg.id] = benefit.bookingBenefitView(sb, { claimed: Boolean(legOrg), ltcActive: await ltcActive(legOrg, city, date) });
+        }
+        return out;
+      };
       const bookingBenefitView = async (record, org) => {
         const sb = record.serverComputed && record.serverComputed.benefit;
         const city = sb && sb.facts && sb.facts.residenceCity;
@@ -87,7 +101,8 @@ exports.handler = async (event) => {
         const record = (row.data && typeof row.data === 'object') ? row.data : {};
         push(row.collection, {
           ...record,
-          ...(row.collection === 'bookings' ? { benefitView: await bookingBenefitView(record, row.organization_id) } : {}),
+          ...(row.collection === 'bookings' ? { benefitView: await bookingBenefitView(record, row.organization_id),
+            legBenefitViews: await legBenefitViews(record, row.organization_id) } : {}),
           id: row.id,
           // 伺服器說了算的欄位放在後面覆蓋，避免前端拿到自己上次送的舊值
           organizationId: row.organization_id || null,
@@ -100,7 +115,8 @@ exports.handler = async (event) => {
       const seenBookings = new Set((collections.bookings || []).map((b) => b.id));
       for (const row of partnerViews) {
         if (seenBookings.has(row.id)) continue;
-        push('bookings', { ...row.data, id: row.id, organizationId: row.organization_id || null, version: row.version, updatedAt: row.updated_at });
+        push('bookings', { ...row.data, legBenefitViews: await legBenefitViews(row.data || {}, row.organization_id),
+          id: row.id, organizationId: row.organization_id || null, version: row.version, updatedAt: row.updated_at });
       }
 
       // ---- 通知：notifications 資料表，RLS 只放行收件人本人 ----
