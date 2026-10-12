@@ -1,12 +1,15 @@
 'use strict';
 
 /**
- * POST /api/v2/booking-leg  —— 來回預約的一段退回需求池、收回（#112，ADR 0004）
+ * POST /api/v2/booking-leg  —— 來回預約的一段退回需求池、收回、接下（#112、#113，ADR 0004）
  *
- * body: { action: 'release' | 'reclaim', bookingId, legId }
+ * body: { action: 'release' | 'reclaim' | 'claim', bookingId, legId, organizationId? }
  *
  *   - release：承接機構把還沒排車的那一段退回需求池，別家在需求池看到「只有去程／只有回程」
  *   - reclaim：還沒有別家接之前，承接機構把那一段收回
+ *   - claim：別家接送機構（organizationId）接下在需求池的那一段，成為協力機構。接案前它讀不到這筆預約，
+ *     所以由 security definer 的 app.claim_booking_leg 鎖定預約、判斷（規則同 lifecycle.claimLeg）、
+ *     寫入、記預約事件並通知需求者與承接機構；兩家同時接只有一家成功（409 BOOKING_CONFLICT）
  *
  * 呼叫者必須是預約承接機構的負責人或調度員。能不能退回、收回由 js/lifecycle.js 的
  * releaseLeg／reclaimLeg 判斷（與前端同一份）；伺服器用資料庫裡的預約計算，不採用前端送來的內容。
@@ -22,9 +25,22 @@ const ACTIONS = {
   reclaim: { run: lifecycle.reclaimLeg, eventType: 'leg_reclaimed', audit: 'booking.leg_reclaimed' }
 };
 
+async function claim(client, body, claims) {
+  const bookingId = requireId(body.bookingId, '預約 ID ');
+  const legId = requireId(body.legId, '去程／回程 ');
+  const organizationId = requireId(body.organizationId, '接案機構 ');
+  const r = (await client.query('select * from app.claim_booking_leg($1, $2, $3)', [bookingId, legId, organizationId])).rows[0];
+  await writeAudit(client, {
+    eventType: 'booking.leg_partner_claimed', actorUserId: claims.userId, organizationId,
+    entityType: 'booking', entityId: bookingId, details: { legId, primaryOrganizationId: r.primary_organization_id }
+  });
+  return { bookingId, legId, poolStatus: lifecycle.LEG_POOL_STATUS.PARTNER, partnerOrganizationId: organizationId, version: r.version };
+}
+
 exports.handler = (event) => runAuthenticated(event, async (client, body, claims) => {
+  if (String(body.action || '').trim() === 'claim') return claim(client, body, claims);
   const action = ACTIONS[String(body.action || '').trim()];
-  if (!action) throw auth.authError('VALIDATION_ERROR', '動作只能是退回需求池或收回');
+  if (!action) throw auth.authError('VALIDATION_ERROR', '動作只能是退回需求池、收回或接下這一段');
   const bookingId = requireId(body.bookingId, '預約 ID ');
   const legId = requireId(body.legId, '去程／回程 ');
 

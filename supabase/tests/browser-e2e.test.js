@@ -50,10 +50,12 @@ const ARTIFACT_DIR = process.env.E2E_ARTIFACT_DIR || fs.mkdtempSync(path.join(os
 fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
 const PASSWORD = 'E2e-Synthetic-Pass-2026';
 const ORG = 'ORG-E2E-A';
+const ORG_B = 'ORG-E2E-B';
 const DRIVER_ID = 'DRV-E2E-1';
 const U = {
   req: { id: 'USR-E2E-REQ', phone: '0922000001', name: '合成需求者' },
   dsp: { id: 'USR-E2E-DSP', phone: '0922000002', name: '合成調度員' },
+  dspB: { id: 'USR-E2E-DSPB', phone: '0922000004', name: '合成調度員 B' },
   drv: { id: 'USR-E2E-DRV', phone: '0922000003', name: '合成司機' },
   root: { id: 'USR-E2E-ROOT', phone: '0922000009', name: '合成平台管理者' }
 };
@@ -359,14 +361,17 @@ async function fixtureTrip(trip) {
 async function seed() {
   await admin.query(`
     insert into organizations (id, org_type, name, active) values ('${ORG}','transport_provider','合成承運 E2E',true);
+    insert into organizations (id, org_type, name, contact_phone, active) values ('${ORG_B}','transport_provider','合成承運 E2E-B','02-7777-8888',true);
     insert into users (id, display_name, phone_e164, platform_role, active) values
       ('${U.req.id}','${U.req.name}','+886${U.req.phone.slice(1)}','none',true),
       ('${U.dsp.id}','${U.dsp.name}','+886${U.dsp.phone.slice(1)}','none',true),
+      ('${U.dspB.id}','${U.dspB.name}','+886${U.dspB.phone.slice(1)}','none',true),
       ('${U.drv.id}','${U.drv.name}','+886${U.drv.phone.slice(1)}','none',true),
       ('${U.root.id}','${U.root.name}','+886${U.root.phone.slice(1)}','super_admin',true);
     insert into memberships (id, user_id, organization_id, role, status) values
       ('M-E2E-REQ','${U.req.id}','ORG-REQ-001','requester','active'),
       ('M-E2E-DSP','${U.dsp.id}','${ORG}','dispatcher','active'),
+      ('M-E2E-DSPB','${U.dspB.id}','${ORG_B}','dispatcher','active'),
       ('M-E2E-DRV','${U.drv.id}','${ORG}','driver','active');
     insert into drivers (id, user_id, organization_id, duty_status, active) values ('${DRIVER_ID}','${U.drv.id}','${ORG}','on_duty',true);
   `);
@@ -667,7 +672,7 @@ async function flowSchedule(cdp, baseUrl, tokens) {
     await login(page, U.dsp);
     await goView(page, 'dispatch-home');
     await evaluate(page, `(()=>{const d=document.getElementById('operationDateInput');d.value=${J(date)};d.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
-    await click(page, `.booking-create-trip-btn[data-booking=${J(id)}]`);
+    await clickRetry(page, `.booking-create-trip-btn[data-booking=${J(id)}]`);
     await waitFor(page, "document.getElementById('createTripModal').classList.contains('open')&&!!document.getElementById('newDriver').value&&!!document.getElementById('newVehicle').value",
       '建立行程視窗帶入司機與車輛');
     await click(page, '#saveTripBtn');
@@ -794,7 +799,7 @@ async function flowFamily(cdp, baseUrl, tokens) {
       record(S, '調度畫面顯示服務對象（家人）的姓名與需求，需求者為聯絡人',
         shown && text.includes(fam.aid) && text.includes(`聯絡人：${U.req.name}`), shown ? '' : text.slice(0, 400));
       // 排車後，司機看到的停靠點：乘車人是家人，需求者是聯絡人（#76 故事 13）
-      await click(dsp, `.booking-create-trip-btn[data-booking=${J(booking.id)}]`);
+      await clickRetry(dsp, `.booking-create-trip-btn[data-booking=${J(booking.id)}]`);
       await waitFor(dsp, "document.getElementById('createTripModal').classList.contains('open')&&!!document.getElementById('newDriver').value&&!!document.getElementById('newVehicle').value",
         '排車視窗帶入司機與車輛');
       await click(dsp, '#saveTripBtn');
@@ -839,11 +844,17 @@ async function flowSplitConsent(cdp, baseUrl) {
   try {
     await login(page, U.req);
     await goView(page, 'requester-new');
-    await click(page, '[data-recipient-choice]');
-    await click(page, '.wizard-next-btn[data-next="2"]');
+    await waitFor(page, "!!document.querySelector('.wizard-panel.active [data-recipient-choice]')", '乘車人選項出現');
+    // 選了乘車人才能到第 2 步；畫面重新繪製時點擊可能落空，沒切過去就整組再做一次
+    for (let attempt = 1; ; attempt++) {
+      await clickRetry(page, '.wizard-panel.active [data-recipient-choice]');
+      await clickRetry(page, '.wizard-next-btn[data-next="2"]');
+      try { await waitFor(page, "!!document.querySelector('.wizard-panel.active[data-wizard-panel=\"2\"]')", '切到第 2 步', 5000); break; }
+      catch (e) { if (attempt >= 3) throw e; }
+    }
     await typeConfirmed(page, '#rqPickup', '新北市板橋區中山路一段161號');
     await typeConfirmed(page, '#rqDestination', destination);
-    await click(page, '.wizard-next-btn[data-next="3"]');
+    await clickUntil(page, '.wizard-next-btn[data-next="3"]', "!!document.querySelector('.wizard-panel.active[data-wizard-panel=\"3\"]')", '切到第 3 步');
     await evaluate(page, setValue('rqDate', dayOffset(6)));
     record(S, '單程預約不顯示「同意分段載送」', !(await evaluate(page, visible('rqSplitLegConsent'))));
     await evaluate(page, setValue('rqTripType', '來回'));
@@ -851,7 +862,7 @@ async function flowSplitConsent(cdp, baseUrl) {
       && await evaluate(page, "document.getElementById('rqSplitLegConsent').checked===true"));
     await evaluate(page, setValue('rqReturnDate', dayOffset(6)));
     await evaluate(page, setValue('rqReturnTime', '16:00'));
-    await clickRetry(page, '.wizard-next-btn[data-next="4"]');
+    await clickUntil(page, '.wizard-next-btn[data-next="4"]', "!!document.querySelector('.wizard-panel.active[data-wizard-panel=\"4\"]')", '切到第 4 步');
     record(S, '確認步驟顯示同意分段載送', await evaluate(page, "document.getElementById('requesterWizardReview').textContent.includes('・同意分段載送')"),
       await evaluate(page, "document.getElementById('requesterWizardReview').textContent"));
     await click(page, '#submitRequesterBookingBtn');
@@ -864,11 +875,11 @@ async function flowSplitConsent(cdp, baseUrl) {
     record(S, '我的預約顯示同意分段載送', await evaluate(page, "document.querySelector('main').innerText.includes('同意分段載送')"));
 
     await click(page, `.requester-edit-booking-btn[data-booking=${J(created.id)}]`);
-    await click(page, '.wizard-next-btn[data-next="2"]');
-    await click(page, '.wizard-next-btn[data-next="3"]');
+    await clickUntil(page, '.wizard-next-btn[data-next="2"]', "!!document.querySelector('.wizard-panel.active[data-wizard-panel=\"2\"]')", '切到第 2 步');
+    await clickUntil(page, '.wizard-next-btn[data-next="3"]', "!!document.querySelector('.wizard-panel.active[data-wizard-panel=\"3\"]')", '切到第 3 步');
     record(S, '修改預約時勾選框是預約上的值（已勾選）', await evaluate(page, "document.getElementById('rqSplitLegConsent').checked===true"));
     await click(page, '#rqSplitLegConsent');
-    await clickRetry(page, '.wizard-next-btn[data-next="4"]');
+    await clickUntil(page, '.wizard-next-btn[data-next="4"]', "!!document.querySelector('.wizard-panel.active[data-wizard-panel=\"4\"]')", '切到第 4 步');
     await click(page, '#submitRequesterBookingBtn');
     const amended = await waitForDb(async () => {
       const r = await row('bookings', created.id);
@@ -910,7 +921,7 @@ async function flowReleaseLeg(cdp, baseUrl, tokens) {
     record(S, '還沒排車的去程、回程都有「退回需求池」按鈕', await evaluate(page,
       `!!document.querySelector('.booking-leg-release-btn[data-leg=${J(`${id}_outbound`)}]')`));
     await evaluate(page, 'window.confirm=()=>true');
-    await click(page, `.booking-leg-release-btn[data-leg=${J(`${id}_return`)}]`);
+    await clickRetry(page, `.booking-leg-release-btn[data-leg=${J(`${id}_return`)}]`);
     await waitForDb(async () => (await poolOf()) === 'in_pool', '回程退回需求池');
     record(S, '按「回程退回需求池」：資料庫的回程在需求池', true);
     await waitFor(page, `!!document.querySelector('.booking-leg-reclaim-btn[data-leg=${J(`${id}_return`)}]')`, '回程出現「收回」按鈕');
@@ -918,10 +929,54 @@ async function flowReleaseLeg(cdp, baseUrl, tokens) {
       `document.querySelector('main').innerText.includes('在需求池，等待其他機構接案')&&!document.querySelector('.booking-leg-release-btn[data-leg=${J(`${id}_outbound`)}]')`));
     record(S, '退回只呼叫一次 booking-leg，沒有經過 booking-write', page.requests.filter((r) => r.path === '/api/v2/booking-leg').length === 1
       && !page.requests.some((r) => r.path === '/api/v2/booking-write' && r.postData.includes(id)));
-    await click(page, `.booking-leg-reclaim-btn[data-leg=${J(`${id}_return`)}]`);
+    await clickRetry(page, `.booking-leg-reclaim-btn[data-leg=${J(`${id}_return`)}]`);
     await waitForDb(async () => (await poolOf()) === 'primary', '回程收回');
     record(S, '按「收回回程」：回程回到由本機構負責', true);
     await waitFor(page, `!!document.querySelector('.booking-leg-release-btn[data-leg=${J(`${id}_return`)}]')`, '收回後又可以退回');
+
+    // #113：再退回回程，第二家機構在需求池接下，成為協力機構
+    await clickRetry(page, `.booking-leg-release-btn[data-leg=${J(`${id}_return`)}]`);
+    await waitForDb(async () => (await poolOf()) === 'in_pool', '回程再次退回需求池');
+    const pageB = await openPage(cdp, baseUrl, 'dispatcher-b-claim-leg');
+    try {
+      await login(pageB, U.dspB);
+      await goView(pageB, 'demand-market');
+      await waitFor(pageB, `!!document.querySelector('.demand-leg-claim-btn[data-leg=${J(`${id}_return`)}]')`, '第二家機構的需求池有「接下回程」');
+      record(S, '第二家機構在需求池看到「只有回程」', await evaluate(pageB, "document.querySelector('main').innerText.includes('只有回程')"));
+      await clickRetry(pageB, `.demand-leg-claim-btn[data-leg=${J(`${id}_return`)}]`);
+      const partnered = await waitForDb(async () => {
+        const r = ((await row('bookings', id)).data.legs || []).find((l) => l.direction === 'return');
+        return r && r.poolStatus === 'partner' ? r : null;
+      }, '回程由第二家機構負責');
+      record(S, '按「接下回程」：回程的協力機構是第二家機構', partnered.partnerOrganizationId === ORG_B, J(partnered));
+      await goView(pageB, 'dispatch-home');
+      await evaluate(pageB, `(()=>{const d=document.getElementById('operationDateInput');d.value=${J(date)};d.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+      let shownB = true;
+      try { await waitFor(pageB, "document.querySelector('main').innerText.includes('由其他機構負責')", '協力機構的調度台看到這筆預約', 10000); } catch (_) { shownB = false; }
+      const textB = await evaluate(pageB, "document.querySelector('main').innerText");
+      record(S, '協力機構的調度台：去程標示由其他機構負責，看得到承接機構名稱', shownB && textB.includes('承接機構：合成承運 E2E'), shownB ? '' : textB.slice(0, 400));
+    } finally {
+      await finishPage(pageB, S);
+    }
+    await evaluate(page, "(()=>{Object.defineProperty(document,'visibilityState',{value:'visible',configurable:true});document.dispatchEvent(new Event('visibilitychange'));return true;})()");
+    let shownA = true;
+    try { await waitFor(page, "document.querySelector('main').innerText.includes('合成承運 E2E-B（協力機構・02-7777-8888）')", '承接機構看到協力機構名稱電話', 10000); } catch (_) { shownA = false; }
+    record(S, '承接機構的調度台：回程顯示協力機構名稱與電話，不能再退回或收回', shownA
+      && !(await evaluate(page, `!!document.querySelector('[data-leg=${J(`${id}_return`)}]')`)), shownA ? '' : await evaluate(page, "document.querySelector('main').innerText.slice(0,600)"));
+    const pageR = await openPage(cdp, baseUrl, 'requester-split-view');
+    try {
+      await login(pageR, U.req);
+      await goView(pageR, 'requester-bookings');
+      let both = true;
+      try { await waitFor(pageR, "document.querySelector('main').innerText.includes('載送：合成承運 E2E-B（協力機構）')&&document.querySelector('main').innerText.includes('承接：合成承運 E2E')", '我的預約分段顯示兩家機構', 10000); } catch (_) { both = false; }
+      record(S, '需求者的我的預約分段顯示兩家機構', both, both ? '' : await evaluate(pageR, "document.querySelector('main').innerText.split('\\n').filter((t)=>/去程|回程|承接：|載送：/.test(t)).join(' / ').slice(0,800)"));
+      await goView(pageR, 'requester-home');
+      let noted = true;
+      try { await waitFor(pageR, "document.querySelector('main').innerText.includes('回程由 合成承運 E2E-B 載送')", '需求者收到通知', 10000); } catch (_) { noted = false; }
+      record(S, '需求者收到「回程由第二家機構載送」的通知', noted, noted ? '' : await evaluate(pageR, "document.querySelector('main').innerText.slice(0,600)"));
+    } finally {
+      await finishPage(pageR, S);
+    }
   } catch (e) {
     record(S, `流程中斷：${e.message}`, false);
     await screenshot(page, 'H-release-leg');

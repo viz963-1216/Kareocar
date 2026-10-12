@@ -1,6 +1,6 @@
 'use strict';
 /**
- * 跨機構排車（#108、ADR 0004）的整合測試：來回預約的一段退回需求池、收回（#112）。
+ * 跨機構排車（#108、ADR 0004）的整合測試：來回預約的一段退回需求池、收回（#112）、接下單一段成為協力機構（#113）。
  *
  * 經過實際的 handler（booking-write、claim-booking、booking-leg、schedule-trips、state-load），
  * handler 以 care_ride_app 連線，RLS 全部生效。postgres 連線只用來建立身分 fixture 與讀取資料庫實際狀態。
@@ -31,7 +31,8 @@ const loadFn = require('../../netlify/functions/v2-state-load');
 
 const ORG_A = 'ORG-SPL-A';
 const ORG_B = 'ORG-SPL-B';
-const U = { req: 'USR-SPL-REQ', dspA: 'USR-SPL-DSPA', dspB: 'USR-SPL-DSPB', drvA: 'USR-SPL-DRVA' };
+const ORG_C = 'ORG-SPL-C';
+const U = { req: 'USR-SPL-REQ', dspA: 'USR-SPL-DSPA', dspB: 'USR-SPL-DSPB', dspC: 'USR-SPL-DSPC', drvA: 'USR-SPL-DRVA' };
 const DRIVER_A = 'DRV-SPL-A';
 const HOME = '新北市板橋區文化路一段188號';
 const CLINIC = '臺北市中正區公園路20號';
@@ -54,7 +55,8 @@ async function call(handler, method, userId, body) {
 const outcome = (r) => `${r.status} ${r.error ? `${r.error.code} ${r.error.message}` : 'ok'}`;
 const writeBooking = (userId, rec) => call(bookingWriteFn.handler, 'POST', userId, { changes: [{ collection: 'bookings', id: rec.id, record: rec }] });
 const claim = (userId, bookingId, organizationId) => call(claimFn.handler, 'POST', userId, { bookingId, organizationId });
-const leg = (userId, action, bookingId, legId) => call(legFn.handler, 'POST', userId, { action, bookingId, legId });
+const leg = (userId, action, bookingId, legId, organizationId) => call(legFn.handler, 'POST', userId, { action, bookingId, legId, organizationId });
+const claimLeg = (userId, bookingId, legId, organizationId) => leg(userId, 'claim', bookingId, legId, organizationId);
 const load = (userId) => call(loadFn.handler, 'GET', userId);
 const row = async (collection, id) => selectRow(admin, collection, id, ['organization_id', 'data']);
 const legOf = async (bookingId, direction) => ((await row('bookings', bookingId)).data.legs || []).find((l) => l.direction === direction);
@@ -92,16 +94,19 @@ const scheduleLeg = (bookingId, legId, tripId) => call(scheduleFn.handler, 'POST
   await admin.query(`
     insert into organizations (id, org_type, name, tax_id, contact_phone, active) values
       ('${ORG_A}','transport_provider','合成承運 A','12345678','02-1111-2222',true),
-      ('${ORG_B}','transport_provider','合成承運 B','87654321','02-3333-4444',true);
+      ('${ORG_B}','transport_provider','合成承運 B','87654321','02-3333-4444',true),
+      ('${ORG_C}','transport_provider','合成承運 C','11223344','02-5555-6666',true);
     insert into users (id, display_name, phone_e164, platform_role, active) values
       ('${U.req}','合成需求者','+886945000001','none',true),
       ('${U.dspA}','合成調度 A','+886945000002','none',true),
       ('${U.dspB}','合成調度 B','+886945000003','none',true),
+      ('${U.dspC}','合成調度 C','+886945000005','none',true),
       ('${U.drvA}','合成司機 A','+886945000004','none',true);
     insert into memberships (id, user_id, organization_id, role, status) values
       ('M-SPL-REQ','${U.req}','ORG-REQ-001','requester','active'),
       ('M-SPL-DSPA','${U.dspA}','${ORG_A}','dispatcher','active'),
       ('M-SPL-DSPB','${U.dspB}','${ORG_B}','dispatcher','active'),
+      ('M-SPL-DSPC','${U.dspC}','${ORG_C}','dispatcher','active'),
       ('M-SPL-DRVA','${U.drvA}','${ORG_A}','driver','active');
     insert into drivers (id, user_id, organization_id, duty_status, active) values
       ('${DRIVER_A}','${U.drvA}','${ORG_A}','on_duty',true);
@@ -188,6 +193,61 @@ const scheduleLeg = (bookingId, legId, tripId) => call(scheduleFn.handler, 'POST
     && after.data.legs.every((l) => (l.poolStatus || 'primary') === 'primary'), outcome(whole));
   const wholePool = poolRows(await load(U.dspB), 'BKG-SPL-4');
   record('需求池只列整筆一列，沒有單一段', wholePool.length === 1 && !wholePool[0].leg_id, JSON.stringify(wholePool));
+
+  console.log('--- 接下單一段成為協力機構（#113）---');
+  record('（前提）同意分段載送的來回預約，A 接案、退回回程', await claimedRoundTrip('BKG-SPL-5')
+    && (await leg(U.dspA, 'release', 'BKG-SPL-5', 'BKG-SPL-5_return')).status === 200);
+  const notInPool = await claimLeg(U.dspB, 'BKG-SPL-5', 'BKG-SPL-5_outbound', ORG_B);
+  record('不在需求池的段不能接', [400, 409].includes(notInPool.status) && ((await legOf('BKG-SPL-5', 'outbound')).poolStatus || 'primary') === 'primary', outcome(notInPool));
+  const ownClaim = await claimLeg(U.dspA, 'BKG-SPL-5', 'BKG-SPL-5_return', ORG_A);
+  record('承接機構不能接自己退回的段（要用收回）', [400, 409].includes(ownClaim.status), outcome(ownClaim));
+  const wrongOrg = await claimLeg(U.dspC, 'BKG-SPL-5', 'BKG-SPL-5_return', ORG_B);
+  record('不能代表別的機構接', wrongOrg.status === 403, outcome(wrongOrg));
+  const [byB, byC] = await Promise.all([claimLeg(U.dspB, 'BKG-SPL-5', 'BKG-SPL-5_return', ORG_B), claimLeg(U.dspC, 'BKG-SPL-5', 'BKG-SPL-5_return', ORG_C)]);
+  const winner = byB.status === 200 ? ORG_B : byC.status === 200 ? ORG_C : null;
+  record('兩家同時接同一段：只有一家成功，另一家回衝突', [byB.status, byC.status].sort().join(',') === '200,409', `${outcome(byB)} / ${outcome(byC)}`);
+  const partnerLeg = await legOf('BKG-SPL-5', 'return');
+  record('回程由成功的那家負責（協力機構），預約仍由 A 承接', partnerLeg.poolStatus === 'partner' && partnerLeg.partnerOrganizationId === winner
+    && (await row('bookings', 'BKG-SPL-5')).organization_id === ORG_A, JSON.stringify(partnerLeg));
+  // 之後的檢查固定以 B 為協力機構：C 贏的話，A 收不回，改用新的一筆
+  let P = { org: winner, dsp: winner === ORG_B ? U.dspB : U.dspC, other: winner === ORG_B ? U.dspC : U.dspB, name: winner === ORG_B ? '合成承運 B' : '合成承運 C', phone: winner === ORG_B ? '02-3333-4444' : '02-5555-6666' };
+  const pEv = await events('BKG-SPL-5', 'leg_partner_claimed');
+  record('留下預約事件「接下一段」（承接機構看得到）與稽核紀錄', pEv.length === 1 && pEv[0].organization_id === ORG_A
+    && pEv[0].data.metadata.partnerOrganizationId === winner && await audits('BKG-SPL-5', 'booking.leg_partner_claimed') === 1, JSON.stringify(pEv.map((e) => e.data)));
+  record('接走後需求池不再列出這一段', poolRows(await load(P.other), 'BKG-SPL-5').length === 0);
+
+  const pLoad = await load(P.dsp);
+  const pBooking = ((pLoad.data.collections.bookings) || []).find((b) => b.id === 'BKG-SPL-5');
+  const pJson = JSON.stringify(pBooking || {});
+  record('協力機構讀得到這筆預約（協力機構的檢視）', !!pBooking && pBooking.partnerView === true && pBooking.partnerOrganizationId === P.org, pJson.slice(0, 300));
+  const own = pBooking ? pBooking.legs.find((l) => l.direction === 'return') : null;
+  const otherLeg = pBooking ? pBooking.legs.find((l) => l.direction === 'outbound') : null;
+  record('協力機構看得到自己那段的完整時間、服務對象與聯絡人', !!own && own.requestedPickupAt === '2099-01-01T08:00:00.000Z'
+    && pBooking.name === '合成需求者' && pBooking.phone === '0911000001' && pBooking.pickupAddress === CLINIC && pBooking.destination === HOME
+    && pBooking.pickupTime === '16:00', pJson.slice(0, 400));
+  record('另一段只標示由其他機構負責，沒有時間與地點', !!otherLeg && otherLeg.maskedForPartner === true && !otherLeg.requestedPickupAt
+    && !otherLeg.pickup && !otherLeg.dropoff && !pJson.includes('"09:00"') && !pJson.includes('T01:00:00'), JSON.stringify(otherLeg));
+  record('協力機構看得到承接機構的名稱與電話', pBooking && pBooking.primaryOrganizationName === '合成承運 A' && pBooking.primaryOrganizationPhone === '02-1111-2222');
+  const otherLoad = JSON.stringify(await load(P.other));
+  record('沒有關係的機構讀不到任何個資', !otherLoad.includes('BKG-SPL-5') || (!otherLoad.includes('合成需求者') && !otherLoad.includes('0911000001')),
+    otherLoad.includes('BKG-SPL-5') ? '（只在需求池以外出現 ID）' : '');
+  const aLoad5 = await load(U.dspA);
+  const aRet = (((aLoad5.data.collections.bookings) || []).find((b) => b.id === 'BKG-SPL-5') || { legs: [] }).legs.find((l) => l.direction === 'return') || {};
+  record('承接機構看得到協力機構的名稱與電話', aRet.partnerOrganizationName === P.name && aRet.partnerOrganizationPhone === P.phone, JSON.stringify(aRet));
+  const reqRet = ((((await load(U.req)).data.collections.bookings) || []).find((b) => b.id === 'BKG-SPL-5') || { legs: [] }).legs.find((l) => l.direction === 'return') || {};
+  record('需求者看得到回程由哪家機構載送', reqRet.poolStatus === 'partner' && reqRet.partnerOrganizationName === P.name, JSON.stringify(reqRet));
+  const notes = async (userId, template) => (await admin.query(
+    `select payload from notifications where recipient_user_id = $1 and booking_id = 'BKG-SPL-5' and template = $2`, [userId, template])).rows;
+  const reqNote = await notes(U.req, 'booking_leg_partner_claimed');
+  record('通知需求者：回程改由哪家機構載送', reqNote.length === 1 && reqNote[0].payload.legLabel === '回程' && reqNote[0].payload.organizationName === P.name, JSON.stringify(reqNote));
+  const opsNote = await notes(U.dspA, 'leg_partner_claimed');
+  record('通知承接機構的調度：協力機構接下回程', opsNote.length === 1 && opsNote[0].payload.organizationName === P.name, JSON.stringify(opsNote));
+  const relPartner = await leg(U.dspA, 'release', 'BKG-SPL-5', 'BKG-SPL-5_return');
+  const recPartner = await leg(U.dspA, 'reclaim', 'BKG-SPL-5', 'BKG-SPL-5_return');
+  record('承接機構不能退回或收回已交給協力機構的段', relPartner.status === 400 && recPartner.status === 400
+    && (await legOf('BKG-SPL-5', 'return')).poolStatus === 'partner', `${outcome(relPartner)} / ${outcome(recPartner)}`);
+  const again = await claimLeg(P.other, 'BKG-SPL-5', 'BKG-SPL-5_return', P.other === U.dspB ? ORG_B : ORG_C);
+  record('已有協力機構的段，別家再接回衝突', again.status === 409, outcome(again));
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n結果：${results.length - failed.length} 通過 / ${failed.length} 失敗`);
