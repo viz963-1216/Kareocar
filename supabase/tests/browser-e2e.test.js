@@ -848,7 +848,7 @@ async function flowSplitConsent(cdp, baseUrl) {
     // 選了乘車人才能到第 2 步；畫面重新繪製時點擊可能落空，沒切過去就整組再做一次
     for (let attempt = 1; ; attempt++) {
       await clickRetry(page, '.wizard-panel.active [data-recipient-choice]');
-      await clickUntil(page, '.wizard-next-btn[data-next="2"]', "!!document.querySelector('.wizard-panel.active[data-wizard-panel=\"2\"]')", '切到第 2 步');
+      await clickRetry(page, '.wizard-next-btn[data-next="2"]');
       try { await waitFor(page, "!!document.querySelector('.wizard-panel.active[data-wizard-panel=\"2\"]')", '切到第 2 步', 5000); break; }
       catch (e) { if (attempt >= 3) throw e; }
     }
