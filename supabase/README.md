@@ -45,6 +45,7 @@ API 端點與各項業務規則。部署流程與上線檢查清單見 [DEPLOYME
 | `migrations/0036_partner_dissolve.sql` | 解除協力關係（#114）：`app.release_partner_leg` 協力機構退回自己那段（還沒排車才可以）並通知承接機構；`app.notify_booking_orgs` 通知這筆預約現在的承接機構或協力機構（呼叫者必須是需求者或其中一家的負責人、調度員）；協力機構的檢視只列承接中、已排車的預約 |
 | `migrations/0037_promote_partner.sql` | 升格（#115）：`app.release_leg_promote_partner` 承接機構退回自己那段、另一段有協力機構時，同一筆交易內協力機構升格為承接機構（原承接機構隨即讀不到），記預約事件並通知需求者與新承接機構；有協力機構時不能整筆退回或不受理（`_booking-rules`） |
 | `migrations/0038_leg_pool_deadline.sql` | 單一段的接案期限（#116）：`app.leg_pool_deadline`（那段接送時間前 30 分鐘；退回時已過就到接送時間）；`app.expire_pool_legs` 把過期的段標示沒有機構承接、記事件、通知需求者與承接機構（系統排程或平台管理者才能執行，Netlify 排程 `leg-pool-expire` 每 15 分鐘）；需求池檢視列出單一段的期限、期限已過不列出 |
+| `migrations/0039_leg_benefit.sql` | 每一段依負責機構判斷長照特約（#117）：協力機構的檢視多帶補助估算（`serverComputed.benefit`），state-load 依「這一段由誰負責」算每一段的補助資訊（`legBenefitViews`）；地址定位、報價等其他伺服器計算欄位仍不給協力機構 |
 | `rollback/<名稱>.down.sql` | 每支 migration 的回復檔（`0001` 的回復會刪除所有資料，只用在空資料庫或 Staging 重建） |
 | `migrations_archive/` | 壓縮成 baseline 之前的 0001–0008，只供查閱，不再套用 |
 | `seed-test-org.sql` | 建立測試機構與負責人的一次性腳本（`tests/seed-test-org.test.sh` 驗證） |
