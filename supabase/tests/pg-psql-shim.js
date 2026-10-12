@@ -33,6 +33,13 @@ function quoteLiteral(v) {
 
 function inlineParams(sql, params) {
   if (!params || !params.length) return sql;
+  // 與真正的 pg（extended protocol）相同：SQL 沒用到的參數會報錯。替身把參數代換成文字，
+  // 不檢查就抓不到這類錯誤（#122 就是這樣漏到正式站）
+  for (let i = 1; i <= params.length; i++) {
+    if (!new RegExp(`\\$${i}(?![0-9])`).test(sql)) {
+      throw Object.assign(new Error(`could not determine data type of parameter $${i}`), { code: '42P18' });
+    }
+  }
   // 由大到小取代，避免 $1 誤中 $10
   let out = sql;
   for (let i = params.length; i >= 1; i--) {
@@ -101,6 +108,13 @@ class PsqlClient {
     // 資料異動語句出現在那個位置），必須用 CTE 包起來。之前一律用子查詢，所以
     // 任何帶 RETURNING 的寫入在測試裡都會變成 syntax error，看起來像是 SQL 寫錯。
     const isWriteReturning = /^\s*(insert|update|delete)\b/i.test(text) && /\breturning\b/i.test(text);
+    // 沒有 RETURNING 的 INSERT／UPDATE／DELETE：包成 CTE 數出影響的筆數（真正的 pg 會回 rowCount）
+    // （一次送好幾條語句的測試準備資料不數，照原本的方式送出）
+    const isPlainWrite = /^\s*(insert|update|delete)\b/i.test(text) && !isWriteReturning && !text.includes(';');
+    if (isPlainWrite) {
+      const out = await this._send(`with __w as (${text} returning 1) select count(*) from __w;`);
+      return { rows: [], rowCount: Number(String(out).trim().split('\n').pop()) || 0 };
+    }
     if (!isRead && !isWriteReturning) {
       await this._send(`${text};`);
       return { rows: [], rowCount: 0 };
@@ -118,9 +132,32 @@ class PsqlClient {
   close() { try { this.proc.stdin.end(); this.proc.kill(); } catch (_) {} }
 }
 
+/** 連線設定：connectionString、DATABASE_URL，或 { host, port, user, database } 設定物件。 */
+function toUrl(config = {}) {
+  if (config.connectionString) return config.connectionString;
+  if (!config.host && process.env.DATABASE_URL) return process.env.DATABASE_URL;
+  const host = config.host || process.env.PGHOST || '127.0.0.1';
+  const port = config.port || process.env.PGPORT || 5432;
+  const user = config.user || process.env.PGUSER || 'postgres';
+  const db = config.database || process.env.PGDATABASE || 'postgres';
+  return `postgresql://${encodeURIComponent(user)}@${encodeURIComponent(host)}:${port}/${db}`;
+}
+
+// 同一個 psql 行程一次只能跑一個查詢：排隊執行
+function serial(client) {
+  let chain = Promise.resolve();
+  const raw = client.query.bind(client);
+  client.query = (sql, params) => {
+    const run = chain.then(() => raw(sql, params));
+    chain = run.catch(() => {});
+    return run;
+  };
+  return client;
+}
+
 class Pool {
   constructor(config = {}) {
-    const url = new URL(config.connectionString || process.env.DATABASE_URL);
+    const url = new URL(toUrl(config));
     this.opts = {
       host: decodeURIComponent(url.hostname || '/tmp/pgrun'),
       port: Number(url.port || 5433),
@@ -131,12 +168,25 @@ class Pool {
     this.clients = [];
   }
   async connect() {
-    const c = new PsqlClient(this.opts);
+    const c = serial(new PsqlClient(this.opts));
     this.clients.push(c);
     return c;
   }
+  /** pool.query：共用一個常駐連線 */
+  async query(sql, params) {
+    if (!this._shared) this._shared = this.connect();
+    return (await this._shared).query(sql, params);
+  }
   on() { /* 測試不需要事件 */ }
-  async end() { this.clients.forEach((c) => c.close()); this.clients = []; }
+  async end() { this.clients.forEach((c) => c.close()); this.clients = []; this._shared = null; }
 }
 
-module.exports = { Pool };
+class Client {
+  constructor(config = {}) { this.pool = new Pool(config); this.c = null; }
+  async connect() { this.c = await this.pool.connect(); }
+  query(sql, params) { return this.c.query(sql, params); }
+  async end() { await this.pool.end(); }
+  on() {}
+}
+
+module.exports = { Pool, Client };
