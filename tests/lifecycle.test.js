@@ -303,4 +303,27 @@ ok('需求者修改：改成單程，協力機構那段被拿掉；解除後那�
   assert.ok(!('partnerOrganizationId' in back.legs[1]) && back.legs[1].releasedByOrganizationId === null);
 });
 
+// ---------------------------------------------------------------- 整筆退回限制與升格（#115）
+ok('有協力機構時不能整筆退回或不受理', () => {
+  assert.equal(L.wholeReleaseBlockedReason(roundTrip()), null);
+  assert.match(L.wholeReleaseBlockedReason(partneredTrip()), /協力機構/);
+  const stored = partneredTrip();
+  assert.throws(() => bookingRules.checkBookingWrite({ actorUserId: 'U1', record: { ...stored, state: 'open' },
+    existing: { data: stored, organization_id: 'ORG-A', owner_user_id: 'U9' }, roles: { opsOfExisting: true } }), /協力機構/);
+  assert.throws(() => bookingRules.checkBookingWrite({ actorUserId: 'U1', record: { ...stored, state: 'rejected' },
+    existing: { data: stored, organization_id: 'ORG-A', owner_user_id: 'U9' }, roles: { opsOfExisting: true } }), /協力機構/);
+});
+ok('承接機構退回自己那段而另一段有協力機構：協力機構升格為承接機構，退回的那段在需求池', () => {
+  const r = L.releaseLeg(partneredTrip(), { legId: 'B1_outbound', organizationId: 'ORG-A', actorUserId: 'U1', at: AT });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.promoted, true);
+  assert.equal(r.booking.organizationId, 'ORG-B');
+  assert.deepEqual(r.booking.previousOrganizationIds, ['ORG-A']);
+  const [out, ret] = r.booking.legs;
+  assert.equal(L.legPoolStatus(out), 'in_pool'); assert.equal(out.releasedByOrganizationId, 'ORG-A');
+  assert.equal(L.legPoolStatus(ret), 'primary'); assert.ok(!('partnerOrganizationId' in ret));
+  assert.equal(L.legResponsibleOrganization(r.booking, ret), 'ORG-B');
+  assert.equal(L.legResponsibleOrganization(r.booking, out), null);
+});
+
 console.log(`lifecycle: ${pass} passed`);
