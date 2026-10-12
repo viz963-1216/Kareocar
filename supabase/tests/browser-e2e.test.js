@@ -915,7 +915,7 @@ async function flowReleaseLeg(cdp, baseUrl, tokens) {
     record(S, '還沒排車的去程、回程都有「退回需求池」按鈕', await evaluate(page,
       `!!document.querySelector('.booking-leg-release-btn[data-leg=${J(`${id}_outbound`)}]')`));
     await evaluate(page, 'window.confirm=()=>true');
-    await click(page, `.booking-leg-release-btn[data-leg=${J(`${id}_return`)}]`);
+    await clickRetry(page, `.booking-leg-release-btn[data-leg=${J(`${id}_return`)}]`);
     await waitForDb(async () => (await poolOf()) === 'in_pool', '回程退回需求池');
     record(S, '按「回程退回需求池」：資料庫的回程在需求池', true);
     await waitFor(page, `!!document.querySelector('.booking-leg-reclaim-btn[data-leg=${J(`${id}_return`)}]')`, '回程出現「收回」按鈕');
@@ -923,13 +923,13 @@ async function flowReleaseLeg(cdp, baseUrl, tokens) {
       `document.querySelector('main').innerText.includes('在需求池，等待其他機構接案')&&!document.querySelector('.booking-leg-release-btn[data-leg=${J(`${id}_outbound`)}]')`));
     record(S, '退回只呼叫一次 booking-leg，沒有經過 booking-write', page.requests.filter((r) => r.path === '/api/v2/booking-leg').length === 1
       && !page.requests.some((r) => r.path === '/api/v2/booking-write' && r.postData.includes(id)));
-    await click(page, `.booking-leg-reclaim-btn[data-leg=${J(`${id}_return`)}]`);
+    await clickRetry(page, `.booking-leg-reclaim-btn[data-leg=${J(`${id}_return`)}]`);
     await waitForDb(async () => (await poolOf()) === 'primary', '回程收回');
     record(S, '按「收回回程」：回程回到由本機構負責', true);
     await waitFor(page, `!!document.querySelector('.booking-leg-release-btn[data-leg=${J(`${id}_return`)}]')`, '收回後又可以退回');
 
     // #113：再退回回程，第二家機構在需求池接下，成為協力機構
-    await click(page, `.booking-leg-release-btn[data-leg=${J(`${id}_return`)}]`);
+    await clickRetry(page, `.booking-leg-release-btn[data-leg=${J(`${id}_return`)}]`);
     await waitForDb(async () => (await poolOf()) === 'in_pool', '回程再次退回需求池');
     const pageB = await openPage(cdp, baseUrl, 'dispatcher-b-claim-leg');
     try {
@@ -937,7 +937,7 @@ async function flowReleaseLeg(cdp, baseUrl, tokens) {
       await goView(pageB, 'demand-market');
       await waitFor(pageB, `!!document.querySelector('.demand-leg-claim-btn[data-leg=${J(`${id}_return`)}]')`, '第二家機構的需求池有「接下回程」');
       record(S, '第二家機構在需求池看到「只有回程」', await evaluate(pageB, "document.querySelector('main').innerText.includes('只有回程')"));
-      await click(pageB, `.demand-leg-claim-btn[data-leg=${J(`${id}_return`)}]`);
+      await clickRetry(pageB, `.demand-leg-claim-btn[data-leg=${J(`${id}_return`)}]`);
       const partnered = await waitForDb(async () => {
         const r = ((await row('bookings', id)).data.legs || []).find((l) => l.direction === 'return');
         return r && r.poolStatus === 'partner' ? r : null;
