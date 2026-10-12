@@ -47,7 +47,8 @@ API 端點與各項業務規則。部署流程與上線檢查清單見 [DEPLOYME
 | `tests/run-*.sh` | 各主題的整合測試（業務流程、機構審核、預約、跨機構排車、行程存取、通知、補助、補助抓取、隱私、瀏覽器端對端），每支建立自己的拋棄式資料庫 |
 | `tests/migrations.test.sh`、`tests/apply-migrations.test.sh` | 回復檔齊全、上→下→上 schema 相同；migration 執行器 |
 | `tests/_auth-fixture.js` | 測試用的假外部服務：Supabase Auth、Google Maps |
-| `tests/seed.sql`、`tests/pg-psql-shim.js` | 舊測試的資料與 pg 替身（以 psql 當傳輸層）；正式環境不使用 |
+| `tests/seed.sql`、`tests/pg-psql-shim.js` | 舊測試的資料與 pg 替身（以 psql 當傳輸層；會檢查 SQL 沒用到的參數、回傳修改筆數）；正式環境不使用 |
+| `../tools/ci-local.sh` | 本機 CI：GitHub Actions 停用時，在本機跑與 Actions 相同的 PR 檢查（單元、各整合套件、migrations、瀏覽器端對端），`--report` 把結果標回 PR 的 commit 狀態；沒有 npm 的 pg 時用 psql 替身，db-ssl 標示略過 |
 
 ## 套用到你的 Supabase
 

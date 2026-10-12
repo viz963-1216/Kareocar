@@ -220,6 +220,14 @@ async function screenshot(page, name) {
  * 穩定後仍被蓋住就失敗並回報遮擋元素，不改用 DOM click 繞過。
  */
 async function click(page, selector) {
+  // 重新繪製後畫面可能捲回頂端，按鈕跑到視窗外：重新捲動定位再點，最多三次
+  for (let attempt = 1; ; attempt++) {
+    try { return await clickOnce(page, selector); }
+    catch (e) { if (attempt >= 3 || !/座標在視窗外/.test(e.message)) throw e; await sleep(300); }
+  }
+}
+
+async function clickOnce(page, selector) {
   const box = await evaluate(page, `(async()=>{const sel=${J(selector)};const frame=()=>new Promise(r=>requestAnimationFrame(()=>r()));let node=null,last=null,stable=0,replaced=0,scrolled=false;for(let i=0;i<240&&stable<2;i++){const el=document.querySelector(sel);if(!el){node=null;stable=0;await frame();continue;}if(node&&el!==node)replaced++;if(el!==node){node=el;scrolled=false;stable=0;}if(!scrolled){el.scrollIntoView({block:'center',inline:'center'});scrolled=true;}await frame();if(!el.isConnected){stable=0;continue;}const r=el.getBoundingClientRect();const k=[r.left,r.top,r.width,r.height].map(v=>Math.round(v)).join(',');stable=(k===last&&r.width>0&&r.height>0)?stable+1:0;last=k;}const el=document.querySelector(sel);if(!el)throw new Error('找不到 '+sel);if(el.disabled)throw new Error(sel+' 是停用狀態');const r=el.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2,w:r.width,h:r.height,stable:stable>=2,replaced,scrollY:Math.round(scrollY)};})()`);
   if (!box.stable) throw new Error(`${selector} 等待 240 個畫格仍未穩定（節點被替換 ${box.replaced} 次，最後大小 ${Math.round(box.w)}×${Math.round(box.h)}）`);
   const hit = await evaluate(page, `(()=>{const el=document.elementFromPoint(${box.x},${box.y});const t=document.querySelector(${J(selector)});const d=n=>n?(n.tagName.toLowerCase()+(n.id?'#'+n.id:'')+(typeof n.className==='string'&&n.className.trim()?'.'+n.className.trim().split(/\\s+/).join('.'):'')):'（座標在視窗外）';return {ok:!!el&&!!t&&(el===t||t.contains(el)),by:d(el),parent:el&&el.parentElement?d(el.parentElement):''};})()`);
