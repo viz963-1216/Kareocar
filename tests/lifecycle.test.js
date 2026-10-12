@@ -272,4 +272,35 @@ ok('待排車的段依負責機構：承接機構不再看到交給協力機構�
     '協力機構讀到的預約（partnerView）預設看自己那段');
 });
 
+// ---------------------------------------------------------------- 解除協力關係（#114）
+const partneredTrip = () => ({ ...claimReturn(releaseReturn(roundTrip({ pickupDate: '2099-01-01', pickupTime: '09:00', returnDate: '2099-01-01',
+  returnTime: '16:00', pickupAddress: '家', destination: '醫院' })).booking).booking });
+ok('協力機構退回自己那段：回到需求池，協力機構不再負責；不能退回另一段', () => {
+  const b = partneredTrip();
+  const r = L.releaseLeg(b, { legId: 'B1_return', organizationId: 'ORG-B', actorUserId: 'UB', at: AT });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(L.legPoolStatus(r.booking.legs[1]), 'in_pool');
+  assert.equal(r.booking.legs[1].releasedByOrganizationId, 'ORG-B');
+  assert.ok(!('partnerOrganizationId' in r.booking.legs[1]));
+  assert.match(L.releaseLeg(b, { legId: 'B1_outbound', organizationId: 'ORG-B', actorUserId: 'UB', at: AT }).error, /承接機構/);
+  const scheduled = L.scheduleBookingLeg(b, { legId: 'B1_return', tripId: 'TB', organizationId: 'ORG-B', at: AT }).booking;
+  assert.match(L.releaseLeg(scheduled, { legId: 'B1_return', organizationId: 'ORG-B', actorUserId: 'UB', at: AT }).error, /已經排車/);
+});
+ok('需求者修改：改了協力機構那段的時間或地點才解除；改了另一段的時間不影響', () => {
+  const b = partneredTrip();
+  assert.deepEqual(L.partnerLegsToDissolve(b, { ...b, returnTime: '17:00' }).map((x) => x.legId), ['B1_return']);
+  assert.deepEqual(L.partnerLegsToDissolve(b, { ...b, destination: '另一家醫院' }).map((x) => x.legId), ['B1_return'], '地點改了，兩段都受影響');
+  assert.deepEqual(L.partnerLegsToDissolve(b, { ...b, pickupTime: '10:00' }), [], '去程是承接機構的');
+  assert.deepEqual(L.partnerLegsToDissolve(b, { ...b, specialNeed: '需要協助上下車' }), [], '只改需求不解除');
+});
+ok('需求者修改：改成單程，協力機構那段被拿掉；解除後那段回到需求池', () => {
+  const b = partneredTrip();
+  const oneWay = { ...b, tripType: '單程', legs: [b.legs[0]] };
+  const d = L.partnerLegsToDissolve(b, oneWay);
+  assert.deepEqual(d.map((x) => [x.legId, x.organizationId, x.removed]), [['B1_return', 'ORG-B', true]]);
+  const back = L.dissolvePartnerLegs({ ...b, returnTime: '17:00' }, ['B1_return'], { actorUserId: 'U9', at: AT });
+  assert.equal(L.legPoolStatus(back.legs[1]), 'in_pool');
+  assert.ok(!('partnerOrganizationId' in back.legs[1]) && back.legs[1].releasedByOrganizationId === null);
+});
+
 console.log(`lifecycle: ${pass} passed`);

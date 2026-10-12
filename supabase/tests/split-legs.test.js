@@ -25,6 +25,7 @@ const admin = new Pool({ host, port: Number(process.env.PGPORT), database: 'care
 const db = require('../../netlify/functions/_db');
 const bookingWriteFn = require('../../netlify/functions/v2-booking-write');
 const claimFn = require('../../netlify/functions/v2-claim-booking');
+const cancelFn = require('../../netlify/functions/v2-cancel-booking');
 const legFn = require('../../netlify/functions/v2-booking-leg');
 const scheduleFn = require('../../netlify/functions/v2-schedule-trips');
 const loadFn = require('../../netlify/functions/v2-state-load');
@@ -281,6 +282,66 @@ const scheduleLeg = (bookingId, legId, tripId, org = ORG_A, userId = U.dspA) => 
     && !(((await load(U.dspA)).data.collections.trips) || []).some((t) => t.id === 'TRP-SPL-P-RET'));
   const pTrips = (((await load(P.dsp)).data.collections.trips) || []).map((t) => t.id);
   record('協力機構讀得到自己的行程、讀不到承接機構的行程', pTrips.includes('TRP-SPL-P-RET') && !pTrips.includes('TRP-SPL-A-OUT'), JSON.stringify(pTrips));
+
+  console.log('--- 解除協力關係（#114）---');
+  /** 同意分段載送的來回預約：A 接案、退回回程、B 接下回程 */
+  async function partnered(id) {
+    return await claimedRoundTrip(id) && (await leg(U.dspA, 'release', id, `${id}_return`)).status === 200
+      && (await claimLeg(U.dspB, id, `${id}_return`, ORG_B)).status === 200;
+  }
+  const partnerSees = async (id) => (((await load(U.dspB)).data.collections.bookings) || []).some((b) => b.id === id);
+  const opsNotes = async (userId, id, template) => (await admin.query(
+    `select payload from notifications where recipient_user_id = $1 and booking_id = $2 and template = $3`, [userId, id, template])).rows;
+  const writeAs = async (userId, id, patch) => writeBooking(userId, { ...(await row('bookings', id)).data, ...patch });
+
+  record('（前提）BKG-SPL-6：B 是回程的協力機構', await partnered('BKG-SPL-6') && await partnerSees('BKG-SPL-6'));
+  const bOut = await leg(U.dspB, 'release', 'BKG-SPL-6', 'BKG-SPL-6_outbound');
+  record('協力機構不能退回不是自己負責的段', [400, 403, 404].includes(bOut.status), outcome(bOut));
+  const bRel = await leg(U.dspB, 'release', 'BKG-SPL-6', 'BKG-SPL-6_return');
+  const r6 = await legOf('BKG-SPL-6', 'return');
+  record('協力機構退回自己那段：回到需求池', bRel.status === 200 && r6.poolStatus === 'in_pool' && !r6.partnerOrganizationId
+    && r6.releasedByOrganizationId === ORG_B, outcome(bRel));
+  record('協力機構立即讀不到', !(await partnerSees('BKG-SPL-6')));
+  record('通知承接機構：協力機構退回了回程', (await opsNotes(U.dspA, 'BKG-SPL-6', 'leg_partner_released')).length === 1);
+  record('留下預約事件「協力機構退回」', (await events('BKG-SPL-6', 'leg_partner_released')).length === 1);
+  record('那段又出現在別家的需求池', poolRows(await load(U.dspC), 'BKG-SPL-6').some((r) => r.leg_id === 'BKG-SPL-6_return'));
+
+  record('（前提）BKG-SPL-7：B 是回程的協力機構，並已排車', await partnered('BKG-SPL-7')
+    && (await scheduleLeg('BKG-SPL-7', 'BKG-SPL-7_return', 'TRP-SPL-B7', ORG_B, U.dspB)).status === 200);
+  const bRelSched = await leg(U.dspB, 'release', 'BKG-SPL-7', 'BKG-SPL-7_return');
+  record('協力機構已排車的段要先取消行程才能退回', bRelSched.status === 400 && /取消行程/.test(bRelSched.error.message), outcome(bRelSched));
+
+  record('（前提）BKG-SPL-8：B 是回程的協力機構', await partnered('BKG-SPL-8'));
+  const needs = await writeAs(U.req, 'BKG-SPL-8', { specialNeed: '需要協助上下車' });
+  record('需求者只改服務需求：協力關係不變', needs.status === 200 && (await legOf('BKG-SPL-8', 'return')).poolStatus === 'partner', outcome(needs));
+  record('只改需求：通知承接機構與協力機構', (await opsNotes(U.dspA, 'BKG-SPL-8', 'booking_needs_changed')).length === 1
+    && (await opsNotes(U.dspB, 'BKG-SPL-8', 'booking_needs_changed')).length === 1);
+  const amend = await writeAs(U.req, 'BKG-SPL-8', { returnTime: '17:30' });
+  const r8 = await legOf('BKG-SPL-8', 'return');
+  record('需求者改了回程時間：協力關係解除、回程回到需求池', amend.status === 200 && r8.poolStatus === 'in_pool' && !r8.partnerOrganizationId, outcome(amend));
+  record('協力機構立即讀不到，並收到通知', !(await partnerSees('BKG-SPL-8'))
+    && (await opsNotes(U.dspB, 'BKG-SPL-8', 'leg_partner_removed')).some((n) => n.payload.reason === 'amended'));
+  record('改了去程時間不影響回程的協力機構', await partnered('BKG-SPL-9')
+    && (await writeAs(U.req, 'BKG-SPL-9', { pickupTime: '08:30' })).status === 200 && (await legOf('BKG-SPL-9', 'return')).poolStatus === 'partner');
+
+  const toOneWay9 = await writeAs(U.req, 'BKG-SPL-9', { tripType: '單程', returnDate: '', returnTime: '', legs: [(await row('bookings', 'BKG-SPL-9')).data.legs[0]] });
+  record('改成單程：回程拿掉、協力機構讀不到並收到通知', toOneWay9.status === 200 && !(await legOf('BKG-SPL-9', 'return'))
+    && !(await partnerSees('BKG-SPL-9')) && (await opsNotes(U.dspB, 'BKG-SPL-9', 'leg_partner_removed')).some((n) => n.payload.reason === 'removed'), outcome(toOneWay9));
+
+  record('（前提）BKG-SPL-10：B 是回程的協力機構', await partnered('BKG-SPL-10'));
+  const cancelled = await call(cancelFn.handler, 'POST', U.req, { bookingId: 'BKG-SPL-10', reasonCode: 'requester_no_longer_needed' });
+  record('需求者取消整筆：承接機構與協力機構都收到通知', cancelled.status === 200
+    && (await opsNotes(U.dspA, 'BKG-SPL-10', 'booking_cancelled_ops')).length === 1
+    && (await opsNotes(U.dspB, 'BKG-SPL-10', 'booking_cancelled_ops')).length === 1, outcome(cancelled));
+  record('取消後兩家都讀不到', !(await partnerSees('BKG-SPL-10'))
+    && !(((await load(U.dspA)).data.collections.bookings) || []).some((b) => b.id === 'BKG-SPL-10'));
+
+  let strangerErr = null;
+  try { await db.withUser(U.dspC, (c) => c.query(`select app.notify_booking_orgs('BKG-SPL-8', 'booking_needs_changed', '{}'::jsonb, array['${ORG_A}'])`)); }
+  catch (e) { strangerErr = e; }
+  record('沒有關係的機構不能透過通知函式通知這筆預約的機構', strangerErr && strangerErr.code === '42501', strangerErr && strangerErr.code);
+  const toStranger = await db.withUser(U.req, (c) => c.query(`select app.notify_booking_orgs('BKG-SPL-8', 'booking_needs_changed', '{}'::jsonb, array['${ORG_C}']) as n`));
+  record('需求者也只能通知這筆預約現在的承接機構或協力機構', Number(toStranger.rows[0].n) === 0, JSON.stringify(toStranger.rows));
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n結果：${results.length - failed.length} 通過 / ${failed.length} 失敗`);
