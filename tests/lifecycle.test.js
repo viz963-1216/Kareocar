@@ -241,4 +241,66 @@ ok('一般預約寫入：去程／回程的需求池欄位沿用資料庫的值�
   assert.ok(whole.record.legs.every((l) => L.legPoolStatus(l) === 'primary'));
 });
 
+// ---------------------------------------------------------------- 接下單一段成為協力機構（#113）
+const claimReturn = (b, org = 'ORG-B') => L.claimLeg(b, { legId: 'B1_return', organizationId: org, organizationName: '合成 B', organizationPhone: '02-3333-4444', actorUserId: 'UB', at: AT });
+ok('接下單一段：別家機構接下在需求池的回程，成為協力機構；預約仍由承接機構負責', () => {
+  const released = releaseReturn(roundTrip()).booking;
+  const r = claimReturn(released);
+  assert.equal(r.ok, true, r.error);
+  const ret = r.booking.legs[1];
+  assert.equal(L.legPoolStatus(ret), 'partner');
+  assert.equal(ret.partnerOrganizationId, 'ORG-B'); assert.equal(ret.partnerOrganizationName, '合成 B'); assert.equal(ret.partnerOrganizationPhone, '02-3333-4444');
+  assert.ok(!('releasedAt' in ret));
+  assert.equal(r.booking.organizationId, 'ORG-A');
+  assert.equal(L.legResponsibleOrganization(r.booking, ret), 'ORG-B');
+  assert.equal(L.legResponsibleOrganization(r.booking, r.booking.legs[0]), 'ORG-A');
+});
+ok('接下單一段被拒：不在需求池、承接機構自己、預約不在承接中', () => {
+  assert.match(claimReturn(roundTrip()).error, /不在需求池/);
+  const released = releaseReturn(roundTrip()).booking;
+  assert.match(claimReturn(released, 'ORG-A').error, /承接機構/);
+  assert.match(claimReturn({ ...released, state: 'cancelled' }).error, /承接/);
+  assert.match(claimReturn(claimReturn(released).booking, 'ORG-C').error, /已經有其他機構/);
+});
+ok('待排車的段依負責機構：承接機構不再看到交給協力機構的段，協力機構的資料只列自己那段', () => {
+  const partnered = claimReturn(releaseReturn(roundTrip()).booking).booking;
+  assert.equal(L.nextPendingLeg(partnered).id, 'B1_outbound', '承接機構：去程');
+  assert.equal(L.nextPendingLeg(partnered, 'ORG-B').id, 'B1_return', '協力機構：回程');
+  const outScheduled = L.scheduleBookingLeg(partnered, { tripId: 'T1', organizationId: 'ORG-A', at: AT }).booking;
+  assert.equal(L.nextPendingLeg(outScheduled), null, '承接機構排完去程就沒有待排車的段');
+  assert.equal(L.nextPendingLeg({ ...outScheduled, partnerView: true, partnerOrganizationId: 'ORG-B' }).id, 'B1_return',
+    '協力機構讀到的預約（partnerView）預設看自己那段');
+});
+
+// ---------------------------------------------------------------- 解除協力關係（#114）
+const partneredTrip = () => ({ ...claimReturn(releaseReturn(roundTrip({ pickupDate: '2099-01-01', pickupTime: '09:00', returnDate: '2099-01-01',
+  returnTime: '16:00', pickupAddress: '家', destination: '醫院' })).booking).booking });
+ok('協力機構退回自己那段：回到需求池，協力機構不再負責；不能退回另一段', () => {
+  const b = partneredTrip();
+  const r = L.releaseLeg(b, { legId: 'B1_return', organizationId: 'ORG-B', actorUserId: 'UB', at: AT });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(L.legPoolStatus(r.booking.legs[1]), 'in_pool');
+  assert.equal(r.booking.legs[1].releasedByOrganizationId, 'ORG-B');
+  assert.ok(!('partnerOrganizationId' in r.booking.legs[1]));
+  assert.match(L.releaseLeg(b, { legId: 'B1_outbound', organizationId: 'ORG-B', actorUserId: 'UB', at: AT }).error, /承接機構/);
+  const scheduled = L.scheduleBookingLeg(b, { legId: 'B1_return', tripId: 'TB', organizationId: 'ORG-B', at: AT }).booking;
+  assert.match(L.releaseLeg(scheduled, { legId: 'B1_return', organizationId: 'ORG-B', actorUserId: 'UB', at: AT }).error, /已經排車/);
+});
+ok('需求者修改：改了協力機構那段的時間或地點才解除；改了另一段的時間不影響', () => {
+  const b = partneredTrip();
+  assert.deepEqual(L.partnerLegsToDissolve(b, { ...b, returnTime: '17:00' }).map((x) => x.legId), ['B1_return']);
+  assert.deepEqual(L.partnerLegsToDissolve(b, { ...b, destination: '另一家醫院' }).map((x) => x.legId), ['B1_return'], '地點改了，兩段都受影響');
+  assert.deepEqual(L.partnerLegsToDissolve(b, { ...b, pickupTime: '10:00' }), [], '去程是承接機構的');
+  assert.deepEqual(L.partnerLegsToDissolve(b, { ...b, specialNeed: '需要協助上下車' }), [], '只改需求不解除');
+});
+ok('需求者修改：改成單程，協力機構那段被拿掉；解除後那段回到需求池', () => {
+  const b = partneredTrip();
+  const oneWay = { ...b, tripType: '單程', legs: [b.legs[0]] };
+  const d = L.partnerLegsToDissolve(b, oneWay);
+  assert.deepEqual(d.map((x) => [x.legId, x.organizationId, x.removed]), [['B1_return', 'ORG-B', true]]);
+  const back = L.dissolvePartnerLegs({ ...b, returnTime: '17:00' }, ['B1_return'], { actorUserId: 'U9', at: AT });
+  assert.equal(L.legPoolStatus(back.legs[1]), 'in_pool');
+  assert.ok(!('partnerOrganizationId' in back.legs[1]) && back.legs[1].releasedByOrganizationId === null);
+});
+
 console.log(`lifecycle: ${pass} passed`);

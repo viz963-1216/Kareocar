@@ -8,6 +8,8 @@
  *   - 由伺服器決定的欄位一律沿用資料庫裡的值（需求者、承接人、取消紀錄等）
  *   - 進入排車後，需求者不能再改時間與地址
  *   - 同意分段載送（來回預約才有）只能是 true／false
+ *   - 需求者改了協力機構那段的時間地點、改成單程、或整筆退回：解除協力關係（#114），回傳 partnerRemoved 讓呼叫端通知
+ *   - 只改服務需求：回傳 needsChanged 讓呼叫端通知承接機構與協力機構
  *
  * 接案走 v2-claim-booking、需求者取消走 v2-cancel-booking，這裡一律不接受。
  * 承接機構退回公開池、不受理、或需求者重大修改需重新承接時，呼叫端在同一交易內
@@ -53,6 +55,8 @@ function applySplitLegConsent(out, before) {
 
 // 「某一段由哪家機構負責」不能經一般寫入指定（#110；跨機構排車改走需求池，見 ADR 0004）
 const LEG_ASSIGNMENT_FIELDS = ['assignedOrganizationId', 'assignedAt', 'assignedByUserId'];
+// 服務對象的需求：只改這些時通知承接機構與協力機構（#114）
+const NEEDS_FIELDS = ['aidNeed', 'companions', 'specialNeed', 'wheelchairSlots', 'passengerCount', 'note'];
 function stripLegAssignment(out) {
   if (!Array.isArray(out.legs)) return;
   out.legs = out.legs.map((leg) => {
@@ -174,6 +178,15 @@ function checkBookingWrite({ actorUserId, record, existing, roles }) {
   stripLegAssignment(out);
   applySplitLegConsent(out, before);
   const revoke = Boolean(existing.organization_id) && REVOKE_STATES.has(toState);
+  // 解除協力關係（#114）：整筆退回時全部解除；否則只解除時間地點改了、或被拿掉的那段
+  const dissolve = revoke
+    ? lifecycle.partnerLegsToDissolve(before, { ...before, tripType: '單程', legs: [] }).map((d) => ({ ...d, reason: 'released_whole' }))
+    : lifecycle.partnerLegsToDissolve(before, out).map((d) => ({ ...d, reason: d.removed ? 'removed' : 'amended' }));
+  if (!revoke && dissolve.some((d) => !d.removed)) {
+    out.legs = lifecycle.dissolvePartnerLegs(out, dissolve.filter((d) => !d.removed).map((d) => d.legId),
+      { actorUserId, at: new Date().toISOString() }).legs;
+  }
+  const needsChanged = !dissolve.length && NEEDS_FIELDS.some((k) => JSON.stringify(before[k] ?? null) !== JSON.stringify(out[k] ?? null));
   out.organizationId = revoke ? null : (existing.organization_id || null);
   if (revoke) {
     out.claimedByUserId = null;
@@ -181,7 +194,7 @@ function checkBookingWrite({ actorUserId, record, existing, roles }) {
     // 整筆退回或不受理：退回需求池的那一段也一起回到整筆預約裡
     if (Array.isArray(out.legs)) out.legs = lifecycle.clearLegPool(out).legs;
   }
-  return { record: out, revoke };
+  return { record: out, revoke, partnerRemoved: dissolve, needsChanged };
 }
 
 module.exports = { checkBookingWrite, OWNER_TRANSITIONS, OPS_TRANSITIONS, SERVER_OWNED, REQUESTER_LOCKED };
