@@ -845,11 +845,16 @@ async function flowSplitConsent(cdp, baseUrl) {
     await login(page, U.req);
     await goView(page, 'requester-new');
     await waitFor(page, "!!document.querySelector('.wizard-panel.active [data-recipient-choice]')", '乘車人選項出現');
-    await clickRetry(page, '.wizard-panel.active [data-recipient-choice]');
-    await clickRetry(page, '.wizard-next-btn[data-next="2"]');
+    // 選了乘車人才能到第 2 步；畫面重新繪製時點擊可能落空，沒切過去就整組再做一次
+    for (let attempt = 1; ; attempt++) {
+      await clickRetry(page, '.wizard-panel.active [data-recipient-choice]');
+      await clickUntil(page, '.wizard-next-btn[data-next="2"]', "!!document.querySelector('.wizard-panel.active[data-wizard-panel=\"2\"]')", '切到第 2 步');
+      try { await waitFor(page, "!!document.querySelector('.wizard-panel.active[data-wizard-panel=\"2\"]')", '切到第 2 步', 5000); break; }
+      catch (e) { if (attempt >= 3) throw e; }
+    }
     await typeConfirmed(page, '#rqPickup', '新北市板橋區中山路一段161號');
     await typeConfirmed(page, '#rqDestination', destination);
-    await clickRetry(page, '.wizard-next-btn[data-next="3"]');
+    await clickUntil(page, '.wizard-next-btn[data-next="3"]', "!!document.querySelector('.wizard-panel.active[data-wizard-panel=\"3\"]')", '切到第 3 步');
     await evaluate(page, setValue('rqDate', dayOffset(6)));
     record(S, '單程預約不顯示「同意分段載送」', !(await evaluate(page, visible('rqSplitLegConsent'))));
     await evaluate(page, setValue('rqTripType', '來回'));
@@ -857,7 +862,7 @@ async function flowSplitConsent(cdp, baseUrl) {
       && await evaluate(page, "document.getElementById('rqSplitLegConsent').checked===true"));
     await evaluate(page, setValue('rqReturnDate', dayOffset(6)));
     await evaluate(page, setValue('rqReturnTime', '16:00'));
-    await clickRetry(page, '.wizard-next-btn[data-next="4"]');
+    await clickUntil(page, '.wizard-next-btn[data-next="4"]', "!!document.querySelector('.wizard-panel.active[data-wizard-panel=\"4\"]')", '切到第 4 步');
     record(S, '確認步驟顯示同意分段載送', await evaluate(page, "document.getElementById('requesterWizardReview').textContent.includes('・同意分段載送')"),
       await evaluate(page, "document.getElementById('requesterWizardReview').textContent"));
     await click(page, '#submitRequesterBookingBtn');
@@ -870,11 +875,11 @@ async function flowSplitConsent(cdp, baseUrl) {
     record(S, '我的預約顯示同意分段載送', await evaluate(page, "document.querySelector('main').innerText.includes('同意分段載送')"));
 
     await click(page, `.requester-edit-booking-btn[data-booking=${J(created.id)}]`);
-    await clickRetry(page, '.wizard-next-btn[data-next="2"]');
-    await clickRetry(page, '.wizard-next-btn[data-next="3"]');
+    await clickUntil(page, '.wizard-next-btn[data-next="2"]', "!!document.querySelector('.wizard-panel.active[data-wizard-panel=\"2\"]')", '切到第 2 步');
+    await clickUntil(page, '.wizard-next-btn[data-next="3"]', "!!document.querySelector('.wizard-panel.active[data-wizard-panel=\"3\"]')", '切到第 3 步');
     record(S, '修改預約時勾選框是預約上的值（已勾選）', await evaluate(page, "document.getElementById('rqSplitLegConsent').checked===true"));
     await click(page, '#rqSplitLegConsent');
-    await clickRetry(page, '.wizard-next-btn[data-next="4"]');
+    await clickUntil(page, '.wizard-next-btn[data-next="4"]', "!!document.querySelector('.wizard-panel.active[data-wizard-panel=\"4\"]')", '切到第 4 步');
     await click(page, '#submitRequesterBookingBtn');
     const amended = await waitForDb(async () => {
       const r = await row('bookings', created.id);
