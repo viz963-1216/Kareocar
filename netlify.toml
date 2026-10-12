@@ -172,6 +172,10 @@
 [functions."benefit-rules-fetch"]
   schedule = "@daily"
 
+# 每 15 分鐘把過了接案期限的單一段標示「沒有機構承接」（#116）
+[functions."leg-pool-expire"]
+  schedule = "*/15 * * * *"
+
 [[redirects]]
   from = "/api/v2/claim-booking"
   to = "/.netlify/functions/v2-claim-booking"

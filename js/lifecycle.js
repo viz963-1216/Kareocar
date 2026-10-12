@@ -80,7 +80,7 @@
   const LEG_POOL_STATUS = Object.freeze({ PRIMARY: 'primary', IN_POOL: 'in_pool', PARTNER: 'partner', UNCLAIMED: 'unclaimed' });
   // 只由退回／接單一段／收回等專用端點寫入的欄位；一般預約寫入一律沿用資料庫的值
   const LEG_POOL_FIELDS = Object.freeze(['poolStatus', 'partnerOrganizationId', 'partnerOrganizationName', 'partnerOrganizationPhone',
-    'partnerClaimedAt', 'partnerClaimedByUserId', 'releasedAt', 'releasedByUserId', 'releasedByOrganizationId']);
+    'partnerClaimedAt', 'partnerClaimedByUserId', 'releasedAt', 'releasedByUserId', 'releasedByOrganizationId', 'unclaimedAt']);
   const legPoolStatus = (leg) => (leg && leg.poolStatus) || LEG_POOL_STATUS.PRIMARY;
   const legLabel = (leg) => (leg && leg.label) || '這一段';
 
@@ -170,14 +170,17 @@
     return { ok: true, booking: next, leg };
   }
 
-  /** 承接機構把還在需求池、還沒有別家接的那一段收回（#112）。不改傳入的物件。 */
+  /**
+   * 承接機構把還在需求池、還沒有別家接的那一段收回（#112）；過期沒有機構承接的段也可以收回自己載（#116）。
+   * 不改傳入的物件。
+   */
   function reclaimLeg(booking, { legId, organizationId, at }) {
     if (!booking) return { ok: false, error: '找不到預約' };
     if (!organizationId || organizationId !== booking.organizationId) return { ok: false, error: '只有承接機構可以收回' };
     const next = JSON.parse(JSON.stringify(booking));
     const leg = legsOf(next).find((l) => l.id === legId);
     if (!leg) return { ok: false, error: '找不到這一段' };
-    if (legPoolStatus(leg) !== LEG_POOL_STATUS.IN_POOL) return { ok: false, error: `${legLabel(leg)}不在需求池，不能收回` };
+    if (![LEG_POOL_STATUS.IN_POOL, LEG_POOL_STATUS.UNCLAIMED].includes(legPoolStatus(leg))) return { ok: false, error: `${legLabel(leg)}不在需求池，不能收回` };
     clearPoolFields(leg);
     next.updatedAt = at;
     next.version = Math.max(1, Number(next.version) || 1) + 1;
@@ -248,6 +251,34 @@
       leg.releasedByOrganizationId = null;
     }
     return next;
+  }
+
+  // 單一段的接案期限（#116）：與整筆預約相同的提前量（前端 BOOKING_EXPIRY_POLICY.leadMinutes）
+  const LEG_POOL_LEAD_MINUTES = 30;
+  /**
+   * 在需求池的那一段可以接到什麼時候：那段接送時間前 30 分鐘；退回時已經過了這個時間，就到接送時間為止。
+   * 資料庫的需求池檢視與過期排程（app.expire_pool_legs）用同樣的算法。
+   */
+  function legPoolDeadline(leg) {
+    const pickup = leg && leg.requestedPickupAt ? new Date(leg.requestedPickupAt).getTime() : NaN;
+    if (!Number.isFinite(pickup)) return null;
+    const released = leg.releasedAt ? new Date(leg.releasedAt).getTime() : NaN;
+    const normal = pickup - LEG_POOL_LEAD_MINUTES * 60000;
+    return new Date(!Number.isFinite(released) || normal > released ? normal : pickup).toISOString();
+  }
+
+  /** 過了期限都沒有機構接的那一段標示「沒有機構承接」（#116）；另一段與預約狀態不變。不改傳入的物件。 */
+  function markLegUnclaimed(booking, { legId, at }) {
+    if (!booking) return { ok: false, error: '找不到預約' };
+    const next = JSON.parse(JSON.stringify(booking));
+    const leg = legsOf(next).find((l) => l.id === legId);
+    if (!leg) return { ok: false, error: '找不到這一段' };
+    if (legPoolStatus(leg) !== LEG_POOL_STATUS.IN_POOL) return { ok: false, error: `${legLabel(leg)}不在需求池` };
+    leg.poolStatus = LEG_POOL_STATUS.UNCLAIMED;
+    leg.unclaimedAt = at;
+    next.updatedAt = at;
+    next.version = Math.max(1, Number(next.version) || 1) + 1;
+    return { ok: true, booking: next, leg };
   }
 
   /** 有協力機構負責其中一段時，承接機構不能整筆退回或不受理（#115）。回傳原因，可以時回傳 null。 */
@@ -371,7 +402,7 @@
     bookingTargets, bookingWriteTransitions,
     BOOKING_LEG_STATUS, LEG_SCHEDULING_FIELDS, nextPendingLeg, legResponsibleOrganization, scheduleBookingLeg, unscheduleTripLegs,
     LEG_POOL_STATUS, LEG_POOL_FIELDS, legPoolStatus, releaseLeg, reclaimLeg, claimLeg, clearLegPool,
-    partnerLegsToDissolve, dissolvePartnerLegs, wholeReleaseBlockedReason,
+    partnerLegsToDissolve, dissolvePartnerLegs, wholeReleaseBlockedReason, legPoolDeadline, markLegUnclaimed,
     TRIP_STATUSES, TRIP_STATUS_TRANSITIONS, TRIP_CORRECTION_TRANSITIONS,
     canTripTransition
   });

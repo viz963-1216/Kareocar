@@ -326,4 +326,27 @@ ok('承接機構退回自己那段而另一段有協力機構：協力機構升�
   assert.equal(L.legResponsibleOrganization(r.booking, out), null);
 });
 
+// ---------------------------------------------------------------- 單一段的接案期限（#116）
+ok('單一段的接案期限：那段接送時間前 30 分鐘；退回時已經來不及就到接送時間為止', () => {
+  const legAt = (releasedAt) => ({ requestedPickupAt: '2099-01-01T08:00:00.000Z', poolStatus: 'in_pool', releasedAt });
+  assert.equal(L.legPoolDeadline(legAt('2098-12-31T00:00:00.000Z')), '2099-01-01T07:30:00.000Z');
+  assert.equal(L.legPoolDeadline(legAt('2099-01-01T07:45:00.000Z')), '2099-01-01T08:00:00.000Z');
+  assert.equal(L.legPoolDeadline({ poolStatus: 'in_pool' }), null, '沒有接送時間就沒有期限');
+});
+ok('過期的單一段標示沒有機構承接：沒有負責機構、不能接、承接機構仍可以收回', () => {
+  const released = releaseReturn(roundTrip()).booking;
+  const r = L.markLegUnclaimed(released, { legId: 'B1_return', at: AT });
+  assert.equal(r.ok, true, r.error);
+  const ret = r.booking.legs[1];
+  assert.equal(L.legPoolStatus(ret), 'unclaimed');
+  assert.equal(L.legResponsibleOrganization(r.booking, ret), null);
+  assert.equal(r.booking.state, 'claimed', '預約狀態不變');
+  assert.equal(L.legPoolStatus(r.booking.legs[0]), 'primary', '另一段照常');
+  assert.match(claimReturn(r.booking).error, /不在需求池/);
+  assert.match(L.markLegUnclaimed(roundTrip(), { legId: 'B1_return', at: AT }).error, /不在需求池/);
+  const back = L.reclaimLeg(r.booking, { legId: 'B1_return', organizationId: 'ORG-A', at: AT });
+  assert.equal(back.ok, true, back.error);
+  assert.equal(L.legPoolStatus(back.booking.legs[1]), 'primary');
+});
+
 console.log(`lifecycle: ${pass} passed`);
