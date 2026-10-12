@@ -6,6 +6,7 @@
  * body: { action: 'release' | 'reclaim' | 'claim', bookingId, legId, organizationId? }
  *
  *   - release：承接機構把還沒排車的那一段退回需求池，別家在需求池看到「只有去程／只有回程」
+ *     另一段由協力機構負責時，協力機構升格為承接機構（#115，app.release_leg_promote_partner）
  *   - reclaim：還沒有別家接之前，承接機構把那一段收回
  *   - release 由協力機構呼叫時（#114）：協力機構讀不到整筆預約，由 app.release_partner_leg 退回自己那段、通知承接機構
  *   - claim：別家接送機構（organizationId）接下在需求池的那一段，成為協力機構。接案前它讀不到這筆預約，
@@ -67,6 +68,17 @@ exports.handler = (event) => runAuthenticated(event, async (client, body, claims
   const r = action.run(before, { legId, organizationId: row.organization_id, actorUserId: claims.userId, at });
   if (!r.ok) throw auth.authError('VALIDATION_ERROR', r.error);
 
+  // 升格（#115）：另一段由協力機構負責時，協力機構成為新的承接機構。一般更新不能把承接機構改成別家，
+  // 由 app.release_leg_promote_partner 在同一筆交易裡做（規則同 lifecycle.releaseLeg），並記事件、通知
+  if (r.promoted) {
+    const p = (await client.query('select * from app.release_leg_promote_partner($1, $2)', [bookingId, legId])).rows[0];
+    await writeAudit(client, {
+      eventType: 'booking.leg_partner_promoted', actorUserId: claims.userId, organizationId: row.organization_id,
+      entityType: 'booking', entityId: bookingId, details: { legId, newOrganizationId: p.organization_id }
+    });
+    return { bookingId, legId, poolStatus: lifecycle.LEG_POOL_STATUS.IN_POOL, promoted: true,
+      organizationId: p.organization_id, version: p.version };
+  }
   const saved = (await client.query(
     `update bookings set data = $2 where id = $1 returning version`, [bookingId, JSON.stringify(r.booking)])).rows[0];
   const state = String(r.booking.state || '');

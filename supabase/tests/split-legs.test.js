@@ -343,6 +343,30 @@ const scheduleLeg = (bookingId, legId, tripId, org = ORG_A, userId = U.dspA) => 
   const toStranger = await db.withUser(U.req, (c) => c.query(`select app.notify_booking_orgs('BKG-SPL-8', 'booking_needs_changed', '{}'::jsonb, array['${ORG_C}']) as n`));
   record('需求者也只能通知這筆預約現在的承接機構或協力機構', Number(toStranger.rows[0].n) === 0, JSON.stringify(toStranger.rows));
 
+  console.log('--- 整筆退回限制與升格（#115）---');
+  record('（前提）BKG-SPL-11：B 是回程的協力機構', await partnered('BKG-SPL-11'));
+  const wholeOpen = await writeAs(U.dspA, 'BKG-SPL-11', { state: 'open', claimStatus: 'open', status: 'open', organizationId: null });
+  const wholeReject = await writeAs(U.dspA, 'BKG-SPL-11', { state: 'rejected', status: 'rejected' });
+  record('有協力機構時承接機構不能整筆退回或不受理，並說明原因', wholeOpen.status === 400 && /協力機構/.test(wholeOpen.error.message)
+    && wholeReject.status === 400 && (await row('bookings', 'BKG-SPL-11')).organization_id === ORG_A, `${outcome(wholeOpen)} / ${outcome(wholeReject)}`);
+  const promote = await leg(U.dspA, 'release', 'BKG-SPL-11', 'BKG-SPL-11_outbound');
+  const p11 = await row('bookings', 'BKG-SPL-11');
+  const o11 = (p11.data.legs || []).find((l) => l.direction === 'outbound');
+  const r11 = (p11.data.legs || []).find((l) => l.direction === 'return');
+  record('承接機構退回自己那段：協力機構升格為承接機構，去程回到需求池', promote.status === 200 && p11.organization_id === ORG_B
+    && p11.data.organizationId === ORG_B && o11.poolStatus === 'in_pool' && (r11.poolStatus || 'primary') === 'primary' && !r11.partnerOrganizationId, outcome(promote));
+  const bFull = (((await load(U.dspB)).data.collections.bookings) || []).find((b) => b.id === 'BKG-SPL-11');
+  record('新的承接機構看得到整筆預約', !!bFull && !bFull.partnerView && bFull.pickupAddress === HOME && bFull.legs.every((l) => !l.maskedForPartner));
+  record('原承接機構讀不到', !(((await load(U.dspA)).data.collections.bookings) || []).some((b) => b.id === 'BKG-SPL-11'));
+  record('通知需求者：承接機構換成新的機構', (await admin.query(
+    `select payload from notifications where recipient_user_id = $1 and booking_id = 'BKG-SPL-11' and template = 'booking_primary_changed'`, [U.req])).rows
+    .some((n) => n.payload.organizationName === '合成承運 B'));
+  record('通知新的承接機構：已升格', (await opsNotes(U.dspB, 'BKG-SPL-11', 'leg_partner_promoted')).length === 1);
+  record('留下預約事件「升格」', (await events('BKG-SPL-11', 'leg_partner_promoted')).length === 1);
+  record('退回的去程出現在別家（含原承接機構）的需求池', poolRows(await load(U.dspA), 'BKG-SPL-11').some((r) => r.leg_id === 'BKG-SPL-11_outbound'));
+  const bReclaim = await leg(U.dspB, 'reclaim', 'BKG-SPL-11', 'BKG-SPL-11_outbound');
+  record('新的承接機構可以收回去程，自己兩段都載', bReclaim.status === 200 && ((await legOf('BKG-SPL-11', 'outbound')).poolStatus || 'primary') === 'primary', outcome(bReclaim));
+
   const failed = results.filter((r) => !r.ok);
   console.log(`\n結果：${results.length - failed.length} 通過 / ${failed.length} 失敗`);
   process.exitCode = failed.length ? 1 : 0;

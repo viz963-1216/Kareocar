@@ -178,6 +178,11 @@ function checkBookingWrite({ actorUserId, record, existing, roles }) {
   stripLegAssignment(out);
   applySplitLegConsent(out, before);
   const revoke = Boolean(existing.organization_id) && REVOKE_STATES.has(toState);
+  // 有協力機構時，承接機構不能整筆退回或不受理（#115）；需求者重大修改造成的重新公開照 #114 解除協力關係
+  if (revoke && !roles.ownsExisting) {
+    const blocked = lifecycle.wholeReleaseBlockedReason(before);
+    if (blocked) throw ruleError('VALIDATION_ERROR', blocked);
+  }
   // 解除協力關係（#114）：整筆退回時全部解除；否則只解除時間地點改了、或被拿掉的那段
   const dissolve = revoke
     ? lifecycle.partnerLegsToDissolve(before, { ...before, tripType: '單程', legs: [] }).map((d) => ({ ...d, reason: 'released_whole' }))

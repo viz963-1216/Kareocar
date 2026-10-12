@@ -43,6 +43,7 @@ API 端點與各項業務規則。部署流程與上線檢查清單見 [DEPLOYME
 | `migrations/0034_claim_leg_partner.sql` | 接下單一段成為協力機構（#113）：`app.claim_booking_leg` 鎖定預約後判斷（兩家同時接只有一家成功）、寫入協力機構與名稱電話快照、預約事件與通知需求者及承接機構；`app.partner_booking_views` 是協力機構讀預約的唯一方式（自己那段完整、另一段只標示由其他機構負責、承接機構名稱電話） |
 | `migrations/0035_partner_schedule_leg.sql` | 協力機構排自己那一段（#113）：排車端點用 `app.partner_lock_booking` 鎖定並取得預約（只用來判斷）、`app.apply_partner_leg_schedule` 只把自己那一段標成已排車並重算預約狀態；`app.trip_resource_scope` 的 `leg_organization_ids` 改列協力機構 |
 | `migrations/0036_partner_dissolve.sql` | 解除協力關係（#114）：`app.release_partner_leg` 協力機構退回自己那段（還沒排車才可以）並通知承接機構；`app.notify_booking_orgs` 通知這筆預約現在的承接機構或協力機構（呼叫者必須是需求者或其中一家的負責人、調度員）；協力機構的檢視只列承接中、已排車的預約 |
+| `migrations/0037_promote_partner.sql` | 升格（#115）：`app.release_leg_promote_partner` 承接機構退回自己那段、另一段有協力機構時，同一筆交易內協力機構升格為承接機構（原承接機構隨即讀不到），記預約事件並通知需求者與新承接機構；有協力機構時不能整筆退回或不受理（`_booking-rules`） |
 | `rollback/<名稱>.down.sql` | 每支 migration 的回復檔（`0001` 的回復會刪除所有資料，只用在空資料庫或 Staging 重建） |
 | `migrations_archive/` | 壓縮成 baseline 之前的 0001–0008，只供查閱，不再套用 |
 | `seed-test-org.sql` | 建立測試機構與負責人的一次性腳本（`tests/seed-test-org.test.sh` 驗證） |

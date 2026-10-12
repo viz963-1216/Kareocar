@@ -155,6 +155,18 @@
     leg.releasedByOrganizationId = organizationId;
     next.updatedAt = at;
     next.version = Math.max(1, Number(next.version) || 1) + 1;
+    // 升格（#115）：另一段由協力機構負責時，協力機構成為新的承接機構，確保每筆預約一定有承接機構
+    const partnerLeg = legsOf(next).find((l) => l.id !== leg.id && legPoolStatus(l) === LEG_POOL_STATUS.PARTNER);
+    if (partnerLeg) {
+      const newOrg = partnerLeg.partnerOrganizationId;
+      const claimedBy = partnerLeg.partnerClaimedByUserId || null;
+      clearPoolFields(partnerLeg);
+      next.previousOrganizationIds = [...(Array.isArray(next.previousOrganizationIds) ? next.previousOrganizationIds : []), organizationId];
+      next.organizationId = newOrg;
+      next.claimedByUserId = claimedBy;
+      next.claimedAt = at;
+      return { ok: true, booking: next, leg, promoted: true, newOrganizationId: newOrg, promotedLeg: partnerLeg };
+    }
     return { ok: true, booking: next, leg };
   }
 
@@ -236,6 +248,13 @@
       leg.releasedByOrganizationId = null;
     }
     return next;
+  }
+
+  /** 有協力機構負責其中一段時，承接機構不能整筆退回或不受理（#115）。回傳原因，可以時回傳 null。 */
+  function wholeReleaseBlockedReason(booking) {
+    return legsOf(booking).some((l) => legPoolStatus(l) === LEG_POOL_STATUS.PARTNER)
+      ? '有協力機構負責其中一段，不能整筆退回或不受理；請退回自己負責的那段（協力機構會升格為承接機構）'
+      : null;
   }
 
   /** 整筆退回需求池、不受理時：去程／回程回到由（下一家）承接機構負責。不改傳入的物件。 */
@@ -352,7 +371,7 @@
     bookingTargets, bookingWriteTransitions,
     BOOKING_LEG_STATUS, LEG_SCHEDULING_FIELDS, nextPendingLeg, legResponsibleOrganization, scheduleBookingLeg, unscheduleTripLegs,
     LEG_POOL_STATUS, LEG_POOL_FIELDS, legPoolStatus, releaseLeg, reclaimLeg, claimLeg, clearLegPool,
-    partnerLegsToDissolve, dissolvePartnerLegs,
+    partnerLegsToDissolve, dissolvePartnerLegs, wholeReleaseBlockedReason,
     TRIP_STATUSES, TRIP_STATUS_TRANSITIONS, TRIP_CORRECTION_TRANSITIONS,
     canTripTransition
   });
