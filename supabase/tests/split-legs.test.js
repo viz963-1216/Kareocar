@@ -29,6 +29,7 @@ const cancelFn = require('../../netlify/functions/v2-cancel-booking');
 const legFn = require('../../netlify/functions/v2-booking-leg');
 const scheduleFn = require('../../netlify/functions/v2-schedule-trips');
 const loadFn = require('../../netlify/functions/v2-state-load');
+const expireFn = require('../../netlify/functions/leg-pool-expire');
 
 const ORG_A = 'ORG-SPL-A';
 const ORG_B = 'ORG-SPL-B';
@@ -366,6 +367,37 @@ const scheduleLeg = (bookingId, legId, tripId, org = ORG_A, userId = U.dspA) => 
   record('退回的去程出現在別家（含原承接機構）的需求池', poolRows(await load(U.dspA), 'BKG-SPL-11').some((r) => r.leg_id === 'BKG-SPL-11_outbound'));
   const bReclaim = await leg(U.dspB, 'reclaim', 'BKG-SPL-11', 'BKG-SPL-11_outbound');
   record('新的承接機構可以收回去程，自己兩段都載', bReclaim.status === 200 && ((await legOf('BKG-SPL-11', 'outbound')).poolStatus || 'primary') === 'primary', outcome(bReclaim));
+
+  console.log('--- 單一段的接案期限（#116）---');
+  record('（前提）BKG-SPL-12：A 退回回程', await claimedRoundTrip('BKG-SPL-12')
+    && (await leg(U.dspA, 'release', 'BKG-SPL-12', 'BKG-SPL-12_return')).status === 200);
+  const row12 = poolRows(await load(U.dspB), 'BKG-SPL-12')[0] || {};
+  record('需求池列出那一段的接案期限：回程接送時間前 30 分鐘', row12.market_expires_at && new Date(row12.market_expires_at).toISOString() === '2099-01-01T07:30:00.000Z', JSON.stringify(row12.market_expires_at));
+  let notSystem = null;
+  try { await db.withUser(U.dspA, (c) => c.query(`select * from app.expire_pool_legs('2099-01-02'::timestamptz)`)); } catch (e) { notSystem = e; }
+  record('過期處理只能由系統排程或平台管理者執行', notSystem && notSystem.code === '42501', notSystem && notSystem.code);
+  const early = await db.withoutUser((c) => c.query(`select * from app.expire_pool_legs('2099-01-01T07:00:00Z'::timestamptz)`));
+  record('還沒到期限不處理', !early.rows.some((r) => r.booking_id === 'BKG-SPL-12') && (await legOf('BKG-SPL-12', 'return')).poolStatus === 'in_pool');
+  const late = await db.withoutUser((c) => c.query(`select * from app.expire_pool_legs('2099-01-01T07:31:00Z'::timestamptz)`));
+  const r12 = await legOf('BKG-SPL-12', 'return');
+  record('過了期限：那段標示沒有機構承接', late.rows.some((r) => r.booking_id === 'BKG-SPL-12') && r12.poolStatus === 'unclaimed', JSON.stringify(r12));
+  record('另一段與預約狀態不變', ((await legOf('BKG-SPL-12', 'outbound')).poolStatus || 'primary') === 'primary'
+    && (await row('bookings', 'BKG-SPL-12')).data.state === 'claimed' && (await row('bookings', 'BKG-SPL-12')).organization_id === ORG_A);
+  record('需求池不再列出', poolRows(await load(U.dspB), 'BKG-SPL-12').length === 0);
+  record('通知需求者與承接機構', (await admin.query(`select 1 from notifications where recipient_user_id = $1 and booking_id = 'BKG-SPL-12' and template = 'booking_leg_unclaimed'`, [U.req])).rows.length === 1
+    && (await opsNotes(U.dspA, 'BKG-SPL-12', 'leg_unclaimed')).length === 1);
+  record('留下預約事件「沒有機構承接」', (await events('BKG-SPL-12', 'leg_unclaimed')).length === 1);
+  const again12 = await db.withoutUser((c) => c.query(`select * from app.expire_pool_legs('2099-01-02'::timestamptz)`));
+  record('重跑不會重複處理', !again12.rows.some((r) => r.booking_id === 'BKG-SPL-12'));
+  const takeBack = await leg(U.dspA, 'reclaim', 'BKG-SPL-12', 'BKG-SPL-12_return');
+  record('承接機構可以把沒有機構承接的那段收回自己載', takeBack.status === 200 && ((await legOf('BKG-SPL-12', 'return')).poolStatus || 'primary') === 'primary', outcome(takeBack));
+
+  record('（前提）BKG-SPL-13：A 退回回程', await claimedRoundTrip('BKG-SPL-13')
+    && (await leg(U.dspA, 'release', 'BKG-SPL-13', 'BKG-SPL-13_return')).status === 200);
+  await admin.query(`update bookings set data = jsonb_set(data, '{legs,1,requestedPickupAt}', to_jsonb(to_char((now() - interval '1 hour') at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))) where id = 'BKG-SPL-13'`);
+  record('排程還沒跑、期限已過的那段，需求池也不列出', poolRows(await load(U.dspB), 'BKG-SPL-13').length === 0);
+  const sweep = await expireFn.handler({});
+  record('排程函式（每 15 分鐘）處理到期的段', sweep.statusCode === 200 && (await legOf('BKG-SPL-13', 'return')).poolStatus === 'unclaimed', sweep.body);
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n結果：${results.length - failed.length} 通過 / ${failed.length} 失敗`);

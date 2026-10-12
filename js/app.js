@@ -5499,14 +5499,15 @@ function bookingContactText(b){ const c=bookingRequesterContact(b);return c?`聯
 function requesterBookingsRows(){ return Booking.listForRequesterUser(Identity.currentUser()?.id||''); }
 function bookingLegSummary(b){
   const legs=b?.legs||[]; if(!legs.length)return `${escapeHTML(b.pickupDate||'')} ${escapeHTML(b.pickupTime||'')}｜${escapeHTML(b.pickupAddress||'')} → ${escapeHTML(b.destination||'')}`;
-  return legs.map(l=>{const p=l.requestedPickupAt?localDateTimeParts(l.requestedPickupAt):{date:'時間未填',time:''};if(l.maskedForPartner)return `${escapeHTML(l.label||'')}｜${escapeHTML(l.responsibleText||'由其他機構負責')}`;const inPool=LIFECYCLE.legPoolStatus(l)===LIFECYCLE.LEG_POOL_STATUS.IN_POOL,partner=LIFECYCLE.legPoolStatus(l)===LIFECYCLE.LEG_POOL_STATUS.PARTNER;const status=l.status==='scheduled'?'已排車':l.status==='cancelled'?'已取消':inPool?'在需求池，等待其他機構接案':'待排車';const legOrgId=LIFECYCLE.legResponsibleOrganization(b,l),legOrg=(partner?l.partnerOrganizationName:'')||Organization.get(legOrgId)?.name||(legOrgId&&legOrgId===b.organizationId?b.primaryOrganizationName:'')||'';const notes=[legOrg?(partner?`載送：${escapeHTML(legOrg)}（協力機構${l.partnerOrganizationPhone&&!b.partnerView&&Identity.can('dispatch.dashboard.read')?`・${escapeHTML(l.partnerOrganizationPhone)}`:''}）`:`承接：${escapeHTML(legOrg)}`):'',l.pickup?.accessNote?`上車：${escapeHTML(l.pickup.accessNote)}`:'',l.dropoff?.accessNote?`下車：${escapeHTML(l.dropoff.accessNote)}`:''].filter(Boolean).join('・');return `${escapeHTML(l.label)} ${escapeHTML(p.date)} ${escapeHTML(p.time)}｜${escapeHTML(locationSnapshotAddress(l.pickup))} → ${escapeHTML(locationSnapshotAddress(l.dropoff))}（${escapeHTML(status)}）${notes?`<br><span class="muted small">${notes}</span>`:''}`;}).join('<br>');
+  return legs.map(l=>{const p=l.requestedPickupAt?localDateTimeParts(l.requestedPickupAt):{date:'時間未填',time:''};if(l.maskedForPartner)return `${escapeHTML(l.label||'')}｜${escapeHTML(l.responsibleText||'由其他機構負責')}`;const inPool=LIFECYCLE.legPoolStatus(l)===LIFECYCLE.LEG_POOL_STATUS.IN_POOL,partner=LIFECYCLE.legPoolStatus(l)===LIFECYCLE.LEG_POOL_STATUS.PARTNER,unclaimed=LIFECYCLE.legPoolStatus(l)===LIFECYCLE.LEG_POOL_STATUS.UNCLAIMED;const status=l.status==='scheduled'?'已排車':l.status==='cancelled'?'已取消':unclaimed?'沒有機構承接':inPool?'在需求池，等待其他機構接案':'待排車';const legOrgId=LIFECYCLE.legResponsibleOrganization(b,l),legOrg=(partner?l.partnerOrganizationName:'')||Organization.get(legOrgId)?.name||(legOrgId&&legOrgId===b.organizationId?b.primaryOrganizationName:'')||'';const notes=[legOrg?(partner?`載送：${escapeHTML(legOrg)}（協力機構${l.partnerOrganizationPhone&&!b.partnerView&&Identity.can('dispatch.dashboard.read')?`・${escapeHTML(l.partnerOrganizationPhone)}`:''}）`:`承接：${escapeHTML(legOrg)}`):'',l.pickup?.accessNote?`上車：${escapeHTML(l.pickup.accessNote)}`:'',l.dropoff?.accessNote?`下車：${escapeHTML(l.dropoff.accessNote)}`:''].filter(Boolean).join('・');return `${escapeHTML(l.label)} ${escapeHTML(p.date)} ${escapeHTML(p.time)}｜${escapeHTML(locationSnapshotAddress(l.pickup))} → ${escapeHTML(locationSnapshotAddress(l.dropoff))}（${escapeHTML(status)}）${notes?`<br><span class="muted small">${notes}</span>`:''}`;}).join('<br>');
 }
 // 承接機構把來回預約還沒排車的一段退回需求池、或收回（#112）。按鈕依 js/lifecycle.js 的同一套規則顯示，
 // 實際能不能做由伺服器 v2-booking-leg 再判斷一次
 function bookingLegPoolButtons(b){
   const at=nowISO();
   return (b?.legs||[]).map(l=>{
-    if(LIFECYCLE.legPoolStatus(l)===LIFECYCLE.LEG_POOL_STATUS.IN_POOL)return `<button type="button" class="btn outline sm booking-leg-reclaim-btn" data-booking="${escapeHTML(b.id)}" data-leg="${escapeHTML(l.id)}">收回${escapeHTML(l.label||'')}</button>`;
+    // 在需求池、或過期沒有機構承接（#116）的段：承接機構可以收回自己載
+    if([LIFECYCLE.LEG_POOL_STATUS.IN_POOL,LIFECYCLE.LEG_POOL_STATUS.UNCLAIMED].includes(LIFECYCLE.legPoolStatus(l))&&!b.partnerView)return `<button type="button" class="btn outline sm booking-leg-reclaim-btn" data-booking="${escapeHTML(b.id)}" data-leg="${escapeHTML(l.id)}">收回${escapeHTML(l.label||'')}</button>`;
     // 協力機構讀到的預約（partnerView）：只能退回自己那段（#114）
     const r=LIFECYCLE.releaseLeg(b,{legId:l.id,organizationId:b.partnerView?b.partnerOrganizationId:b.organizationId,actorUserId:null,at});
     return r.ok?`<button type="button" class="btn warning sm booking-leg-release-btn" data-booking="${escapeHTML(b.id)}" data-leg="${escapeHTML(l.id)}" ${r.promoted?'data-promote="1"':''}>${escapeHTML(l.label||'')}退回需求池</button>`:'';
@@ -5544,7 +5545,8 @@ const NOTIFICATION_LABELS=Object.freeze({
   booking_claimed:'已有接送機構承接你的預約',booking_scheduled:'你的預約已排車',booking_cancelled:'預約已取消',
   booking_leg_partner_claimed:'你的預約有一段改由其他機構載送',leg_partner_claimed:'協力機構接下了你退回需求池的那一段',
   leg_partner_released:'協力機構把負責的那一段退回需求池',
-  booking_primary_changed:'你的預約改由其他接送機構承接',leg_partner_promoted:'你們已升格為這筆預約的承接機構',leg_partner_removed:'你負責的那一段已不再由你們載送',
+  booking_primary_changed:'你的預約改由其他接送機構承接',
+  booking_leg_unclaimed:'你的預約有一段沒有機構承接',leg_unclaimed:'退回需求池的那一段沒有機構承接',leg_partner_promoted:'你們已升格為這筆預約的承接機構',leg_partner_removed:'你負責的那一段已不再由你們載送',
   booking_needs_changed:'需求者修改了服務需求',booking_cancelled_ops:'需求者取消了預約',
   trip_completed:'接送已完成',trip_assigned:'你有新的指派行程',trip_unassigned:'行程已改派給其他司機',trip_cancelled:'行程已取消'
 });
@@ -5552,7 +5554,7 @@ function notificationText(n){
   const p=n?.payload||{},label=NOTIFICATION_LABELS[n?.template]||'通知';
   const when=p.pickupDate?`（${p.pickupDate}${p.pickupTime?` ${p.pickupTime}`:''}）`:'';
   const removedReason={amended:'需求者修改了時間或地點',removed:'需求者改成單程',released_whole:'承接機構整筆退回'};
-  const extra=n?.template==='booking_primary_changed'&&p.organizationName?`：${p.organizationName}`:n?.template==='leg_partner_promoted'?`（原承接機構退回了${p.legLabel||'另一段'}）`:n?.template==='leg_partner_removed'?`：${p.legLabel||'這一段'}（${removedReason[p.reason]||'協力關係已解除'}）`:n?.template==='leg_partner_released'?`：${p.legLabel||'這一段'}`:n?.template==='booking_claimed'&&p.organizationName?`：${p.organizationName}`:['booking_leg_partner_claimed','leg_partner_claimed'].includes(n?.template)&&p.organizationName?`：${p.legLabel||'這一段'}由 ${p.organizationName}${p.organizationPhone?`（${p.organizationPhone}）`:''} 載送`:n?.template==='booking_cancelled'&&p.reason?`：${p.reason}`:'';
+  const extra=['booking_leg_unclaimed','leg_unclaimed'].includes(n?.template)?`：${p.legLabel||'這一段'}`:n?.template==='booking_primary_changed'&&p.organizationName?`：${p.organizationName}`:n?.template==='leg_partner_promoted'?`（原承接機構退回了${p.legLabel||'另一段'}）`:n?.template==='leg_partner_removed'?`：${p.legLabel||'這一段'}（${removedReason[p.reason]||'協力關係已解除'}）`:n?.template==='leg_partner_released'?`：${p.legLabel||'這一段'}`:n?.template==='booking_claimed'&&p.organizationName?`：${p.organizationName}`:['booking_leg_partner_claimed','leg_partner_claimed'].includes(n?.template)&&p.organizationName?`：${p.legLabel||'這一段'}由 ${p.organizationName}${p.organizationPhone?`（${p.organizationPhone}）`:''} 載送`:n?.template==='booking_cancelled'&&p.reason?`：${p.reason}`:'';
   return `${label}${extra}${when}`;
 }
 function requesterNotificationsCard(){
