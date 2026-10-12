@@ -41,6 +41,7 @@ API 端點與各項業務規則。部署流程與上線檢查清單見 [DEPLOYME
 | `migrations/0032_indexed_lookups.sql` | 依關聯找預約／行程改用有索引的欄位：刪除帳號（`requested_by_user_id`、`trip_bookings`）、需求者取消（`trip_bookings`）、到期匿名化（`care_recipient_id`）；行程與預約的對應補上單數 `bookingId` 與 bookingIds 中未被引用涵蓋的預約（與 App 端 `bookingIdsOf` 相同），並補齊既有行程（#147） |
 | `migrations/0033_leg_pool.sql` | 來回預約的一段退回需求池（#112，ADR 0004）：`booking_legs` 多 `pool_status`（primary／in_pool／partner／unclaimed）與 `partner_organization_id`，由觸發器從 `data.legs` 帶出；需求池檢視多列出在需求池的單一段（只有那一段的模糊欄位，`leg_id`、`leg_direction` 標示只有去程／只有回程），承接機構自己不會看到自己退回的段 |
 | `migrations/0034_claim_leg_partner.sql` | 接下單一段成為協力機構（#113）：`app.claim_booking_leg` 鎖定預約後判斷（兩家同時接只有一家成功）、寫入協力機構與名稱電話快照、預約事件與通知需求者及承接機構；`app.partner_booking_views` 是協力機構讀預約的唯一方式（自己那段完整、另一段只標示由其他機構負責、承接機構名稱電話） |
+| `migrations/0035_partner_schedule_leg.sql` | 協力機構排自己那一段（#113）：排車端點用 `app.partner_lock_booking` 鎖定並取得預約（只用來判斷）、`app.apply_partner_leg_schedule` 只把自己那一段標成已排車並重算預約狀態；`app.trip_resource_scope` 的 `leg_organization_ids` 改列協力機構 |
 | `rollback/<名稱>.down.sql` | 每支 migration 的回復檔（`0001` 的回復會刪除所有資料，只用在空資料庫或 Staging 重建） |
 | `migrations_archive/` | 壓縮成 baseline 之前的 0001–0008，只供查閱，不再套用 |
 | `seed-test-org.sql` | 建立測試機構與負責人的一次性腳本（`tests/seed-test-org.test.sh` 驗證） |
