@@ -672,7 +672,7 @@ async function flowSchedule(cdp, baseUrl, tokens) {
     await login(page, U.dsp);
     await goView(page, 'dispatch-home');
     await evaluate(page, `(()=>{const d=document.getElementById('operationDateInput');d.value=${J(date)};d.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
-    await click(page, `.booking-create-trip-btn[data-booking=${J(id)}]`);
+    await clickRetry(page, `.booking-create-trip-btn[data-booking=${J(id)}]`);
     await waitFor(page, "document.getElementById('createTripModal').classList.contains('open')&&!!document.getElementById('newDriver').value&&!!document.getElementById('newVehicle').value",
       '建立行程視窗帶入司機與車輛');
     await click(page, '#saveTripBtn');
@@ -799,7 +799,7 @@ async function flowFamily(cdp, baseUrl, tokens) {
       record(S, '調度畫面顯示服務對象（家人）的姓名與需求，需求者為聯絡人',
         shown && text.includes(fam.aid) && text.includes(`聯絡人：${U.req.name}`), shown ? '' : text.slice(0, 400));
       // 排車後，司機看到的停靠點：乘車人是家人，需求者是聯絡人（#76 故事 13）
-      await click(dsp, `.booking-create-trip-btn[data-booking=${J(booking.id)}]`);
+      await clickRetry(dsp, `.booking-create-trip-btn[data-booking=${J(booking.id)}]`);
       await waitFor(dsp, "document.getElementById('createTripModal').classList.contains('open')&&!!document.getElementById('newDriver').value&&!!document.getElementById('newVehicle').value",
         '排車視窗帶入司機與車輛');
       await click(dsp, '#saveTripBtn');
