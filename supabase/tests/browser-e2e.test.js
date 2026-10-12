@@ -1085,8 +1085,13 @@ async function flowPublicSettings(cdp, baseUrl) {
     await waitFor(after, "!document.getElementById('forgotPasswordModal').classList.contains('open')", '關閉忘記密碼視窗');
     await login(after, U.req);
     await goView(after, 'account');
-    record(S, '我的帳戶顯示客服聯絡', await evaluate(after,
-      `!!document.querySelector('#supportContactCard a[href=${J(line)}]')&&document.getElementById('supportContactCard').innerText.includes(${J(email)})`));
+    // 我的帳戶的客服卡片在設定載入後才畫出來：等到出現再判斷
+    let supportShown = true;
+    try {
+      await waitFor(after, `!!document.querySelector('#supportContactCard a[href=${J(line)}]')&&document.getElementById('supportContactCard').innerText.includes(${J(email)})`,
+        '我的帳戶顯示客服聯絡', 8000);
+    } catch (_) { supportShown = false; }
+    record(S, '我的帳戶顯示客服聯絡', supportShown);
     await after.send('Page.navigate', { url: new URL('legal/privacy.html', baseUrl).href });
     let shown = true;
     try { await waitFor(after, `!!document.querySelector('[data-support-email] a[href=${J(`mailto:${email}`)}]')`, '隱私權政策顯示聯絡 Email', 8000); } catch (_) { shown = false; }
